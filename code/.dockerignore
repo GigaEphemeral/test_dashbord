@@ -1,6 +1,10 @@
 # Docker build context is code/. Keep the reactor inputs only.
 .git
 .superpowers
+# The Dockerfile copies only pom.xml, platform and services: keep local
+# credentials and lab assets (compose, dashboards, k6) out of the context.
+**/.env
+lab/
 **/.git
 **/target
 target

@@ -158,6 +158,10 @@ else
 fi
 
 # 2b. Application tier through Nginx.
+# Remember when this run's hello traffic starts (one second of slack for clock
+# granularity). The Tempo check below is bounded to this window so a trace kept
+# from an earlier run cannot hide a broken live OTel export.
+hello_window_start="$(( $(date +%s) - 1 ))"
 hello_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
   http://127.0.0.1:8080/api/hello 2>/dev/null || true)"
 hello_code="${hello_response##*$'\n'}"
@@ -356,10 +360,13 @@ check_metric "prometheus scrapes jvm_threads_live_threads for seckill-app" \
   '"job":"seckill-app"'
 
 # The OTel agent + collector batch exports, so allow up to 30s for a trace to land.
+# start/end (epoch seconds) restrict the search to traces from this run: Tempo
+# persists traces across restarts, so an old trace must never satisfy the check.
+tempo_window_end="$(( $(date +%s) + 5 ))"
 tempo_trace_body=""
 for attempt in $(seq 1 30); do
   tempo_trace_body="$(docker exec jl-nginx wget -qO- -T 5 \
-    "http://tempo:3200/api/search?tags=service.name%3Dseckill-app&limit=5" 2>/dev/null || true)"
+    "http://tempo:3200/api/search?tags=service.name%3Dseckill-app&start=${hello_window_start}&end=${tempo_window_end}&limit=5" 2>/dev/null || true)"
   if grep -q '"traceID"' <<<"$tempo_trace_body"; then
     break
   fi
@@ -368,10 +375,11 @@ for attempt in $(seq 1 30); do
   fi
 done
 if grep -q '"traceID"' <<<"$tempo_trace_body"; then
-  pass "tempo has at least one trace for service.name=seckill-app"
+  tempo_trace_id="$(sed -n 's/.*"traceID"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$tempo_trace_body" | head -n 1)"
+  pass "tempo has a fresh trace for service.name=seckill-app (${tempo_trace_id}, start=${hello_window_start} end=${tempo_window_end})"
 else
-  fail "tempo has at least one trace for service.name=seckill-app" \
-    "response: ${tempo_trace_body:0:160}"
+  fail "tempo has a fresh trace for service.name=seckill-app" \
+    "no trace in start=${hello_window_start} end=${tempo_window_end}; response: ${tempo_trace_body:0:160}"
 fi
 
 if (( FAILED > 0 )); then

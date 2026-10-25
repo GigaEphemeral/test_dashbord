@@ -162,6 +162,14 @@ echo "Post-wait state check passed: all ${#services[@]} containers are running."
 
 # Bind-mounted configs are not part of the Compose service hash, so reused
 # containers would otherwise keep their stale in-memory config (and app DNS).
+# Validate the mounted config first; never reload a broken file over a working
+# in-memory config.
+if ! test_output="$(docker exec jl-nginx nginx -t 2>&1)"; then
+  echo "ERROR: nginx config test failed; not reloading:" >&2
+  printf '%s\n' "$test_output" >&2
+  print_diagnostics
+  exit 1
+fi
 if ! reload_output="$(docker exec jl-nginx nginx -s reload 2>&1)"; then
   echo "ERROR: nginx failed to reload the mounted configuration: $reload_output" >&2
   print_diagnostics
