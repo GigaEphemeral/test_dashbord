@@ -17,4 +17,18 @@
   <properties>
     <maven.compiler.release>8</maven.compiler.release>
   </properties>
+
+  <dependencies>
+    <!-- Framework-neutral shared error/result types. -->
+    <dependency>
+      <groupId>com.javalearn.lab</groupId>
+      <artifactId>platform-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 </project>

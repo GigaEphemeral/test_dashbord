@@ -199,6 +199,44 @@ else
     "unique instances: $(printf '%s' "$unique_instances" | tr '\n' ' ')"
 fi
 
+# 2c. Catalog API through Nginx (Task 12: Flyway schema + JPA adapter + query use case).
+# Three calls also prove every app instance can reach MySQL, not just the first.
+product_body=""
+product_code=""
+product_calls_ok=true
+for _ in $(seq 1 3); do
+  product_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+    http://127.0.0.1:8080/api/products/1 2>/dev/null || true)"
+  product_code="${product_response##*$'\n'}"
+  product_body="${product_response%$'\n'*}"
+  if [[ "$product_code" != "200" ]]; then
+    product_calls_ok=false
+    break
+  fi
+done
+if $product_calls_ok \
+  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$product_body" \
+  && grep -Eq '"id"[[:space:]]*:[[:space:]]*1([^0-9]|$)' <<<"$product_body" \
+  && grep -Eq '"name"[[:space:]]*:[[:space:]]*"[^"]+"' <<<"$product_body" \
+  && grep -Eq '"price"[[:space:]]*:[[:space:]]*[0-9]+(\.[0-9]+)?' <<<"$product_body"; then
+  pass "nginx /api/products/1 returns 200 with code=0, id, name and price (3 instances)"
+else
+  fail "nginx /api/products/1 returns 200 with code=0, id, name and price (3 instances)" \
+    "HTTP ${product_code:-000} body: ${product_body:0:160}"
+fi
+
+missing_product_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+  http://127.0.0.1:8080/api/products/999999 2>/dev/null || true)"
+missing_product_code="${missing_product_response##*$'\n'}"
+missing_product_body="${missing_product_response%$'\n'*}"
+if [[ "$missing_product_code" == "404" ]] \
+  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"40401"' <<<"$missing_product_body"; then
+  pass "nginx /api/products/999999 returns 404 with code=40401"
+else
+  fail "nginx /api/products/999999 returns 404 with code=40401" \
+    "HTTP ${missing_product_code:-000} body: ${missing_product_body:0:160}"
+fi
+
 # 3. RabbitMQ management API.
 rabbit_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
   -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
@@ -215,6 +253,27 @@ if docker exec -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" jl-mysql \
   pass "mysqladmin ping succeeds"
 else
   fail "mysqladmin ping succeeds" "docker exec jl-mysql failed"
+fi
+
+# 4b. Flyway-owned catalog data. MYSQL_PWD is passed via exec env, never on the
+# command line or in output.
+catalog_count="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
+  mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
+  -e 'SELECT COUNT(*) FROM catalog_product;' 2>/dev/null | tr -d '\r\n ')" || true
+if [[ "$catalog_count" == "20" ]]; then
+  pass "mysql catalog_product has exactly 20 seeded rows"
+else
+  fail "mysql catalog_product has exactly 20 seeded rows" "count='${catalog_count}'"
+fi
+
+flyway_versions="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
+  mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
+  -e 'SELECT GROUP_CONCAT(version ORDER BY installed_rank) FROM flyway_schema_history WHERE success = 1;' \
+  2>/dev/null | tr -d '\r\n ')" || true
+if [[ "$flyway_versions" == "1,2" ]]; then
+  pass "flyway applied migrations 1,2 successfully"
+else
+  fail "flyway applied migrations 1,2 successfully" "versions='${flyway_versions}'"
 fi
 
 # 5. Redis liveness.
@@ -359,6 +418,43 @@ check_metric "prometheus scrapes http_server_requests_seconds_bucket for seckill
 check_metric "prometheus scrapes jvm_threads_live_threads for seckill-app" \
   "http://prometheus:9090/api/v1/query?query=jvm_threads_live_threads%7Bjob%3D%22seckill-app%22%7D" \
   '"job":"seckill-app"'
+
+# Catalog datasource pool and URI-template metrics (Task 12).
+hikari_body=""
+for attempt in $(seq 1 30); do
+  hikari_body="$(prometheus_query 'hikaricp_connections_active%7Bjob%3D%22seckill-app%22%7D')"
+  if grep -q '"job":"seckill-app"' <<<"$hikari_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 2
+  fi
+done
+if grep -q '"job":"seckill-app"' <<<"$hikari_body"; then
+  pass "prometheus has hikaricp_connections_active{job=\"seckill-app\"}"
+else
+  fail "prometheus has hikaricp_connections_active{job=\"seckill-app\"}" \
+    "response: ${hikari_body:0:160}"
+fi
+
+product_uri_body=""
+for attempt in $(seq 1 30); do
+  product_uri_body="$(prometheus_query 'http_server_requests_seconds_count%7Bjob%3D%22seckill-app%22%2Curi%3D%22%2Fapi%2Fproducts%2F%7Bid%7D%22%7D')"
+  if grep -q '"uri":"/api/products/{id}"' <<<"$product_uri_body" \
+    && grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*"\]' <<<"$product_uri_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 2
+  fi
+done
+if grep -q '"uri":"/api/products/{id}"' <<<"$product_uri_body" \
+  && grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*"\]' <<<"$product_uri_body"; then
+  pass "prometheus has http_server_requests_seconds_count{uri=\"/api/products/{id}\"} > 0"
+else
+  fail "prometheus has http_server_requests_seconds_count{uri=\"/api/products/{id}\"} > 0" \
+    "response: ${product_uri_body:0:200}"
+fi
 
 # The OTel agent + collector batch exports, so allow up to 30s for a trace to land.
 # start/end (epoch seconds) restrict the search to traces from this run: Tempo

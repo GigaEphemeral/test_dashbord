@@ -1,6 +1,21 @@
 spring:
   application:
     name: seckill-app
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${MYSQL_USER:seckill}
+    password: ${MYSQL_PASSWORD:seckill}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    hibernate.ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 server:
   port: 8080

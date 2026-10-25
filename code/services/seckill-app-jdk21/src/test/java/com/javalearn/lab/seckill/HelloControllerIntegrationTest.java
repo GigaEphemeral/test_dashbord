@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.lang.reflect.Method;
 
@@ -21,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.env=test",
                 "observability.instance=test-1"
         })
-class HelloControllerIntegrationTest {
+@Testcontainers
+class HelloControllerIntegrationTest extends MySqlIntegrationTestSupport {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

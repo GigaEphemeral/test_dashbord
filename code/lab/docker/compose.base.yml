@@ -37,6 +37,11 @@ x-app-common: &app-common
 
 x-app-env: &app-env
   TZ: ${TZ}
+  # Catalog datasource (lab-only credentials; never logged by the app or scripts).
+  MYSQL_HOST: mysql
+  MYSQL_DATABASE: ${MYSQL_DATABASE}
+  MYSQL_USER: ${MYSQL_USER}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD}
   OTEL_SERVICE_NAME: seckill-app
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
