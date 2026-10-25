@@ -1,0 +1,11 @@
+# Dev-only overlay: expose datastores on localhost for host-side tools.
+# Never bind these ports to non-localhost interfaces.
+
+services:
+  mysql:
+    ports:
+      - "127.0.0.1:3306:3306"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
