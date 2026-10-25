@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DOCKER_DIR="$ROOT_DIR/code/lab/docker"
 ENV_FILE="$DOCKER_DIR/.env"
 ENV_EXAMPLE="$DOCKER_DIR/.env.example"
+DASHBOARD_DIR="$ROOT_DIR/code/lab/dashboard"
+DASHBOARD_DIST_INDEX="$DASHBOARD_DIR/dist/index.html"
 
 usage() {
   cat <<'EOF'
@@ -119,6 +121,44 @@ print_diagnostics() {
   compose logs --tail=50 >&2 || true
 }
 
+# The Vue console is a static build mounted into Nginx. dist is gitignored, so
+# build it before `compose up` (a missing dist would become an empty directory)
+# and refresh it whenever a tracked input is newer.
+needs_dashboard_build=false
+if [[ ! -f "$DASHBOARD_DIST_INDEX" ]]; then
+  needs_dashboard_build=true
+elif [[ -n "$(find \
+      "$DASHBOARD_DIR/src" \
+      "$DASHBOARD_DIR/index.html" \
+      "$DASHBOARD_DIR/package.json" \
+      "$DASHBOARD_DIR/package-lock.json" \
+      "$DASHBOARD_DIR/vite.config.js" \
+      -newer "$DASHBOARD_DIST_INDEX" -print -quit 2>/dev/null)" ]]; then
+  needs_dashboard_build=true
+fi
+
+if $needs_dashboard_build; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm is required to build the lab console but was not found in PATH." >&2
+    exit 1
+  fi
+  if [[ ! -f "$DASHBOARD_DIR/package-lock.json" ]]; then
+    echo "ERROR: missing $DASHBOARD_DIR/package-lock.json; the console build must be reproducible." >&2
+    exit 1
+  fi
+  echo "Building the lab console (Vue 3 + Vite)..."
+  if ! (cd "$DASHBOARD_DIR" && npm ci --no-audit --no-fund && npm run build); then
+    echo "ERROR: lab console build failed. Check npm/registry connectivity and retry." >&2
+    echo "Hint: this lab was bootstrapped with https://registry.npmmirror.com when the default registry was slow." >&2
+    exit 1
+  fi
+  if [[ ! -f "$DASHBOARD_DIST_INDEX" ]]; then
+    echo "ERROR: npm run build finished but $DASHBOARD_DIST_INDEX is missing." >&2
+    exit 1
+  fi
+  echo "Lab console built into $DASHBOARD_DIR/dist."
+fi
+
 echo "Starting java-learn-lab infrastructure (profile: $PROFILE)..."
 if ! compose up -d --wait --wait-timeout 240; then
   echo "ERROR: the stack did not become healthy within the timeout." >&2
@@ -185,10 +225,11 @@ fi
 echo
 echo "java-learn-lab dev stack is up:"
 echo "  Nginx health  : http://127.0.0.1:8080/health"
+echo "  Lab console   : http://127.0.0.1:8080/lab/ (token: LAB_TOKEN in code/lab/docker/.env)"
 echo "  RabbitMQ mgmt : http://127.0.0.1:15672 (user: ${RABBITMQ_DEFAULT_USER:-lab}, pass: ${RABBITMQ_DEFAULT_PASS:-lab})"
 echo "  MySQL (dev)   : 127.0.0.1:3306 (db: ${MYSQL_DATABASE:-seckill}, user: ${MYSQL_USER:-seckill})"
 echo "  Redis (dev)   : 127.0.0.1:6379"
 echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-labadmin})"
 echo
-echo "Prometheus, Tempo, OTel Collector and cAdvisor are internal to jl-net."
+echo "Prometheus, Tempo, OTel Collector, cAdvisor and chaos-controller are internal to jl-net."
 echo "Verify with: bash $SCRIPT_DIR/verify.sh"

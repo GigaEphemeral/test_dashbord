@@ -47,6 +47,7 @@ fi
 source "$ENV_FILE"
 GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-labadmin}"
+LAB_TOKEN="${LAB_TOKEN:-lab-token}"
 
 compose() {
   docker compose \
@@ -380,6 +381,87 @@ if grep -q '"traceID"' <<<"$tempo_trace_body"; then
 else
   fail "tempo has a fresh trace for service.name=seckill-app" \
     "no trace in start=${hello_window_start} end=${tempo_window_end}; response: ${tempo_trace_body:0:160}"
+fi
+
+# 11. Lab console and chaos controller (Task 11).
+# The console must be a real built page, the controller must be reachable
+# through Nginx, and only the lab=java-learn whitelist may be exposed.
+lab_page_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+  http://127.0.0.1:8080/lab/ 2>/dev/null || true)"
+lab_page_code="${lab_page_response##*$'\n'}"
+lab_page_body="${lab_page_response%$'\n'*}"
+if [[ "$lab_page_code" == "200" ]] && grep -qi '<div id="app"' <<<"$lab_page_body"; then
+  pass "lab console /lab/ returns 200 HTML"
+else
+  fail "lab console /lab/ returns 200 HTML" "HTTP ${lab_page_code:-000}"
+fi
+
+lab_health_body="$(curl -fsS --max-time 5 http://127.0.0.1:8080/lab-api/health 2>/dev/null || true)"
+if grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"' <<<"$lab_health_body"; then
+  pass "lab controller /lab-api/health is UP without a token"
+else
+  fail "lab controller /lab-api/health is UP without a token" \
+    "body: ${lab_health_body:0:120}"
+fi
+
+lab_unauth_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+  http://127.0.0.1:8080/lab-api/containers 2>/dev/null || true)"
+if [[ "$lab_unauth_code" == "401" ]]; then
+  pass "lab controller rejects /lab-api/containers without a token (401)"
+else
+  fail "lab controller rejects /lab-api/containers without a token (401)" \
+    "got HTTP ${lab_unauth_code:-000}"
+fi
+
+lab_containers_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+  -H "X-Lab-Token: ${LAB_TOKEN}" \
+  http://127.0.0.1:8080/lab-api/containers 2>/dev/null || true)"
+lab_containers_code="${lab_containers_response##*$'\n'}"
+lab_containers_body="${lab_containers_response%$'\n'*}"
+lab_names="$(printf '%s' "$lab_containers_body" | grep -o '"name":"[^"]*"' \
+  | sed 's/^"name":"//; s/"$//' || true)"
+if [[ "$lab_containers_code" == "200" ]] \
+  && grep -q '"name":"jl-app-1"' <<<"$lab_containers_body"; then
+  if [[ -n "$lab_names" ]] \
+    && ! grep -qv '^jl-' <<<"$lab_names" \
+    && ! grep -qx 'redis' <<<"$lab_names"; then
+    pass "authorized /lab-api/containers lists only jl-* lab containers (includes jl-app-1)"
+  else
+    fail "authorized /lab-api/containers lists only jl-* lab containers (includes jl-app-1)" \
+      "names: $(printf '%s' "$lab_names" | tr '\n' ' ')"
+  fi
+else
+  fail "authorized /lab-api/containers lists only jl-* lab containers (includes jl-app-1)" \
+    "HTTP ${lab_containers_code:-000} body: ${lab_containers_body:0:160}"
+fi
+
+lab_logs_response="$(curl -sS -w $'\n%{http_code}' --max-time 15 \
+  -H "X-Lab-Token: ${LAB_TOKEN}" \
+  "http://127.0.0.1:8080/lab-api/logs/jl-app-1?tail=20" 2>/dev/null || true)"
+lab_logs_code="${lab_logs_response##*$'\n'}"
+lab_logs_body="${lab_logs_response%$'\n'*}"
+if [[ "$lab_logs_code" == "200" && -n "$lab_logs_body" ]]; then
+  pass "authorized /lab-api/logs/jl-app-1?tail=20 returns non-empty text"
+else
+  fail "authorized /lab-api/logs/jl-app-1?tail=20 returns non-empty text" \
+    "HTTP ${lab_logs_code:-000}, bytes=$(printf '%s' "$lab_logs_body" | wc -c | tr -d ' ')"
+fi
+
+chaos_up_body=""
+for attempt in $(seq 1 30); do
+  chaos_up_body="$(prometheus_query 'up%7Bjob%3D%22chaos-controller%22%7D')"
+  if grep -Eq '"value":\[[0-9.]+,"1"\]' <<<"$chaos_up_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 2
+  fi
+done
+if grep -Eq '"value":\[[0-9.]+,"1"\]' <<<"$chaos_up_body"; then
+  pass "prometheus query up{job=\"chaos-controller\"} == 1"
+else
+  fail "prometheus query up{job=\"chaos-controller\"} == 1" \
+    "response: ${chaos_up_body:0:160}"
 fi
 
 if (( FAILED > 0 )); then

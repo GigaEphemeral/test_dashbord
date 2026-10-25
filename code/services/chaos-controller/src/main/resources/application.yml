@@ -1,0 +1,25 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: chaos-controller
+
+observability:
+  env: dev
+  instance: chaos-controller
+
+management:
+  endpoints:
+    web:
+      base-path: /
+      path-mapping:
+        prometheus: metrics
+      exposure:
+        include: health,info,prometheus
+
+lab:
+  # Local-lab shared secret; compose injects LAB_TOKEN. Never log this value.
+  token: ${LAB_TOKEN:lab-token}
+  docker:
+    enabled: true

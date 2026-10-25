@@ -13,4 +13,87 @@
 
   <artifactId>chaos-controller</artifactId>
   <packaging>jar</packaging>
+
+  <properties>
+    <!-- Spring MVC binds @RequestParam/@PathVariable by name. -->
+    <maven.compiler.parameters>true</maven.compiler.parameters>
+    <start-class>com.javalearn.lab.chaos.ChaosControllerApplication</start-class>
+    <!-- Brief candidate 3.4.1 resolved httpclient5 5.0.3, but Spring Boot's BOM
+         forces httpclient5 5.5.2, where 3.4.1's unix-socket factory silently
+         falls back to TCP localhost:2375. 3.7.1 (latest 3.x, Maven Central)
+         uses a connection operator and works with the managed 5.5.2. -->
+    <docker-java.version>3.7.1</docker-java.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot-jdk21.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.javalearn.lab</groupId>
+      <artifactId>platform-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.javalearn.lab</groupId>
+      <artifactId>platform-observability</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+
+    <!-- Docker Java talks to the mounted socket; no docker CLI/ProcessBuilder. -->
+    <dependency>
+      <groupId>com.github.docker-java</groupId>
+      <artifactId>docker-java</artifactId>
+      <version>${docker-java.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.docker-java</groupId>
+      <artifactId>docker-java-transport-httpclient5</artifactId>
+      <version>${docker-java.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring-boot-jdk21.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

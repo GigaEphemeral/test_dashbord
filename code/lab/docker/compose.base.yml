@@ -58,6 +58,8 @@ services:
       - "127.0.0.1:8080:80"
     volumes:
       - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Static Vue console built by up.sh; dist is gitignored.
+      - ../dashboard/dist:/usr/share/nginx/html/lab:ro
     networks:
       - jl-net
     labels:
@@ -69,6 +71,10 @@ services:
       app-2:
         condition: service_healthy
       app-3:
+        condition: service_healthy
+      chaos-controller:
+        condition: service_healthy
+      prometheus:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health | grep -q ok"]
@@ -179,6 +185,38 @@ services:
       <<: *app-env
       INSTANCE_ID: app-3
 
+  # --- Lab controller (Task 11): token-protected container list + log tail ---
+
+  chaos-controller:
+    image: java-learn-lab/chaos-controller:jdk21
+    build:
+      context: ../..
+      dockerfile: services/chaos-controller/Dockerfile
+    container_name: jl-chaos-controller
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      TZ: ${TZ}
+      LAB_TOKEN: ${LAB_TOKEN:-lab-token}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      # Read-write socket is required for later fault actions. Lab-only: the
+      # token filter and the lab=java-learn whitelist are enforced in Java.
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8081"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "chaos"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
   redis-exporter:
     image: ${REDIS_EXPORTER_IMAGE}
     container_name: jl-redis-exporter
@@ -256,6 +294,11 @@ services:
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
+      # The console reaches the UI through Nginx at /prom/. Keep internal
+      # routes at / (so scrapes and Grafana keep using http://prometheus:9090)
+      # while generated UI links carry the /prom/ prefix.
+      - --web.external-url=http://127.0.0.1:8080/prom/
+      - --web.route-prefix=/
     environment:
       TZ: ${TZ}
     volumes:
