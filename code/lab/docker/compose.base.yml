@@ -170,6 +170,160 @@ services:
       lab: "java-learn"
       lab.role: "exporter"
 
+  # --- Observability stack (internal only; Grafana is the sole host port) ---
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE}
+    container_name: jl-prometheus
+    restart: unless-stopped
+    mem_limit: 512m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - jl-prometheus-data:/prometheus
+    expose:
+      - "9090"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "prometheus"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy | grep -q Healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: ${GRAFANA_IMAGE}
+    container_name: jl-grafana
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      TZ: ${TZ}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    # Only Grafana is published on the host, bound to loopback.
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - jl-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "grafana"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  tempo:
+    image: ${TEMPO_IMAGE}
+    container_name: jl-tempo
+    restart: unless-stopped
+    mem_limit: 384m
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - jl-tempo-data:/var/tempo
+    expose:
+      - "3200"
+      - "4317"
+      - "9095"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "tempo"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/ready | grep -q ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  otel-collector:
+    image: ${OTEL_COLLECTOR_IMAGE}
+    container_name: jl-otel-collector
+    restart: unless-stopped
+    mem_limit: 128m
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./otel-collector/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+      - "13133"
+    depends_on:
+      tempo:
+        condition: service_healthy
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "otel-collector"
+    # The official collector image is distroless (no shell/wget), so it cannot
+    # run an in-container healthcheck. verify.sh probes / on 13133 over jl-net.
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE}
+    container_name: jl-cadvisor
+    restart: unless-stopped
+    mem_limit: 128m
+    # Lab-only: required by cAdvisor to read cgroups/host mounts.
+    privileged: true
+    command:
+      - --housekeeping_interval=10s
+      - --docker_only=true
+      - --store_container_labels=false
+      - --whitelisted_container_labels=lab,lab.role
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    expose:
+      - "8080"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "cadvisor"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
 volumes:
   jl-mysql-data:
     name: jl-mysql-data
@@ -177,6 +331,12 @@ volumes:
     name: jl-redis-data
   jl-rabbitmq-data:
     name: jl-rabbitmq-data
+  jl-prometheus-data:
+    name: jl-prometheus-data
+  jl-grafana-data:
+    name: jl-grafana-data
+  jl-tempo-data:
+    name: jl-tempo-data
 
 networks:
   jl-net:

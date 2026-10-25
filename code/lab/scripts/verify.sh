@@ -7,6 +7,37 @@ DOCKER_DIR="$ROOT_DIR/code/lab/docker"
 ENV_FILE="$DOCKER_DIR/.env"
 DOWN_SCRIPT="$SCRIPT_DIR/down.sh"
 
+usage() {
+  cat <<'EOF'
+Usage: verify.sh [--cleanup]
+
+Verify the java-learn-lab dev stack.
+
+By default the stack is left running for interactive debugging. Use --cleanup
+to stop it afterwards and prove that the compose project is empty while the
+named volumes are preserved.
+EOF
+}
+
+CLEANUP=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cleanup)
+      CLEANUP=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: $ENV_FILE not found. Run '$SCRIPT_DIR/up.sh --profile dev' first." >&2
   exit 1
@@ -14,6 +45,8 @@ fi
 
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-labadmin}"
 
 compose() {
   docker compose \
@@ -27,6 +60,7 @@ compose() {
 
 PASSED=0
 FAILED=0
+WARNED=0
 
 pass() {
   printf 'PASS  %s\n' "$1"
@@ -40,6 +74,11 @@ fail() {
   fi
   printf '\n'
   FAILED=$((FAILED + 1))
+}
+
+warn() {
+  printf 'WARN  %s\n' "$1"
+  WARNED=$((WARNED + 1))
 }
 
 check_metric() {
@@ -56,10 +95,50 @@ check_metric() {
   fail "$label" "missing '$needle' from $url"
 }
 
+check_http_ok() {
+  local label="$1" url="$2" attempt
+  for attempt in $(seq 1 20); do
+    if docker exec jl-nginx wget -q -O /dev/null -T 5 "$url" 2>/dev/null; then
+      pass "$label"
+      return 0
+    fi
+    if (( attempt < 20 )); then
+      sleep 1
+    fi
+  done
+  fail "$label" "GET $url did not return 2xx"
+}
+
+# Query the Prometheus HTTP API from inside jl-net. The caller passes a
+# percent-encoded query expression so no host-side URL encoding is required.
+prometheus_query() {
+  local encoded_query="$1"
+  docker exec jl-nginx wget -qO- -T 5 \
+    "http://prometheus:9090/api/v1/query?query=${encoded_query}" 2>/dev/null || true
+}
+
+dashboard_http_code() {
+  local uid="$1"
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+    -u "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+    "http://127.0.0.1:3000/api/dashboards/uid/${uid}" 2>/dev/null || true
+}
+
 echo "Verifying java-learn-lab..."
 
-# 1. Containers.
-for service in nginx mysql redis rabbitmq redis-exporter mysqld-exporter nginx-exporter; do
+# 1. Containers: dynamic list from the rendered compose model.
+services=()
+while IFS= read -r service; do
+  if [[ -n "$service" ]]; then
+    services+=("$service")
+  fi
+done < <(compose config --services)
+
+if (( ${#services[@]} == 0 )); then
+  fail "docker compose config --services lists services" "empty service list"
+fi
+
+for service in "${services[@]}"; do
   container="jl-$service"
   state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
   if [[ "$state" == "running" ]]; then
@@ -114,51 +193,161 @@ check_metric "nginx exporter exposes nginx_connections_active" \
 check_metric "rabbitmq prometheus plugin exposes rabbitmq_ metrics" \
   "http://rabbitmq:15692/metrics" "rabbitmq_"
 
+# 7. Observability endpoints (internal only).
+check_http_ok "prometheus /-/ready reachable internally" \
+  "http://prometheus:9090/-/ready"
+check_http_ok "tempo /ready reachable internally" \
+  "http://tempo:3200/ready"
+check_http_ok "otel collector health endpoint (13133) reachable internally" \
+  "http://otel-collector:13133/"
+check_http_ok "cadvisor /healthz reachable internally" \
+  "http://cadvisor:8080/healthz"
+
+# 8. Grafana health and provisioning.
+grafana_health_body=""
+for attempt in $(seq 1 20); do
+  grafana_health_body="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/health 2>/dev/null || true)"
+  if grep -Eq '"database"[[:space:]]*:[[:space:]]*"ok"' <<<"$grafana_health_body"; then
+    break
+  fi
+  if (( attempt < 20 )); then
+    sleep 1
+  fi
+done
+if grep -Eq '"database"[[:space:]]*:[[:space:]]*"ok"' <<<"$grafana_health_body"; then
+  pass "grafana /api/health reports database ok"
+else
+  fail "grafana /api/health reports database ok" "last body: ${grafana_health_body:0:160}"
+fi
+
+ds_code=""
+ds_body=""
+for attempt in $(seq 1 20); do
+  ds_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+    -u "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+    http://127.0.0.1:3000/api/datasources/uid/prometheus/health 2>/dev/null || true)"
+  ds_code="${ds_response##*$'\n'}"
+  ds_body="${ds_response%$'\n'*}"
+  if [[ "$ds_code" == "200" ]] && grep -q '"status":"OK"' <<<"$ds_body"; then
+    break
+  fi
+  if (( attempt < 20 )); then
+    sleep 1
+  fi
+done
+if [[ "$ds_code" == "200" ]] && grep -q '"status":"OK"' <<<"$ds_body"; then
+  pass "grafana Prometheus datasource health is OK"
+else
+  fail "grafana Prometheus datasource health is OK" "HTTP ${ds_code:-000} body: ${ds_body:0:160}"
+fi
+
+for uid in ha-d1 ha-d2 ha-d3; do
+  dash_code=""
+  for attempt in $(seq 1 10); do
+    dash_code="$(dashboard_http_code "$uid")"
+    if [[ "$dash_code" == "200" ]]; then
+      break
+    fi
+    if (( attempt < 10 )); then
+      sleep 1
+    fi
+  done
+  if [[ "$dash_code" == "200" ]]; then
+    pass "grafana dashboard $uid is provisioned (HTTP 200)"
+  else
+    fail "grafana dashboard $uid is provisioned (HTTP 200)" "got HTTP ${dash_code:-000}"
+  fi
+done
+
+# 9. Prometheus sees cAdvisor, and cAdvisor container series exist when the
+#    Docker Desktop/WSL2 runtime allows them (absence is a WARN, not a failure).
+cadvisor_up_body=""
+for attempt in $(seq 1 30); do
+  cadvisor_up_body="$(prometheus_query 'up%7Bjob%3D%22cadvisor%22%7D')"
+  if grep -Eq '"value":\[[0-9.]+,"1"\]' <<<"$cadvisor_up_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 2
+  fi
+done
+if grep -Eq '"value":\[[0-9.]+,"1"\]' <<<"$cadvisor_up_body"; then
+  pass "prometheus query up{job=\"cadvisor\"} == 1"
+else
+  fail "prometheus query up{job=\"cadvisor\"} == 1" "value is not 1"
+fi
+
+cadvisor_series_body=""
+for attempt in $(seq 1 15); do
+  cadvisor_series_body="$(prometheus_query 'container_cpu_usage_seconds_total%7Bcontainer_label_lab%3D%22java-learn%22%7D')"
+  if grep -q '"result":\[{' <<<"$cadvisor_series_body"; then
+    break
+  fi
+  if (( attempt < 15 )); then
+    sleep 2
+  fi
+done
+if grep -q '"result":\[{' <<<"$cadvisor_series_body"; then
+  pass "cadvisor exposes container series for lab containers"
+else
+  warn "cadvisor container series absent (Docker Desktop/WSL2 limitation; D3 CPU/memory/network panels will show No data)"
+fi
+
 if (( FAILED > 0 )); then
   echo
-  echo "VERIFY FAILED: $FAILED check(s) failed, $PASSED passed." >&2
+  echo "VERIFY FAILED: $FAILED check(s) failed, $PASSED passed, $WARNED warning(s)." >&2
   echo "--- docker compose ps ---" >&2
   compose ps >&2 || true
   echo "--- docker compose logs (last 50 lines) ---" >&2
   compose logs --tail=50 >&2 || true
+  if $CLEANUP; then
+    echo "--cleanup requested, but cleanup was skipped because verification failed." >&2
+  fi
   echo "The stack was left running for debugging; run '$DOWN_SCRIPT' when finished." >&2
   exit 1
 fi
 
 echo
-echo "VERIFY PASSED: all $PASSED checks passed."
+echo "VERIFY PASSED: $PASSED checks passed, $WARNED warning(s)."
 
-# Required end-to-end cycle: stop the stack, keep the volumes, prove compose ps is empty.
-echo "Stopping the stack to prove the clean cycle..."
-if ! bash "$DOWN_SCRIPT"; then
-  echo "ERROR: down.sh failed." >&2
-  exit 1
-fi
-
-if ! remaining="$(compose ps -a --format '{{.Name}}' 2>/dev/null)"; then
-  fail "compose ps runs after down" "docker compose ps failed"
-  exit 1
-fi
-if [[ -n "$remaining" ]]; then
-  fail "compose project is empty after down" "remaining: $(echo "$remaining" | tr '\n' ' ')"
-  compose ps -a >&2 || true
-  exit 1
-fi
-pass "compose project is empty after down"
-
-volumes_ok=true
-for volume in jl-mysql-data jl-redis-data jl-rabbitmq-data; do
-  if ! docker volume inspect "$volume" >/dev/null 2>&1; then
-    volumes_ok=false
-    fail "named volume $volume preserved" "volume missing"
+if $CLEANUP; then
+  # Required clean cycle: stop the stack, keep the volumes, prove compose ps is empty.
+  echo "Stopping the stack to prove the clean cycle (--cleanup)..."
+  if ! bash "$DOWN_SCRIPT"; then
+    echo "ERROR: down.sh failed." >&2
+    exit 1
   fi
-done
-if $volumes_ok; then
-  pass "named volumes preserved (jl-mysql-data, jl-redis-data, jl-rabbitmq-data)"
-else
-  echo "VERIFY FAILED: one or more named volumes are missing after down." >&2
-  exit 1
-fi
 
-echo
-echo "CLEAN EXIT: verified, stopped, compose project empty, volumes preserved."
+  if ! remaining="$(compose ps -a --format '{{.Name}}' 2>/dev/null)"; then
+    fail "compose ps runs after down" "docker compose ps failed"
+    exit 1
+  fi
+  if [[ -n "$remaining" ]]; then
+    fail "compose project is empty after down" "remaining: $(echo "$remaining" | tr '\n' ' ')"
+    compose ps -a >&2 || true
+    exit 1
+  fi
+  pass "compose project is empty after down"
+
+  volumes_ok=true
+  lab_volumes=(jl-mysql-data jl-redis-data jl-rabbitmq-data jl-prometheus-data jl-grafana-data jl-tempo-data)
+  for volume in "${lab_volumes[@]}"; do
+    if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+      volumes_ok=false
+      fail "named volume $volume preserved" "volume missing"
+    fi
+  done
+  if $volumes_ok; then
+    pass "named volumes preserved (${lab_volumes[*]})"
+  else
+    echo "VERIFY FAILED: one or more named volumes are missing after down." >&2
+    exit 1
+  fi
+
+  echo
+  echo "CLEAN EXIT: verified, stopped, compose project empty, volumes preserved."
+else
+  echo "Stack left running for debugging (default)."
+  echo "  Grafana: http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER}, pass: ${GRAFANA_ADMIN_PASSWORD})"
+  echo "Stop with: bash $DOWN_SCRIPT"
+fi

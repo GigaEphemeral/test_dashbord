@@ -1,0 +1,41 @@
+# Prometheus 3.x configuration for the local HA lab.
+# Targets are compose-network service names; only Grafana is published on the host.
+# Task 10 will add the seckill-app-1/2/3 targets; do not add them here yet.
+
+global:
+  scrape_interval: 5s
+  scrape_timeout: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: nginx-exporter
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: mysqld-exporter
+    static_configs:
+      - targets: ["mysqld-exporter:9104"]
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  # cAdvisor serves a large payload and is slow on the first scrape in Docker
+  # Desktop/WSL2, so it gets a longer interval/timeout than the global 5s default.
+  - job_name: cadvisor
+    scrape_interval: 10s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]

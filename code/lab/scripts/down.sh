@@ -14,8 +14,10 @@ Usage: down.sh [--purge]
 Stop and remove the java-learn-lab containers and network.
 Named volumes are preserved by default so the stack can be restarted for debugging.
 
-  --purge   Also remove the named volumes jl-mysql-data, jl-redis-data and
-            jl-rabbitmq-data. This deletes all local lab data.
+  --purge   Also remove the named volumes jl-mysql-data, jl-redis-data,
+            jl-rabbitmq-data, jl-prometheus-data, jl-grafana-data and
+            jl-tempo-data. This deletes all local lab data (databases,
+            metrics, dashboards state and traces).
 EOF
 }
 
@@ -60,7 +62,8 @@ compose() {
 
 if $PURGE; then
   echo "WARNING: --purge removes the containers, the network AND the named volumes" >&2
-  echo "         jl-mysql-data, jl-redis-data, jl-rabbitmq-data (all local lab data)." >&2
+  echo "         jl-mysql-data, jl-redis-data, jl-rabbitmq-data, jl-prometheus-data," >&2
+  echo "         jl-grafana-data, jl-tempo-data (all local lab data)." >&2
   compose down -v
   echo "java-learn-lab stopped; containers, network and named volumes removed."
 else

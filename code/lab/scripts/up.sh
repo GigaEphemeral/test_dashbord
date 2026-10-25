@@ -14,7 +14,8 @@ Usage: up.sh [--profile dev]
 Start the java-learn-lab dev infrastructure stack.
 
 Profiles:
-  dev   Nginx, MySQL, Redis, RabbitMQ and exporters (default)
+  dev   Nginx, MySQL, Redis, RabbitMQ, exporters, Prometheus, Grafana,
+        Tempo, OTel Collector and cAdvisor (default)
 
 The "ha" profile (MySQL InnoDB Cluster, Redis Sentinel, etc.) is available in M3.
 EOF
@@ -103,12 +104,26 @@ if ! compose up -d --wait --wait-timeout 240; then
   exit 1
 fi
 
-# `compose up --wait` only waits on services that declare a healthcheck, and none of the
-# exporters do, so a crash-looping exporter can still leave `--wait` with exit code 0.
-# Check every container explicitly (docker inspect works on all platforms/Compose versions).
-EXPECTED_SERVICES=(nginx mysql redis rabbitmq redis-exporter mysqld-exporter nginx-exporter)
+# `compose up --wait` only waits on services that declare a healthcheck. The OTel
+# Collector image is distroless and cannot define one, so a crash-looping service
+# can still leave `--wait` with exit code 0. Check every service from the rendered
+# compose model explicitly (docker inspect works on all platforms/Compose versions).
+services=()
+while IFS= read -r service; do
+  if [[ -n "$service" ]]; then
+    services+=("$service")
+  fi
+done < <(compose config --services)
+
+if (( ${#services[@]} == 0 )); then
+  echo "ERROR: 'docker compose config --services' returned no services." >&2
+  print_diagnostics
+  exit 1
+fi
+
 not_running=""
-for service in "${EXPECTED_SERVICES[@]}"; do
+for service in "${services[@]}"; do
+  # Every service in compose.base.yml sets container_name: jl-<service>.
   container="jl-$service"
   state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
   if [[ "$state" != "running" ]]; then
@@ -121,7 +136,7 @@ if [[ -n "$not_running" ]]; then
   print_diagnostics
   exit 1
 fi
-echo "Post-wait state check passed: all ${#EXPECTED_SERVICES[@]} containers are running."
+echo "Post-wait state check passed: all ${#services[@]} containers are running."
 
 echo
 echo "java-learn-lab dev stack is up:"
@@ -129,5 +144,7 @@ echo "  Nginx health  : http://127.0.0.1:8080/health"
 echo "  RabbitMQ mgmt : http://127.0.0.1:15672 (user: ${RABBITMQ_DEFAULT_USER:-lab}, pass: ${RABBITMQ_DEFAULT_PASS:-lab})"
 echo "  MySQL (dev)   : 127.0.0.1:3306 (db: ${MYSQL_DATABASE:-seckill}, user: ${MYSQL_USER:-seckill})"
 echo "  Redis (dev)   : 127.0.0.1:6379"
+echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-labadmin})"
 echo
+echo "Prometheus, Tempo, OTel Collector and cAdvisor are internal to jl-net."
 echo "Verify with: bash $SCRIPT_DIR/verify.sh"
