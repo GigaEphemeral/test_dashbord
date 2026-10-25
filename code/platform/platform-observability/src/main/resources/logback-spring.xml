@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <springProperty scope="context" name="observabilityApp"
+                    source="spring.application.name" defaultValue="app"/>
+    <springProperty scope="context" name="observabilityEnv"
+                    source="observability.env" defaultValue="local"/>
+    <springProperty scope="context" name="observabilityInstance"
+                    source="observability.instance" defaultValue="local"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdc>true</includeMdc>
+            <includeContext>false</includeContext>
+            <timeZone>UTC</timeZone>
+            <customFields>{"app":"${observabilityApp}","env":"${observabilityEnv}","instance":"${observabilityInstance}"}</customFields>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
