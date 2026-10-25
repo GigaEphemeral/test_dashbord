@@ -17,6 +17,7 @@ source "$ENV_FILE"
 
 compose() {
   docker compose \
+    --project-name java-learn-lab \
     --project-directory "$DOCKER_DIR" \
     --env-file "$ENV_FILE" \
     -f "$DOCKER_DIR/compose.base.yml" \

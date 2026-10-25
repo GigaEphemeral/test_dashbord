@@ -81,6 +81,7 @@ source "$ENV_FILE"
 
 compose() {
   docker compose \
+    --project-name java-learn-lab \
     --project-directory "$DOCKER_DIR" \
     --env-file "$ENV_FILE" \
     -f "$DOCKER_DIR/compose.base.yml" \
@@ -88,15 +89,39 @@ compose() {
     "$@"
 }
 
+print_diagnostics() {
+  echo "--- docker compose ps -a ---" >&2
+  compose ps -a >&2 || true
+  echo "--- docker compose logs (last 50 lines) ---" >&2
+  compose logs --tail=50 >&2 || true
+}
+
 echo "Starting java-learn-lab infrastructure (profile: $PROFILE)..."
 if ! compose up -d --wait --wait-timeout 240; then
   echo "ERROR: the stack did not become healthy within the timeout." >&2
-  echo "--- docker compose ps ---" >&2
-  compose ps >&2 || true
-  echo "--- docker compose logs (last 50 lines) ---" >&2
-  compose logs --tail=50 >&2 || true
+  print_diagnostics
   exit 1
 fi
+
+# `compose up --wait` only waits on services that declare a healthcheck, and none of the
+# exporters do, so a crash-looping exporter can still leave `--wait` with exit code 0.
+# Check every container explicitly (docker inspect works on all platforms/Compose versions).
+EXPECTED_SERVICES=(nginx mysql redis rabbitmq redis-exporter mysqld-exporter nginx-exporter)
+not_running=""
+for service in "${EXPECTED_SERVICES[@]}"; do
+  container="jl-$service"
+  state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+  if [[ "$state" != "running" ]]; then
+    echo "ERROR: $container is not running (state=${state:-missing})." >&2
+    not_running="$not_running $container"
+  fi
+done
+if [[ -n "$not_running" ]]; then
+  echo "ERROR: containers not running after 'compose up --wait':$not_running" >&2
+  print_diagnostics
+  exit 1
+fi
+echo "Post-wait state check passed: all ${#EXPECTED_SERVICES[@]} containers are running."
 
 echo
 echo "java-learn-lab dev stack is up:"

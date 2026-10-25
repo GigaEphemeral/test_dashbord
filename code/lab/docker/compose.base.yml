@@ -136,8 +136,10 @@ services:
       - --mysqld.username=exporter
     environment:
       TZ: ${TZ}
-      # Fixed lab-only account and password, created by mysql/init/00-exporter.sql.
-      MYSQLD_EXPORTER_PASSWORD: exporter
+      # Lab-only exporter account (see .env.example). The database-side password is
+      # fixed in mysql/init/00-exporter.sql, so changing MYSQLD_EXPORTER_PASSWORD
+      # also requires updating that SQL file (and recreating the MySQL volume).
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQLD_EXPORTER_PASSWORD}
     expose:
       - "9104"
     depends_on:
