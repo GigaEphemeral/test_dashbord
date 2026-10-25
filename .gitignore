@@ -1,0 +1,41 @@
+# Build
+target/
+build/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime artifacts
+*.log
+logs/
+tmp/
+*.hprof
+doc/process/snapshots/
+code/lab/k6/reports/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# SDD scratch
+.superpowers/
+
+# Local compose overrides
+code/lab/docker/docker-compose.override.yml
