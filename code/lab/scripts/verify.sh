@@ -157,6 +157,43 @@ else
   fail "nginx /health returns ok" "got '${health_body}'"
 fi
 
+# 2b. Application tier through Nginx.
+hello_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+  http://127.0.0.1:8080/api/hello 2>/dev/null || true)"
+hello_code="${hello_response##*$'\n'}"
+hello_body="${hello_response%$'\n'*}"
+if [[ "$hello_code" == "200" ]] \
+  && grep -Eq '"message"[[:space:]]*:[[:space:]]*"hello"' <<<"$hello_body" \
+  && grep -Eq '"instance"[[:space:]]*:[[:space:]]*"app-' <<<"$hello_body"; then
+  pass "nginx /api/hello returns 200 JSON with message and instance"
+else
+  fail "nginx /api/hello returns 200 JSON with message and instance" \
+    "HTTP ${hello_code:-000} body: ${hello_body:0:120}"
+fi
+
+# Nine sequential calls give round-robin three turns per instance.
+hello_instances=""
+hello_calls_ok=true
+for _ in $(seq 1 9); do
+  call_body="$(curl -fsS --max-time 5 http://127.0.0.1:8080/api/hello 2>/dev/null || true)"
+  call_instance="$(sed -n 's/.*"instance"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$call_body")"
+  if [[ -z "$call_instance" ]]; then
+    hello_calls_ok=false
+  else
+    hello_instances="${hello_instances}${call_instance}"$'\n'
+  fi
+done
+unique_instances="$(printf '%s' "$hello_instances" | sed '/^[[:space:]]*$/d' | sort -u)"
+# printf '%s\n' keeps the last line for wc -l; command substitution strips the
+# trailing newline from sort, which would undercount by one.
+unique_count="$(printf '%s\n' "$unique_instances" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+if $hello_calls_ok && [[ "$unique_count" == "3" ]] && ! grep -qv '^app-' <<<"$unique_instances"; then
+  pass "nine /api/hello calls hit all three app instances (round-robin)"
+else
+  fail "nine /api/hello calls hit all three app instances (round-robin)" \
+    "unique instances: $(printf '%s' "$unique_instances" | tr '\n' ' ')"
+fi
+
 # 3. RabbitMQ management API.
 rabbit_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
   -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
@@ -291,6 +328,50 @@ if grep -q '"result":\[{' <<<"$cadvisor_series_body"; then
   pass "cadvisor exposes container series for lab containers"
 else
   warn "cadvisor container series absent (Docker Desktop/WSL2 limitation; D3 CPU/memory/network panels will show No data)"
+fi
+
+# 10. Application targets, Micrometer series and OTel traces.
+app_up_body=""
+for attempt in $(seq 1 30); do
+  app_up_body="$(prometheus_query 'count%28up%7Bjob%3D%22seckill-app%22%7D%3D%3D1%29')"
+  if grep -Eq '"value":\[[0-9.]+,"3"\]' <<<"$app_up_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 2
+  fi
+done
+if grep -Eq '"value":\[[0-9.]+,"3"\]' <<<"$app_up_body"; then
+  pass "prometheus count(up{job=\"seckill-app\"} == 1) == 3"
+else
+  fail "prometheus count(up{job=\"seckill-app\"} == 1) == 3" \
+    "response: ${app_up_body:0:160}"
+fi
+
+check_metric "prometheus scrapes http_server_requests_seconds_bucket for seckill-app" \
+  "http://prometheus:9090/api/v1/query?query=http_server_requests_seconds_bucket%7Bjob%3D%22seckill-app%22%7D" \
+  '"job":"seckill-app"'
+check_metric "prometheus scrapes jvm_threads_live_threads for seckill-app" \
+  "http://prometheus:9090/api/v1/query?query=jvm_threads_live_threads%7Bjob%3D%22seckill-app%22%7D" \
+  '"job":"seckill-app"'
+
+# The OTel agent + collector batch exports, so allow up to 30s for a trace to land.
+tempo_trace_body=""
+for attempt in $(seq 1 30); do
+  tempo_trace_body="$(docker exec jl-nginx wget -qO- -T 5 \
+    "http://tempo:3200/api/search?tags=service.name%3Dseckill-app&limit=5" 2>/dev/null || true)"
+  if grep -q '"traceID"' <<<"$tempo_trace_body"; then
+    break
+  fi
+  if (( attempt < 30 )); then
+    sleep 1
+  fi
+done
+if grep -q '"traceID"' <<<"$tempo_trace_body"; then
+  pass "tempo has at least one trace for service.name=seckill-app"
+else
+  fail "tempo has at least one trace for service.name=seckill-app" \
+    "response: ${tempo_trace_body:0:160}"
 fi
 
 if (( FAILED > 0 )); then

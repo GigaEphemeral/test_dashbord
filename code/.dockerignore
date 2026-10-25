@@ -1,0 +1,12 @@
+# Docker build context is code/. Keep the reactor inputs only.
+.git
+.superpowers
+**/.git
+**/target
+target
+lab/k6/reports
+**/node_modules
+**/*.log
+*.log
+**/*.hprof
+**/.idea

@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: seckill-app
+
+server:
+  port: 8080
+  # Boot 3 disables the Tomcat MBean registry by default; D2 reads
+  # tomcat_threads_busy_threads, so the lab app opts back in.
+  tomcat:
+    mbeanregistry:
+      enabled: true
+
+observability:
+  env: dev
+  instance: ${INSTANCE_ID:app-local}
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true

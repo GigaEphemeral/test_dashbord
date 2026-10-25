@@ -3,6 +3,49 @@
 
 name: java-learn-lab
 
+# Shared application-tier defaults. Host ports are intentionally absent: the
+# only public entry point is Nginx on 127.0.0.1:8080.
+x-app-common: &app-common
+  image: java-learn-lab/seckill-app:jdk21
+  build:
+    context: ../..
+    dockerfile: services/seckill-app-jdk21/Dockerfile
+    args:
+      OTEL_AGENT_VERSION: ${OTEL_AGENT_VERSION:-2.10.0}
+  restart: unless-stopped
+  mem_limit: 768m
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "app"
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    otel-collector:
+      condition: service_started
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+    start_period: 30s
+
+x-app-env: &app-env
+  TZ: ${TZ}
+  OTEL_SERVICE_NAME: seckill-app
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_TRACES_EXPORTER: otlp
+  # Metrics stay on the Actuator scrape path; logs stay on stdout (JSON).
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dev
+
 services:
   nginx:
     image: ${NGINX_IMAGE}
@@ -20,6 +63,13 @@ services:
     labels:
       lab: "java-learn"
       lab.role: "nginx"
+    depends_on:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      app-3:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health | grep -q ok"]
       interval: 10s
@@ -105,6 +155,29 @@ services:
       timeout: 10s
       retries: 12
       start_period: 30s
+
+  # --- Application tier (Task 10): three identical instances, Nginx entry only ---
+
+  app-1:
+    <<: *app-common
+    container_name: jl-app-1
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-1
+
+  app-2:
+    <<: *app-common
+    container_name: jl-app-2
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-2
+
+  app-3:
+    <<: *app-common
+    container_name: jl-app-3
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-3
 
   redis-exporter:
     image: ${REDIS_EXPORTER_IMAGE}

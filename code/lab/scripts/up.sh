@@ -14,8 +14,8 @@ Usage: up.sh [--profile dev]
 Start the java-learn-lab dev infrastructure stack.
 
 Profiles:
-  dev   Nginx, MySQL, Redis, RabbitMQ, exporters, Prometheus, Grafana,
-        Tempo, OTel Collector and cAdvisor (default)
+  dev   Nginx, three app instances, MySQL, Redis, RabbitMQ, exporters,
+        Prometheus, Grafana, Tempo, OTel Collector and cAdvisor (default)
 
 The "ha" profile (MySQL InnoDB Cluster, Redis Sentinel, etc.) is available in M3.
 EOF
@@ -74,6 +74,28 @@ fi
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ENV_EXAMPLE" "$ENV_FILE"
   echo "WARN: $ENV_FILE was missing; created it from .env.example (lab-only defaults)."
+fi
+
+# Every key declared in .env.example must exist in the local .env. Only key names
+# are printed: values may be lab credentials and must never reach the log.
+missing_keys=()
+while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+  line="${raw_line%$'\r'}"
+  [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
+  if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+    key="${BASH_REMATCH[1]}"
+    if ! grep -Eq "^[[:space:]]*${key}[[:space:]]*=" "$ENV_FILE"; then
+      missing_keys+=("$key")
+    fi
+  fi
+done < "$ENV_EXAMPLE"
+
+if (( ${#missing_keys[@]} > 0 )); then
+  echo "ERROR: $ENV_FILE is missing keys required by .env.example:" >&2
+  printf '  - %s\n' "${missing_keys[@]}" >&2
+  echo "Add the missing keys to $ENV_FILE (copy the names from $ENV_EXAMPLE); values are not printed." >&2
+  exit 1
 fi
 
 # Load lab defaults for display below. Do not export; compose gets them via --env-file.
@@ -137,6 +159,20 @@ if [[ -n "$not_running" ]]; then
   exit 1
 fi
 echo "Post-wait state check passed: all ${#services[@]} containers are running."
+
+# Bind-mounted configs are not part of the Compose service hash, so reused
+# containers would otherwise keep their stale in-memory config (and app DNS).
+if ! reload_output="$(docker exec jl-nginx nginx -s reload 2>&1)"; then
+  echo "ERROR: nginx failed to reload the mounted configuration: $reload_output" >&2
+  print_diagnostics
+  exit 1
+fi
+if ! docker exec jl-prometheus wget -qO- --post-data='' \
+    http://127.0.0.1:9090/-/reload >/dev/null 2>&1; then
+  echo "ERROR: prometheus failed to reload /etc/prometheus/prometheus.yml." >&2
+  print_diagnostics
+  exit 1
+fi
 
 echo
 echo "java-learn-lab dev stack is up:"

@@ -1,6 +1,5 @@
 # Prometheus 3.x configuration for the local HA lab.
 # Targets are compose-network service names; only Grafana is published on the host.
-# Task 10 will add the seckill-app-1/2/3 targets; do not add them here yet.
 
 global:
   scrape_interval: 5s
@@ -11,6 +10,13 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # The three JDK 21 app instances expose Micrometer/Actuator metrics directly.
+  - job_name: seckill-app
+    metrics_path: /actuator/prometheus
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["app-1:8080", "app-2:8080", "app-3:8080"]
 
   - job_name: nginx-exporter
     static_configs:
