@@ -57,6 +57,10 @@ SECKILL_POLL_INTERVAL_SECONDS="${SECKILL_POLL_INTERVAL_SECONDS:-1}"
 SECKILL_QUEUE_NAME="${SECKILL_QUEUE_NAME:-seckill.order.queue}"
 SECKILL_STOCK_KEY_PREFIX="${SECKILL_STOCK_KEY_PREFIX:-seckill:stock:}"
 RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://127.0.0.1:15672}"
+# curl timeouts for the seckill checks: POST/repeat/queue management use the
+# general budget, GET polling uses the shorter per-poll budget.
+SECKILL_CURL_MAX_TIME="${SECKILL_CURL_MAX_TIME:-10}"
+SECKILL_CURL_POLL_MAX_TIME="${SECKILL_CURL_POLL_MAX_TIME:-5}"
 
 compose() {
   docker compose \
@@ -501,7 +505,7 @@ fi
 
 seckill_key="verify-seckill-$(date +%s)-${RANDOM}-$$"
 seckill_payload="{\"userId\":\"verify-seckill-user\",\"productId\":${SECKILL_PRODUCT_ID},\"quantity\":1}"
-seckill_accept_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+seckill_accept_response="$(curl -sS -w $'\n%{http_code}' --max-time "$SECKILL_CURL_MAX_TIME" \
   -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${seckill_key}" \
   --data "$seckill_payload" \
   http://127.0.0.1:8080/api/seckill/orders 2>/dev/null || true)"
@@ -524,7 +528,7 @@ seckill_poll_status=""
 seckill_order_id=""
 if [[ -n "$seckill_request_id" ]]; then
   for attempt in $(seq 1 "$SECKILL_POLL_RETRIES"); do
-    seckill_poll_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+    seckill_poll_response="$(curl -sS -w $'\n%{http_code}' --max-time "$SECKILL_CURL_POLL_MAX_TIME" \
       "http://127.0.0.1:8080/api/seckill/orders/${seckill_request_id}" 2>/dev/null || true)"
     seckill_poll_code="${seckill_poll_response##*$'\n'}"
     seckill_poll_body="${seckill_poll_response%$'\n'*}"
@@ -552,7 +556,7 @@ else
 fi
 
 if [[ -n "$seckill_request_id" && -n "$seckill_order_id" ]]; then
-  seckill_repeat_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+  seckill_repeat_response="$(curl -sS -w $'\n%{http_code}' --max-time "$SECKILL_CURL_MAX_TIME" \
     -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${seckill_key}" \
     --data "$seckill_payload" \
     http://127.0.0.1:8080/api/seckill/orders 2>/dev/null || true)"
@@ -594,7 +598,7 @@ fi
 seckill_queue_exists=false
 seckill_queue_ready=""
 for attempt in $(seq 1 "$SECKILL_POLL_RETRIES"); do
-  seckill_queue_json="$(curl -sS --max-time 10 \
+  seckill_queue_json="$(curl -sS --max-time "$SECKILL_CURL_MAX_TIME" \
     -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
     "${RABBITMQ_MANAGEMENT_URL}/api/queues/%2F/${SECKILL_QUEUE_NAME}" 2>/dev/null || true)"
   if grep -q "\"name\":\"${SECKILL_QUEUE_NAME}\"" <<<"$seckill_queue_json"; then
