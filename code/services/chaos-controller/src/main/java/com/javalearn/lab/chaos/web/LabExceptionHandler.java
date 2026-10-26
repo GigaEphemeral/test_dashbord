@@ -5,8 +5,10 @@ import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.error.LabErrorCode;
+import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import org.slf4j.Logger;
@@ -45,6 +47,18 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleInvalidAction(InvalidChaosActionException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidScenarioException.class)
+    public ResponseEntity<Result<Void>> handleInvalidScenario(InvalidScenarioException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(ScenarioNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleScenarioNotFound(ScenarioNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
     }
 
     @ExceptionHandler(ChaosConflictException.class)

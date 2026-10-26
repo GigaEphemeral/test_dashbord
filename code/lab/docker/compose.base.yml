@@ -247,10 +247,16 @@ services:
       CHAOS_ANNOTATION_GRAFANA_URL: ${CHAOS_ANNOTATION_GRAFANA_URL:-http://grafana:3000}
       CHAOS_ANNOTATION_TIMEOUT_SECONDS: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:-3}
       CHAOS_ANNOTATION_TAGS: ${CHAOS_ANNOTATION_TAGS:-}
+      # Task 22b: interactive guide reads the same scenario JSON as k6.
+      CHAOS_GUIDE_SCENARIO_DIR: ${CHAOS_GUIDE_SCENARIO_DIR:-/app/scenarios}
+      CHAOS_GUIDE_TARGET_PATTERN: ${CHAOS_GUIDE_TARGET_PATTERN:-^jl-app-[0-9]+$}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Shared schema-v1 scenarios (read-only). Paths inside them are validated
+      # before any Docker call.
+      - ../scenarios:/app/scenarios:ro
     expose:
       - "8081"
     networks:

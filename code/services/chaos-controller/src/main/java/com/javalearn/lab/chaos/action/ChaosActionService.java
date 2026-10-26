@@ -12,8 +12,10 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,6 +36,11 @@ import java.util.concurrent.TimeUnit;
  * Revert failures stay visible as FAILED and are retried up to
  * {@code chaos.max-revert-attempts}. Every Docker call goes through the gateway,
  * which enforces the {@code lab=java-learn} label.</p>
+ *
+ * <p>The guide can freeze the whole action set: while paused, scheduled reverts
+ * and the watchdog do not fire, and every action keeps its remaining TTL.
+ * Resuming schedules that remaining TTL (not a fresh one); stop-all reverts
+ * regardless of pause.</p>
  */
 @Service
 public class ChaosActionService {
@@ -47,19 +54,33 @@ public class ChaosActionService {
     private final ChaosProperties properties;
     private final MeterRegistry meterRegistry;
     private final ScheduledExecutorService scheduler;
+    private final Clock clock;
 
     private final ConcurrentHashMap<String, ChaosAction> active = new ConcurrentHashMap<>();
+    private volatile boolean paused;
 
+    @Autowired
     public ChaosActionService(ContainerGateway gateway,
                               ChaosAnnotator annotator,
                               ChaosProperties properties,
                               MeterRegistry meterRegistry,
                               ScheduledExecutorService chaosActionScheduler) {
+        this(gateway, annotator, properties, meterRegistry, chaosActionScheduler, Clock.systemUTC());
+    }
+
+    /** Test seam: a controllable clock makes freeze/resume remaining-TTL deterministic. */
+    public ChaosActionService(ContainerGateway gateway,
+                              ChaosAnnotator annotator,
+                              ChaosProperties properties,
+                              MeterRegistry meterRegistry,
+                              ScheduledExecutorService chaosActionScheduler,
+                              Clock clock) {
         this.gateway = gateway;
         this.annotator = annotator;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
         this.scheduler = chaosActionScheduler;
+        this.clock = clock;
 
         Gauge.builder("chaos.active.actions", active, map -> map.size())
                 .description("Chaos actions tracked with a pending automatic revert")
@@ -94,19 +115,26 @@ public class ChaosActionService {
             return view;
         }
 
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         ChaosAction action = new ChaosAction(UUID.randomUUID().toString(), target, type, ttl,
                 now, now.plusSeconds(ttl));
         register(action);
-        // Schedule before touching Docker: if the apply below fails we cancel;
-        // if scheduling itself failed nothing was stopped/frozen yet.
-        try {
-            ScheduledFuture<?> future = scheduler.schedule(
-                    () -> autoRevert(action, "ttl"), ttl, TimeUnit.SECONDS);
-            action.schedule(future);
-        } catch (RejectedExecutionException e) {
-            active.remove(target, action);
-            throw e;
+        if (paused) {
+            // Freeze immediately: the action stays visible with its full TTL
+            // remaining and is scheduled when the guide resumes.
+            action.freeze(now);
+        } else {
+            // Schedule before touching Docker: if the apply below fails we cancel;
+            // if scheduling itself failed nothing was stopped/frozen yet.
+            try {
+                long delayMillis = TimeUnit.SECONDS.toMillis(ttl);
+                ScheduledFuture<?> future = scheduler.schedule(
+                        () -> autoRevert(action, "ttl"), delayMillis, TimeUnit.MILLISECONDS);
+                action.schedule(future);
+            } catch (RejectedExecutionException e) {
+                active.remove(target, action);
+                throw e;
+            }
         }
 
         try {
@@ -136,6 +164,65 @@ public class ChaosActionService {
                 .sorted(Comparator.comparing(ChaosAction::expiresAt))
                 .map(ChaosAction::toView)
                 .toList();
+    }
+
+    /** True while TTL reverts and watchdog retries are frozen. */
+    public boolean isPaused() {
+        return paused;
+    }
+
+    /**
+     * Freezes every tracked action, including actions not created by the guide.
+     * Scheduled reverts are cancelled and each remaining TTL is captured.
+     *
+     * @return true when this call paused the service, false if it was already paused
+     */
+    public synchronized boolean pause() {
+        if (paused) {
+            return false;
+        }
+        paused = true;
+        Instant now = clock.instant();
+        for (ChaosAction action : active.values()) {
+            long remaining = action.freeze(now);
+            log.info("Froze chaos action {} ({} on {}): remaining={}ms",
+                    action.id(), action.type().wireName(), action.target(), remaining);
+        }
+        return true;
+    }
+
+    /**
+     * Restores every ACTIVE action with its remaining TTL (never a full reset)
+     * and lets the watchdog retry FAILED reverts again.
+     *
+     * @return true when this call resumed the service, false if it was not paused
+     */
+    public synchronized boolean resume() {
+        if (!paused) {
+            return false;
+        }
+        paused = false;
+        Instant now = clock.instant();
+        for (ChaosAction action : active.values()) {
+            if (action.status() != ChaosActionStatus.ACTIVE) {
+                continue;
+            }
+            long remaining = Math.max(0L, action.remainingMillis());
+            Instant expiresAt = action.resumeAt(now, remaining);
+            long delayMillis = Math.max(0L, java.time.Duration.between(now, expiresAt).toMillis());
+            try {
+                ScheduledFuture<?> future = scheduler.schedule(
+                        () -> autoRevert(action, "ttl"), delayMillis, TimeUnit.MILLISECONDS);
+                action.schedule(future);
+            } catch (RejectedExecutionException e) {
+                // The watchdog (now unpaused) still reverts once expiresAt passes.
+                log.warn("Could not reschedule {} on {} after resume; watchdog will revert: {}",
+                        action.type().wireName(), action.target(), e.toString());
+            }
+            log.info("Resumed chaos action {} ({} on {}): remaining={}ms",
+                    action.id(), action.type().wireName(), action.target(), remaining);
+        }
+        return true;
     }
 
     /**
@@ -174,9 +261,13 @@ public class ChaosActionService {
     /** Watchdog second safety net; also retries FAILED reverts. */
     void sweep() {
         try {
-            Instant now = Instant.now();
+            if (paused) {
+                // The guide is inspecting the lab: no TTL may fire, no retry may run.
+                return;
+            }
+            Instant now = clock.instant();
             for (ChaosAction action : active.values()) {
-                if (action.status() == ChaosActionStatus.ACTIVE && !action.expiresAt().isAfter(now)) {
+                if (action.expiredAt(now)) {
                     log.warn("Watchdog: action {} ({} on {}) expired without revert; reverting",
                             action.id(), action.type().wireName(), action.target());
                     autoRevert(action, "watchdog");
@@ -196,6 +287,12 @@ public class ChaosActionService {
     }
 
     private void autoRevert(ChaosAction action, String trigger) {
+        if (paused) {
+            // A TTL task that fires just after pause must not undo the freeze.
+            log.debug("Skipping {} revert of {} on {} (guide paused)", trigger,
+                    action.type().wireName(), action.target());
+            return;
+        }
         if (!action.claimRevert()) {
             return;
         }

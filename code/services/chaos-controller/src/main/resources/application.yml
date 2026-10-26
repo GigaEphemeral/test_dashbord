@@ -44,6 +44,12 @@ chaos:
   stop-grace-seconds: ${CHAOS_STOP_GRACE_SECONDS:10}
   # Revert retries before an action stays FAILED until stop-all.
   max-revert-attempts: ${CHAOS_MAX_REVERT_ATTEMPTS:3}
+  # Interactive guide (Task 22b). Scenarios are shared with k6 (schema v1).
+  guide:
+    # Read-only scenario directory; compose mounts code/lab/scenarios here.
+    scenario-dir: ${CHAOS_GUIDE_SCENARIO_DIR:/app/scenarios}
+    # Only application instances may be targeted; datastores are always rejected.
+    target-pattern: "${CHAOS_GUIDE_TARGET_PATTERN:^jl-app-[0-9]+$}"
   annotation:
     # Best-effort Grafana annotations; failures are logged, never fatal.
     enabled: ${CHAOS_ANNOTATION_ENABLED:true}

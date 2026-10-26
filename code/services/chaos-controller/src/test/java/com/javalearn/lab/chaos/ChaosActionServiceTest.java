@@ -17,17 +17,27 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ChaosActionServiceTest {
 
@@ -244,6 +254,143 @@ class ChaosActionServiceTest {
         assertThat(first.tags).contains("chaos", "java-learn", APP, "freeze");
         assertThat(first.text).contains("ttl=1s", "revert=resume");
         assertThat(annotator.events.get(1).text).contains("reverted");
+    }
+
+    @Test
+    void pauseFreezesTtlAndResumeSchedulesOnlyTheRemainingTime() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", 30));
+        assertThat(delays).containsExactly(TimeUnit.SECONDS.toMillis(30));
+
+        clock.advance(Duration.ofSeconds(10));
+        assertThat(frozen.pause()).isTrue();
+        assertThat(frozen.isPaused()).isTrue();
+
+        // A TTL task already in flight must not revert while paused.
+        tasks.get(0).run();
+        assertThat(gateway.calls).doesNotContain("start:" + APP);
+
+        clock.advance(Duration.ofSeconds(60));
+        watchdogs.get(0).run();
+        assertThat(gateway.calls).doesNotContain("start:" + APP);
+        assertThat(frozen.activeActions()).hasSize(1);
+
+        Instant resumedAt = clock.instant();
+        assertThat(frozen.resume()).isTrue();
+        assertThat(frozen.isPaused()).isFalse();
+        assertThat(delays).containsExactly(TimeUnit.SECONDS.toMillis(30),
+                TimeUnit.SECONDS.toMillis(20));
+        assertThat(frozen.activeActions().get(0).expiresAt())
+                .isEqualTo(resumedAt.plusSeconds(20));
+
+        tasks.get(1).run();
+        assertThat(gateway.calls).contains("start:" + APP);
+        assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    @Test
+    void actionCreatedWhilePausedIsFrozenUntilResume() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        assertThat(frozen.pause()).isTrue();
+        frozen.execute(APP2, new ChaosActionRequest("freeze", 10));
+
+        assertThat(delays).isEmpty();
+        assertThat(gateway.calls).contains("signal:" + APP2 + ":SIGSTOP");
+        assertThat(frozen.activeActions()).hasSize(1);
+
+        frozen.resume();
+        assertThat(delays).containsExactly(TimeUnit.SECONDS.toMillis(10));
+        tasks.get(0).run();
+        assertThat(gateway.calls).contains("signal:" + APP2 + ":SIGCONT");
+        assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    @Test
+    void stopAllRevertsAndClearsWhilePaused() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", 30));
+        frozen.pause();
+
+        StopAllResult result = frozen.stopAll();
+
+        assertThat(result.reverted()).isEqualTo(1);
+        assertThat(result.failed()).isZero();
+        assertThat(gateway.calls).contains("start:" + APP);
+        assertThat(frozen.activeActions()).isEmpty();
+        // stop-all does not silently unfreeze; the guide reset does that explicitly.
+        assertThat(frozen.isPaused()).isTrue();
+    }
+
+    @Test
+    void resumeIsANoOpWhenNotPaused() {
+        assertThat(service.resume()).isFalse();
+        assertThat(service.pause()).isTrue();
+        assertThat(service.pause()).isFalse();
+    }
+
+    private ChaosActionService serviceWithManualScheduler(MutableClock clock,
+                                                          List<Runnable> tasks,
+                                                          List<Long> delays,
+                                                          List<Runnable> watchdogs) {
+        properties.setDefaultTtlSeconds(30);
+        properties.setMaxTtlSeconds(600);
+        properties.setWatchdogIntervalSeconds(60);
+        ScheduledExecutorService manual = mock(ScheduledExecutorService.class);
+        when(manual.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> {
+                    tasks.add(invocation.getArgument(0));
+                    delays.add(invocation.getArgument(1));
+                    return mock(ScheduledFuture.class);
+                });
+        when(manual.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> {
+                    watchdogs.add(invocation.getArgument(0));
+                    return mock(ScheduledFuture.class);
+                });
+        return new ChaosActionService(gateway, annotator, properties, registry, manual, clock);
+    }
+
+    private static final class MutableClock extends Clock {
+
+        private Instant now;
+
+        private MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        private void advance(Duration duration) {
+            now = now.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     private double counter(String name, String... tags) {

@@ -33,6 +33,8 @@ public class ChaosProperties {
 
     private final Annotation annotation = new Annotation();
 
+    private final Guide guide = new Guide();
+
     public int getDefaultTtlSeconds() {
         return defaultTtlSeconds;
     }
@@ -83,6 +85,36 @@ public class ChaosProperties {
 
     public Annotation getAnnotation() {
         return annotation;
+    }
+
+    public Guide getGuide() {
+        return guide;
+    }
+
+    /** Interactive guide (Task 22b): scenario directory + target allow-list. */
+    public static class Guide {
+
+        /** Directory holding shared scenario JSON; compose mounts it read-only. */
+        private String scenarioDir = "/app/scenarios";
+
+        /** Container names a scenario may target; datastores are always rejected. */
+        private String targetPattern = "^jl-app-[0-9]+$";
+
+        public String getScenarioDir() {
+            return scenarioDir;
+        }
+
+        public void setScenarioDir(String scenarioDir) {
+            this.scenarioDir = scenarioDir;
+        }
+
+        public String getTargetPattern() {
+            return targetPattern;
+        }
+
+        public void setTargetPattern(String targetPattern) {
+            this.targetPattern = targetPattern;
+        }
     }
 
     public static class Annotation {
