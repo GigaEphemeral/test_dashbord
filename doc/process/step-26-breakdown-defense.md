@@ -30,6 +30,7 @@
 - 决策：无条目（冷/超保留期）→ 同步重建；逻辑未过期 → 直接命中返回；逻辑已过期但物理仍保留 → **立即返回旧值** + 触发一次异步刷新。
 - 异步刷新防惊群：`ConcurrentHashMap.putIfAbsent` 单飞（每 key 同时至多 1 个刷新，重复请求计 `deduped`）；执行器为独立有界池（`refresh-pool-size`/`refresh-queue-capacity`/`keep-alive-seconds`/`thread-name-prefix`，daemon，AbortPolicy）；池满被拒 → 计 `rejected`、释放单飞标记、旧值继续服务，请求线程绝不代跑查询。
 - 刷新失败/商品消失 → 计 `failure`，保留旧值到保留期结束，绝不把演示中途变成 404。
+- **刷新成功后把新值同步写回共享缓存**（评审修订，`CacheWriter` 由 `BreakdownProtectionConfig.springCacheWriter` 接 Spring Cache 同名缓存）：stale-serve 返回的旧值会被 `@Cacheable` 拦截器写回 L1/L2，若刷新只更新守卫私有存储，"短暂不新鲜"会退化成"旧值整整活到下一次物理过期"。写回后陈旧窗口 ≈ 一次刷新耗时，符合 8.4 的代价承诺。残余竞态：某次 stale-serve 的方法返回写缓存若恰好晚于刷新写回，会用旧值盖住新值——影响仅限一个物理 TTL 周期且自愈（守卫存储此时已是新值），已列入缺陷节。
 
 ## 4. 指标（沿用 M4-1 `cache_*` 命名；本步新增系列）
 
@@ -46,8 +47,8 @@
 ## 6. 配置（`app.lab.cache.breakdown.*`，全部 `${ENV:default}`，`validate()` 启动即校验，无 Java 默认值）
 
 - mutex：`LAB_CACHE_MUTEX_KEY_PREFIX:lock:product:`、`LAB_CACHE_MUTEX_WAIT_MS:200`、`LAB_CACHE_MUTEX_LEASE_MS:2000`、`LAB_CACHE_MUTEX_ON_LOCK_TIMEOUT:db`
-- logical-expire：`LAB_CACHE_LOGICAL_TTL_SECONDS:30`、`LAB_CACHE_LOGICAL_RETENTION_SECONDS:120`、`LAB_CACHE_LOGICAL_MAX_ENTRIES:10000`、`LAB_CACHE_LOGICAL_REFRESH_POOL_SIZE:2`、`LAB_CACHE_LOGICAL_REFRESH_QUEUE_CAPACITY:100`、`LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60`、`LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh`
-- 校验钉住：wait/lease 为正且 lease≥wait；on-lock-timeout ∈ {db,stale}；retention>logical-ttl；max-entries/pool/queue/keep-alive 为正；前缀非空。
+- logical-expire：`LAB_CACHE_LOGICAL_TTL_SECONDS:30`、`LAB_CACHE_LOGICAL_RETENTION_SECONDS:600`（评审修订：原 120 小于热点键 L2 生命期，旧值必在击穿前被物理清除，兜底永不触发）、`LAB_CACHE_LOGICAL_MAX_ENTRIES:10000`、`LAB_CACHE_LOGICAL_REFRESH_POOL_SIZE:2`、`LAB_CACHE_LOGICAL_REFRESH_QUEUE_CAPACITY:100`、`LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60`、`LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh`
+- 校验钉住：wait/lease 为正且 lease≥wait；on-lock-timeout ∈ {db,stale}；retention>logical-ttl；**retention>seed.hot-key-ttl-seconds**（否则 logical-expire 静默退化成 off）；max-entries/pool/queue/keep-alive 为正；前缀非空。
 
 # 设计逻辑
 
@@ -61,9 +62,10 @@
 # 存在缺陷项&约束
 
 - **未做实栈验收**：只跑过 reactor 单测/IT；未在运行中的栈上切过 mutex/logical-expire、未看过真实 P99 抬升与陈旧窗口、未接 Grafana。演示前需按下面"演示口径"打一轮。
-- **mutex 的同实例双检窗口**（上节已述）：持锁者方法返回与 @Cacheable 写入之间，等待线程可能双检扑空多查一次库；数字预期为"rebuild≈1、double-check-hit 高、少量额外 fallback"，不是数学上的恰好 1。
+- **mutex 的跨实例双检窗口**（评审后修正表述）：持锁者在**释放锁之前**已把重建结果写入守卫 stale 存储，故同实例等待线程的双检（probe→stale 存储）能命中，present 商品每轮击穿 rebuild≈1；残余窗口是**跨实例**（对端 L2 要等持锁者的 `@Cacheable` 方法返回才可见）与**absent 商品**（守卫存储不记空值，等待者逐个诚实查库——空值防护本就是 M4-1 穿透策略的职责）。数字预期"rebuild≈1、double-check-hit 高、少量额外 fallback"，不是数学上的恰好 1；全部可用 `cache_breakdown_mutex{result}` 直接观测。
+- **logical-expire 刷新写回的次序竞态**：极端交错下某 stale-serve 的 `@Cacheable` 写缓存可能落在刷新写回之后，把旧值盖回 L2 一个物理 TTL 周期；守卫存储不受影响（刷新已更新），下一轮过期即自愈，属可演示可解释的短暂现象（已随评审修订把刷新结果写回共享缓存，正常路径陈旧窗口=一次刷新耗时）。
 - **stale 存储是每实例内存态**：多实例各自兜底、互不可见，重启即失（逻辑过期语义在实例内闭环）；跨实例旧值兜底留待 M4-3 l1-cache 方案一并评估。
-- **logical-expire 冷启动不防并发**：无任何旧值时并发首个请求各自同步重建（与 mutex 不同，这是策略选择的代价，设计 8.4 只承诺"旧值兜底+异步刷新"）；演示时先让热点键被守卫重建一次再进入陈旧窗口。
+- **logical-expire 冷启动不防并发**：无任何旧值时并发首个请求各自同步重建（与 mutex 不同，这是策略选择的代价，设计 8.4 只承诺"旧值兜底+异步刷新"）；演示时先让热点键被守卫重建一次再进入陈旧窗口（retention 默认 600s 已覆盖热点键 300s 生命期，重建一次后续周期即进入 stale-serve 形态）。
 - `refreshInFlight`/`staleEntriesCached` 是瞬时值，抓取时刻可能恰为 0，state 里是观测辅助不是计数。
 
 # 待定事项（本步有意不做）
@@ -72,4 +74,11 @@
 - **M4-3 Caffeine 热点预热**：热点探测/ZSet 榜单/启动与周期预热/refreshAfterWrite。
 - **改名**：`app.lab.cache.penetration.mode` 现承载全部防护模式，宜在后续小版本改为 `app.lab.cache.defense.mode`（保留旧 key 别名一个里程碑）。
 - console UI 展示 `breakdown` 段、Grafana D10 面板（新 4 个系列）、场景 JSON 增加 mutex/logical-expire 剧本、chaos-controller 广播模式、k6/compose 接线、live Redis 击穿演练（含 mutex P99 对照截图）。
-- 实栈演示口径备忘：seed → 等热点 key L2 过期（`hot-key-ttl-seconds=300`，可调小）→ `off` 打并发看 `reason=breakdown` 基线 → 切 `mutex` 看 rebuild≈1 + P99 抬升 → 切 `logical-expire` 看 stale-serve + refresh 单飞 + 数据短暂陈旧。
+- 实栈演示口径备忘：seed → 等热点 key L2 过期（`hot-key-ttl-seconds=300`，可调小）→ `off` 打并发看 `cache_db_fallbacks{reason="miss"}` 基线（off 委托 M4-1 穿透守卫，**不产生** `reason="breakdown"` 计数）→ 切 `mutex` 看 rebuild≈1 + P99 抬升 + `reason="breakdown"` 收敛 → 切 `logical-expire` 看 stale-serve + refresh 单飞 + 数据短暂陈旧（刷新写回后新值即时可见）。
+
+# M4-2 评审修订（2026-10-27，独立评审）
+
+- **fix（85195f4）**：① logical-expire 刷新成功后把新值写回共享缓存（新增 `CacheWriter` 挂点，`BreakdownProtectionConfig.springCacheWriter` 接线）——修复"stale-serve 被 @Cacheable 写回 L2 后，刷新结果不可见、陈旧窗口=一个物理 TTL"的错误演示症状；② `retention-seconds` 默认 120→600，并新增启动校验 retention>seed.hot-key-ttl-seconds——原默认组合下旧值必在热点键过期前被清除，stale-serve 永远不出现（logical-expire 静默退化为 off）。
+- **test（9a90f73）**：+7 例——刷新写回/失败与消失不写回/写回爆炸不影响读、mutex 重建异常仍释放锁、中断等待保中断标志并诚实查库、`springCacheWriter` 接线契约、retention≤热点 TTL 启动拒绝。`ProductBreakdownDefenseTest` 15→20、`LabCachePropertiesTest` 10→11、`BreakdownProtectionConfigTest` 5→6；M4-1 全部既有测试未削弱、全绿。
+- **docs（本提交）**：设计逻辑/缺陷/配置/演示口径同步修订（mutex 双检窗口表述精确化：同实例已被锁内写守卫存储闭合，残余为跨实例与 absent 商品；off 基线指标名修正为 `reason="miss"`）。
+- **审核确认无问题**：`/lab/cache/{mode,state}` 契约只增不改；`code/lab/**`（k6/dashboard/scenarios）无缓存模式枚举契约需要同步（grep 无命中）；指标命名沿用 `cache_*` 家族；`cache_db_fallbacks{reason="breakdown"}` 含异步刷新；off 基线委托 M4-1 字节级不变。console `breakdown` 段展示、Grafana D10 面板仍归 M4-4（任务 #31）。
