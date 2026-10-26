@@ -258,3 +258,100 @@ test('sortEvents is a stable ascending sort', () => {
   assert.equal(sorted[0].atSeconds, 1);
   assert.equal(DEFAULT_TARGET_PATTERN, '^jl-app-[0-9]+$');
 });
+
+// --- datastore allow-list (M3-1c: chaos.datastore.allowed-target-pattern) ---
+
+const HA_SENTINEL_OPTIONS = {
+  targetPattern: '^jl-(app|redis|sentinel)-[0-9]+$',
+  allowedDatastorePattern: '^jl-redis-[0-9]+$',
+};
+
+test('redis-sentinel-failover.json is the Sentinel drill and needs the allow-list', () => {
+  const validated = validateScenario(readScenario('redis-sentinel-failover.json'), {
+    source: 'redis-sentinel-failover.json',
+    ...HA_SENTINEL_OPTIONS,
+  });
+  assert.equal(validated.id, 'redis-sentinel-failover');
+  assert.equal(validated.events.length, 3);
+  assert.deepEqual(
+    validated.events.map((e) => `${e.atSeconds}:${e.action}:${e.target}`),
+    ['10:kill:jl-redis-1', '25:resume:jl-redis-2', '60:start:jl-redis-1'],
+  );
+  assert.equal(validated.events[0].ttlSeconds, 45);
+  // every event carries the console teaching block
+  for (const event of validated.events) {
+    assert.ok(event.explain !== null, `${event.target} has no explain block`);
+    assert.ok(event.explain.symptom.length > 0);
+    assert.ok(event.explain.rootCause.length > 0);
+    assert.ok(event.explain.fix.length > 0);
+    assert.ok(event.explain.expectation.length > 0);
+  }
+
+  // closed by default: with the stock app pattern the datastore target is out of
+  // the pattern first; widening the pattern alone still hits the datastore rule.
+  expectRejected(readScenario('redis-sentinel-failover.json'), /does not match/, {
+    source: 'redis-sentinel-failover.json',
+  });
+  expectRejected(
+    readScenario('redis-sentinel-failover.json'),
+    /is a datastore; datastore actions are forbidden/,
+    { source: 'redis-sentinel-failover.json', targetPattern: HA_SENTINEL_OPTIONS.targetPattern },
+  );
+});
+
+test('an empty allow-list keeps refusing every datastore even when the pattern is wide', () => {
+  for (const target of [
+    'jl-mysql',
+    'jl-redis',
+    'jl-rabbitmq',
+    'jl-mongo',
+    'jl-postgres',
+    'jl-redis-1',
+    'jl-mysql-primary',
+  ]) {
+    expectRejected(
+      scenario([event({ target })]),
+      /is a datastore; datastore actions are forbidden \(chaos\.datastore\.allowed-target-pattern is empty/,
+      { targetPattern: '.*' },
+    );
+  }
+  // a non-datastore name is unaffected by the datastore rule
+  assert.equal(
+    validateScenario(scenario([event({ target: 'jl-app-7' })]), { targetPattern: '.*' }).events[0]
+      .target,
+    'jl-app-7',
+  );
+});
+
+test('the allow-list admits only exactly the matching datastore nodes', () => {
+  const options = { targetPattern: '.*', allowedDatastorePattern: '^jl-redis-[0-9]+$' };
+  for (const target of ['jl-redis-1', 'jl-redis-2', 'jl-redis-3']) {
+    assert.equal(
+      validateScenario(scenario([event({ target })]), options).events[0].target,
+      target,
+    );
+  }
+  // standalone redis, a foreign datastore, the exporter sidecar and anything not
+  // matching the whole name stay refused - and the message names the refusing rule
+  for (const target of ['jl-redis', 'jl-mysql', 'jl-redis-1-exporter', 'jl-redis-1x', 'prefix-jl-redis-1-suffix']) {
+    expectRejected(
+      scenario([event({ target })]),
+      /is a datastore and is refused by chaos\.datastore\.allowed-target-pattern="\^jl-redis-\[0-9\]\+\$"/,
+      options,
+    );
+  }
+  // the allow-list never opens a hole for non-datastore names: those are still
+  // governed by the target pattern only
+  assert.equal(
+    validateScenario(scenario([event({ target: 'jl-sentinel-1' })]), options).events[0].target,
+    'jl-sentinel-1',
+  );
+});
+
+test('an invalid allow-list pattern is rejected before anything runs', () => {
+  expectRejected(
+    scenario([event({ target: 'jl-app-1' })]),
+    /chaos\.datastore\.allowed-target-pattern is not a valid RegExp/,
+    { allowedDatastorePattern: '^jl-redis-(' },
+  );
+});
