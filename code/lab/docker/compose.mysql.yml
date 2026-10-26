@@ -345,7 +345,7 @@ services:
   # --- one exporter per node (design §8.3: 每节点 exporter) -----------------
   # Each exporter pins one node, so D11 can show per-member replication lag and the
   # primary flip is visible as a change in which target reports read_only=0. Scrape
-  # jobs live in prometheus/mysql-ha-scrape.yml (see the wiring TODO in step-25a).
+  # jobs now live inline in prometheus/prometheus.yml (mysqld-exporter-ha).
   mysql-1-exporter:
     <<: *mysql-ha-exporter
     container_name: jl-mysql-1-exporter

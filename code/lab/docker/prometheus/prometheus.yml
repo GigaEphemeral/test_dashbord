@@ -79,3 +79,17 @@ scrape_configs:
     scrape_interval: 5s
     static_configs:
       - targets: ["chaos-controller:8081"]
+
+  # db-ha tier: one job, three labelled targets so D11 can group by member.
+  # Targets are down (not an error) whenever the db-ha profile is off.
+  - job_name: mysqld-exporter-ha
+    static_configs:
+      - targets: ["mysql-1-exporter:9104"]
+        labels:
+          member: mysql-1
+      - targets: ["mysql-2-exporter:9104"]
+        labels:
+          member: mysql-2
+      - targets: ["mysql-3-exporter:9104"]
+        labels:
+          member: mysql-3
