@@ -34,15 +34,26 @@ public final class TwoLevelCacheManager implements CacheManager {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
     private final LabToggleService toggles;
+    private final TwoLevelCacheSettings settings;
 
     public TwoLevelCacheManager(StringRedisTemplate redisTemplate,
                                 ObjectMapper objectMapper,
                                 MeterRegistry meterRegistry,
                                 LabToggleService toggles) {
+        this(redisTemplate, objectMapper, meterRegistry, toggles,
+                TwoLevelCacheSettings.defaults());
+    }
+
+    public TwoLevelCacheManager(StringRedisTemplate redisTemplate,
+                                ObjectMapper objectMapper,
+                                MeterRegistry meterRegistry,
+                                LabToggleService toggles,
+                                TwoLevelCacheSettings settings) {
         this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
         this.toggles = Objects.requireNonNull(toggles, "toggles");
+        this.settings = Objects.requireNonNull(settings, "settings");
     }
 
     @Override
@@ -52,7 +63,7 @@ public final class TwoLevelCacheManager implements CacheManager {
         }
         return caches.computeIfAbsent(name,
                 cacheName -> new TwoLevelCache(cacheName, valueType(cacheName),
-                        redisTemplate, objectMapper, meterRegistry));
+                        redisTemplate, objectMapper, meterRegistry, settings));
     }
 
     @Override

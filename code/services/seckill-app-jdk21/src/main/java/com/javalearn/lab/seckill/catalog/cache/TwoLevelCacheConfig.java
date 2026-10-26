@@ -23,9 +23,11 @@ public class TwoLevelCacheConfig {
     public CacheManager cacheManager(StringRedisTemplate redisTemplate,
                                      ObjectMapper objectMapper,
                                      MeterRegistry meterRegistry,
-                                     LabToggleService labToggleService) {
+                                     LabToggleService labToggleService,
+                                     TwoLevelCacheSettings twoLevelCacheSettings) {
         TwoLevelCacheManager manager = new TwoLevelCacheManager(
-                redisTemplate, objectMapper, meterRegistry, labToggleService);
+                redisTemplate, objectMapper, meterRegistry, labToggleService,
+                twoLevelCacheSettings);
         // Eagerly create the product cache so its metrics exist before the
         // first request and a cold start is visible on the dashboard. When the
         // cache toggle is seeded off this returns a no-op cache and no meters
