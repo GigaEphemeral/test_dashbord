@@ -17,7 +17,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.Objects;
@@ -68,7 +70,7 @@ public final class CachePreheatService {
     private final Map<PreheatTrigger, Counter> runs = new EnumMap<>(PreheatTrigger.class);
     private final Map<PreheatTrigger, Counter> loaded = new EnumMap<>(PreheatTrigger.class);
     private final Map<PreheatTrigger, Timer> durations = new EnumMap<>(PreheatTrigger.class);
-    private final Map<String, Counter> failures = new java.util.HashMap<>();
+    private final Map<String, Counter> failures = new HashMap<>();
 
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicReference<PreheatRun> lastRun = new AtomicReference<>();
@@ -119,7 +121,7 @@ public final class CachePreheatService {
         Timer.Sample sample = Timer.start(meterRegistry);
         runs.get(trigger).increment();
         long startNanos = System.nanoTime();
-        java.time.Instant startedAt = clock.instant();
+        Instant startedAt = clock.instant();
         RunCounters counters = new RunCounters();
         PreheatRun.Outcome outcome;
         try {

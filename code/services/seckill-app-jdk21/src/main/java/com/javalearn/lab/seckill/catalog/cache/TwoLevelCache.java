@@ -19,7 +19,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * A true two-level cache behind the Spring Cache abstraction.
@@ -98,7 +97,7 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                     }
 
                     @Override
-                    public CompletableFuture<Object> reload(Object key, Object oldValue) {
+                    public Object reload(Object key, Object oldValue) {
                         return reloadFromL2(key);
                     }
                 });
@@ -246,17 +245,21 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
      * The refresh path must distinguish "the key is genuinely absent from L2"
      * (drop the L1 entry; the next request rebuilds it) from "Redis answered
      * with an error" (keep serving the old L1 value until expireAfterWrite).
-     * The latter is reported as a failed future so Caffeine's refresh callback
-     * retains the current mapping instead of evicting warm entries during a
-     * Redis outage.
+     * Throwing is Caffeine's documented way to retain the current mapping on a
+     * failed refresh; returning null removes it.
      */
-    private CompletableFuture<Object> reloadFromL2(Object key) {
+    private Object reloadFromL2(Object key) {
         L2Read read = readL2Result(key);
         if (read.failed()) {
-            return CompletableFuture.failedFuture(new IllegalStateException(
-                    "Redis L2 refresh failed for cache '" + name + "' key '" + key + "'"));
+            throw new IllegalStateException(
+                    "Redis L2 refresh failed for cache '" + name + "' key '" + key + "'");
         }
-        return CompletableFuture.completedFuture(read.value());
+        if (read.value() != null) {
+            // A background refresh that reaches L2 is still an L2 hit; the miss
+            // side is already counted inside readL2Result.
+            l2Hits.increment();
+        }
+        return read.value();
     }
 
     private L2Read readL2Result(Object key) {
