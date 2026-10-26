@@ -86,6 +86,7 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
 
     @Test
     void tenConcurrentSameKeyCreateExactlyOneOrder() throws Exception {
+        double rejectsBefore = idempotentRejectCount();
         List<AttemptResult> results = runConcurrently(10,
                 index -> new CreateOrderCommand("u1", PRODUCT_ID, 1, "same-key"));
 
@@ -102,17 +103,23 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
         assertThat(orderCount()).isEqualTo(1);
         // Nine losing transactions reserved stock and then rolled back.
         assertThat(available(PRODUCT_ID)).isEqualTo(19);
+        // One winner plus nine replays; each losing thread counts exactly once
+        // through the pre-check replay or the duplicate-key race resolution.
+        assertThat(idempotentRejectCount()).isEqualTo(rejectsBefore + 9.0d);
     }
 
     @Test
     void sequentialRepeatReturnsSameOrderAndDoesNotDecrementTwice() {
         CreateOrderCommand command = new CreateOrderCommand("u1", PRODUCT_ID, 2, "sequential-key");
         double counterBefore = ordersCreatedCount();
+        double rejectsBefore = idempotentRejectCount();
 
         Order first = orderApplicationService.create(command);
         double counterAfterCreate = ordersCreatedCount();
+        double rejectsAfterCreate = idempotentRejectCount();
         Order replay = orderApplicationService.create(command);
         double counterAfterReplay = ordersCreatedCount();
+        double rejectsAfterReplay = idempotentRejectCount();
 
         assertThat(replay.getId()).isEqualTo(first.getId());
         assertThat(replay.getOrderNo()).isEqualTo(first.getOrderNo());
@@ -120,6 +127,8 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
         assertThat(available(PRODUCT_ID)).isEqualTo(18);
         assertThat(counterAfterCreate).isEqualTo(counterBefore + 1.0d);
         assertThat(counterAfterReplay).isEqualTo(counterAfterCreate);
+        assertThat(rejectsAfterCreate).isEqualTo(rejectsBefore);
+        assertThat(rejectsAfterReplay).isEqualTo(rejectsAfterCreate + 1.0d);
     }
 
     @Test
@@ -169,6 +178,10 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
 
     private double ordersCreatedCount() {
         return meterRegistry.get("orders_created_total").counter().count();
+    }
+
+    private double idempotentRejectCount() {
+        return meterRegistry.get("idempotent_reject").counter().count();
     }
 
     private int available(long productId) {

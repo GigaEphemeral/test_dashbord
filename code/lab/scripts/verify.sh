@@ -68,6 +68,10 @@ LOGIN_CURL_MAX_TIME="${LOGIN_CURL_MAX_TIME:-5}"
 LAB_INTERNAL_BASE_URL="${LAB_INTERNAL_BASE_URL:-http://127.0.0.1:8080}"
 LAB_TOGGLE_KEYS=(lock idempotency mq ratelimit circuitbreaker cache)
 
+# Task 18: Prometheus metric visibility window (scrape interval is 5s).
+METRIC_WAIT_RETRIES="${METRIC_WAIT_RETRIES:-30}"
+METRIC_WAIT_INTERVAL_SECONDS="${METRIC_WAIT_INTERVAL_SECONDS:-2}"
+
 compose() {
   docker compose \
     --project-name java-learn-lab \
@@ -132,14 +136,14 @@ check_http_ok() {
 # Wait for a Prometheus instant query to report a positive scalar value.
 check_prometheus_positive() {
   local label="$1" encoded_query="$2" body="" attempt
-  for attempt in $(seq 1 30); do
+  for attempt in $(seq 1 "$METRIC_WAIT_RETRIES"); do
     body="$(prometheus_query "$encoded_query")"
     if grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*(\.[0-9]+)?"\]' <<<"$body"; then
       pass "$label"
       return 0
     fi
-    if (( attempt < 30 )); then
-      sleep 2
+    if (( attempt < METRIC_WAIT_RETRIES )); then
+      sleep "$METRIC_WAIT_INTERVAL_SECONDS"
     fi
   done
   fail "$label" "response: ${body:0:200}"
@@ -633,11 +637,13 @@ seckill_metrics="$(docker exec jl-app-1 wget -qO- http://127.0.0.1:8080/actuator
   2>/dev/null || true)"
 if grep -q '^seckill_attempts_total' <<<"$seckill_metrics" \
   && grep -q '^order_accept_seconds_count' <<<"$seckill_metrics" \
+  && grep -q '^order_accept_seconds_bucket' <<<"$seckill_metrics" \
   && grep -q '^order_consumer_processed_total' <<<"$seckill_metrics" \
+  && grep -q '^idempotent_reject_total' <<<"$seckill_metrics" \
   && grep -q '^stock_oversold_total' <<<"$seckill_metrics"; then
-  pass "app-1 exposes seckill_attempts/order_accept_seconds/order_consumer_processed/stock_oversold metrics"
+  pass "app-1 exposes seckill_attempts/order_accept histogram/order_consumer_processed/idempotent_reject/stock_oversold metrics"
 else
-  fail "app-1 exposes seckill metrics" "one or more seckill metric families are missing"
+  fail "app-1 exposes seckill/business metrics" "one or more metric families are missing"
 fi
 
 if grep -q 'result="rate_limited"' <<<"$seckill_metrics" \
@@ -646,6 +652,55 @@ if grep -q 'result="rate_limited"' <<<"$seckill_metrics" \
 else
   fail "app-1 registers seckill_attempts result=rate_limited and result=degraded" \
     "one or both Task 17 result series are missing"
+fi
+
+# 2e-bis. Task 18 business metrics must reach Prometheus. The repeated
+# Idempotency-Key above is the positive proof for the reject counter; the
+# histogram bucket appears after the seckill accept that was just recorded.
+check_prometheus_positive \
+  "prometheus has idempotent_reject_total{job=\"seckill-app\"} > 0 after the idempotent replay" \
+  'sum%28idempotent_reject_total%7Bjob%3D%22seckill-app%22%7D%29'
+
+for business_metric in \
+  order_accept_seconds_bucket \
+  order_consumer_processed_total \
+  rabbitmq_queue_messages_ready; do
+  business_body=""
+  for attempt in $(seq 1 "$METRIC_WAIT_RETRIES"); do
+    business_body="$(prometheus_query "$business_metric")"
+    if grep -q "\"__name__\":\"${business_metric}\"" <<<"$business_body"; then
+      break
+    fi
+    if (( attempt < METRIC_WAIT_RETRIES )); then
+      sleep "$METRIC_WAIT_INTERVAL_SECONDS"
+    fi
+  done
+  if grep -q "\"__name__\":\"${business_metric}\"" <<<"$business_body"; then
+    pass "prometheus has ${business_metric}"
+  else
+    fail "prometheus has ${business_metric}" \
+      "response: ${business_body:0:200}"
+  fi
+done
+
+# D4 binds the backlog panel to the per-queue series; the aggregate family
+# alone would leave the queue-labelled panel empty.
+seckill_queue_metric_body=""
+for attempt in $(seq 1 "$METRIC_WAIT_RETRIES"); do
+  seckill_queue_metric_body="$(prometheus_query \
+    'rabbitmq_queue_messages_ready%7Bqueue%3D%22seckill.order.queue%22%7D')"
+  if grep -q '"queue":"seckill.order.queue"' <<<"$seckill_queue_metric_body"; then
+    break
+  fi
+  if (( attempt < METRIC_WAIT_RETRIES )); then
+    sleep "$METRIC_WAIT_INTERVAL_SECONDS"
+  fi
+done
+if grep -q '"queue":"seckill.order.queue"' <<<"$seckill_queue_metric_body"; then
+  pass "prometheus has rabbitmq_queue_messages_ready{queue=\"seckill.order.queue\"}"
+else
+  fail "prometheus has rabbitmq_queue_messages_ready{queue=\"seckill.order.queue\"}" \
+    "response: ${seckill_queue_metric_body:0:200}"
 fi
 
 # 2f. Mock login and runtime lab toggles (Task 17).
@@ -884,7 +939,7 @@ else
   fail "grafana Prometheus datasource health is OK" "HTTP ${ds_code:-000} body: ${ds_body:0:160}"
 fi
 
-for uid in ha-d1 ha-d2 ha-d3; do
+for uid in ha-d1 ha-d2 ha-d3 ha-d4; do
   dash_code=""
   for attempt in $(seq 1 10); do
     dash_code="$(dashboard_http_code "$uid")"

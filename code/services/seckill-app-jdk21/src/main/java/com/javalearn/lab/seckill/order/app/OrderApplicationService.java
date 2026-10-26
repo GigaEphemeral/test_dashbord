@@ -20,6 +20,11 @@ import java.util.Optional;
  * the stock update) has rolled back, and this wrapper re-reads the winner's
  * committed row in a fresh read transaction. Up to ten ~50&nbsp;ms attempts
  * cover the short window between duplicate detection and commit visibility.</p>
+ *
+ * <p>A resolved duplicate records {@code idempotent_reject} exactly once; the
+ * sequential pre-check replay is counted inside
+ * {@link OrderTransactionService}, so both replay shapes increment the same
+ * counter without double counting.</p>
  */
 public class OrderApplicationService {
 
@@ -30,12 +35,15 @@ public class OrderApplicationService {
 
     private final OrderTransactionService orderTransactionService;
     private final OrderQueryService orderQueryService;
+    private final OrderMetrics orderMetrics;
 
     public OrderApplicationService(OrderTransactionService orderTransactionService,
-                                   OrderQueryService orderQueryService) {
+                                   OrderQueryService orderQueryService,
+                                   OrderMetrics orderMetrics) {
         this.orderTransactionService = Objects.requireNonNull(
                 orderTransactionService, "orderTransactionService");
         this.orderQueryService = Objects.requireNonNull(orderQueryService, "orderQueryService");
+        this.orderMetrics = Objects.requireNonNull(orderMetrics, "orderMetrics");
     }
 
     public Order create(CreateOrderCommand command) {
@@ -49,6 +57,7 @@ public class OrderApplicationService {
                 Optional<Order> existing = orderQueryService.findByIdempotencyKey(
                         command.getIdempotencyKey());
                 if (existing.isPresent()) {
+                    orderMetrics.idempotentReject();
                     return existing.get();
                 }
                 sleepBeforeRetry();

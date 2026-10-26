@@ -4,6 +4,7 @@ import com.javalearn.lab.seckill.inventory.domain.InventoryRepository;
 import com.javalearn.lab.seckill.order.api.OrderService;
 import com.javalearn.lab.seckill.order.app.DefaultOrderService;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
+import com.javalearn.lab.seckill.order.app.OrderMetrics;
 import com.javalearn.lab.seckill.order.app.OrderQueryService;
 import com.javalearn.lab.seckill.order.app.OrderTransactionService;
 import com.javalearn.lab.seckill.order.domain.OrderRepository;
@@ -26,10 +27,15 @@ public class OrderConfig {
     }
 
     @Bean
+    public OrderMetrics orderMetrics(MeterRegistry meterRegistry) {
+        return new OrderMetrics(meterRegistry);
+    }
+
+    @Bean
     public OrderTransactionService orderTransactionService(OrderService orderService,
                                                            OrderRepository orderRepository,
-                                                           MeterRegistry meterRegistry) {
-        return new OrderTransactionService(orderService, orderRepository, meterRegistry);
+                                                           OrderMetrics orderMetrics) {
+        return new OrderTransactionService(orderService, orderRepository, orderMetrics);
     }
 
     @Bean
@@ -41,7 +47,8 @@ public class OrderConfig {
     @Bean
     public OrderApplicationService orderApplicationService(
             OrderTransactionService orderTransactionService,
-            OrderQueryService orderQueryService) {
-        return new OrderApplicationService(orderTransactionService, orderQueryService);
+            OrderQueryService orderQueryService,
+            OrderMetrics orderMetrics) {
+        return new OrderApplicationService(orderTransactionService, orderQueryService, orderMetrics);
     }
 }

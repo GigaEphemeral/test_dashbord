@@ -155,6 +155,17 @@ observability:
   instance: ${INSTANCE_ID:app-local}
 
 management:
+  metrics:
+    distribution:
+      # D4 order-accept SLO (Task 18). The seckill admission timer is already
+      # named order_accept_seconds; enabling the percentile histogram exports
+      # order_accept_seconds_bucket for histogram_quantile P95/P99 and the SLO
+      # buckets (50ms..2s) without changing timer code. Both values are
+      # externalized; ORDER_ACCEPT_SLO is a comma-separated bucket list.
+      percentiles-histogram:
+        order_accept_seconds: true
+      slo:
+        order_accept_seconds: ${ORDER_ACCEPT_SLO:50ms,100ms,300ms,500ms,1s,2s}
   health:
     # An OPEN circuit or an empty rate-limiter budget is a lab result, not an
     # application failure: keep it out of /actuator/health (and the container
