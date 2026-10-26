@@ -120,11 +120,16 @@ Expected actions for the bundled files:
 |---|---|---|
 | `ha-app-failover.json` | 60s kill app-1 (TTL 60), 120s freeze app-2 (TTL 30), 150s resume app-2 | 240s hint; Nginx serves from the remaining instances |
 | `quick-failover.json` | 5s kill app-3 (TTL 15) | acceptance only; never targets datastores |
+| `redis-sentinel-failover.json` | 10s kill jl-redis-1 (TTL 45), 25s resume jl-redis-2, 60s start jl-redis-1 | Sentinel drill; needs the HA target pattern **and** the datastore allow-list, and step 1 assumes jl-redis-1 is the current master (verify with `sentinel-status.sh` first) |
 
 Safety rules: only containers labelled `lab=java-learn` are reachable; the
-schema pattern default `^jl-app-[0-9]+$` plus an explicit datastore denylist
-keeps MySQL/Redis/RabbitMQ out of timelines. `kill` is a Docker stop, never a
-volume removal.
+schema pattern default `^jl-app-[0-9]+$` keeps app instances in scope, and a
+datastore-shaped name (mysql/redis/rabbit/mongo/postgres) is refused on top of
+that unless `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` admits it by its **whole**
+name. That allow-list is empty by default - closed by default - so MySQL,
+standalone Redis and RabbitMQ stay out of every timeline until an operator
+opts in for a specific drill (M3-1c; see `doc/process/step-24c-sentinel-targets.md`).
+`kill` is a Docker stop, never a volume removal.
 
 Schema, field semantics and validation rules:
 `code/lab/scenarios/README.md`.
@@ -141,7 +146,8 @@ Schema, field semantics and validation rules:
 | `CHAOS_HTTP_TIMEOUT` | `5s` | Per-action HTTP timeout. |
 | `CHAOS_TEARDOWN_TIMEOUT` | `10s` | Timeout for the `stop-all` teardown call. |
 | `CHAOS_MAX_TTL` | `600` | Schema ceiling for `ttlSeconds` (matches `chaos.max-ttl-seconds`). |
-| `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; datastores are rejected even if widened. |
+| `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; a datastore-shaped name needs the allow-list too, even if this is widened. |
+| `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` | unset (empty = refuse all) | Whole-name allow-list of datastore containers a timeline may fault, e.g. `^jl-redis-[0-9]+$` for the Sentinel drill. Mirrors the controller's `chaos.datastore.allowed-target-pattern`; the controller still refuses independently. |
 | `CHAOS_DURATION` | `4m` (`DURATION` is accepted as an alias) | Product-load duration. |
 | `CHAOS_VUS` | `20` | Constant load VUs. |
 | `K6_SCENARIOS_DIR` | `code/lab/scenarios` | Host directory mounted at `K6_SCENARIOS_MOUNT` (checked/mounted only for `ha-failover`). |

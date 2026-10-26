@@ -12,6 +12,7 @@ guide and the automated k6 run.
 |---|---|
 | `ha-app-failover.json` | Production demo (4 min): stop app-1 at 60s, freeze app-2 at 120s, resume at 150s. |
 | `quick-failover.json` | Short live acceptance: stop **jl-app-3** at 5s with a 15s TTL. No other target. |
+| `redis-sentinel-failover.json` | Redis Sentinel failover (M3-1c, compose profile `ha`): stop the node that is currently the HA master at 10s with a 45s auto-restore TTL, an observation checkpoint at 25s, an idempotent rejoin confirmation at 60s. **Targets a datastore**, so it only loads when the operator opts in - see [Datastore targets](#datastore-targets-closed-by-default). |
 
 ## Schema
 
@@ -78,8 +79,14 @@ no k6 imports, so it runs under Node and inside k6):
    `(atSeconds, target)` pair.
 6. `action` is one of the five allowed values.
 7. `target` matches the configured pattern (`CHAOS_TARGET_PATTERN`, default
-   `^jl-app-[0-9]+$`) and never matches `mysql|redis|rabbit|mongo|postgres`.
-   Datastores are rejected regardless of the pattern override.
+   `^jl-app-[0-9]+$`; controller side: `chaos.guide.target-pattern`) **and**
+   passes the datastore rule: a name containing
+   `mysql|redis|rabbit|mongo|postgres` is refused unless
+   `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` / `chaos.datastore.allowed-target-pattern`
+   admits it by its **whole** name. The allow-list is empty by default, which
+   refuses every datastore exactly like the old absolute prohibition; widening
+   the target pattern alone never opens a datastore. Every refusal names the
+   rule that produced it.
 8. `ttlSeconds` is a positive integer within `CHAOS_MAX_TTL` (default 600, the
    controller's `chaos.max-ttl-seconds`); it must be absent for one-shot actions.
 
@@ -98,11 +105,74 @@ boundary.
 
 - Only lab containers (`lab=java-learn`) are reachable; the default target
   pattern restricts timelines to `jl-app-*`.
-- Never target `jl-mysql`, `jl-redis`, `jl-rabbitmq` or any non-lab container.
-  These actions are intentionally out of scope for the shared timeline.
 - `kill` is a stop, never a volume removal.
 - Every driver run ends with `POST /chaos/stop-all` in k6 `teardown`, and each
   kill/freeze also carries a TTL as the second line of defense.
+
+## Datastore targets (closed by default)
+
+M3-1c replaced the absolute "no datastore may ever be a fault target" rule with
+an **opt-in allow-list**, because the Sentinel drill (`redis-sentinel-failover.json`)
+is not drivable from the console otherwise.
+
+| Rule | Property (controller) | Env (k6) | Default |
+|---|---|---|---|
+| Which datastore-named container may be faulted | `chaos.datastore.allowed-target-pattern` | `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` | empty = refuse all |
+| Which container names a timeline may use at all | `chaos.guide.target-pattern` | `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` |
+
+Both gates must pass, independently: the allow-list never widens the target
+pattern and the target pattern never admits a datastore. The controller enforces
+the allow-list twice - in `ChaosActionService` (the real boundary, HTTP 403
+`40301`) and in `GuideScenarioLoader` (scenario pre-flight, HTTP 400) - from one
+shared `DatastoreTargetPolicy`, and `chaos-schema.js` mirrors the same verdict for
+k6. The regex is compiled at startup, so a broken pattern fails the context
+instead of surfacing mid-drill; an empty value is the closed default, not an error.
+
+Stay refused, in every configuration the lab documents: **`jl-mysql`,
+`jl-rabbitmq`, the standalone `jl-redis`** (note the asymmetry - `^jl-redis-[0-9]+$`
+admits the HA nodes and still rejects the suffix-less standalone), the
+`jl-redis-*-exporter` sidecars, the observability stack and
+anything without the `lab=java-learn` label. This is a **teaching-lab safety
+valve, not a production affordance**: it exists so a 25-container demo topology can
+be driven from the console, and it is deliberately configured per drill (`.env`),
+never widened "because it is convenient". An automatic TTL revert
+(`start`/`SIGCONT`) bypasses the rule by design - a fault that was allowed to be
+applied must always be allowed to be undone.
+
+### `redis-sentinel-failover.json`: the master node is a fixed name (simplification)
+
+Sentinel promotion **moves** the master: after one failover the master is a
+different container than before, and the lab's topology drifted exactly that way
+during step 24b. schema v1 has no "discover the current master" action - events
+are `(atSeconds, action, target)` triples executed against a container name - so
+step 1 **names `jl-redis-1` as the HA master. That is a teaching simplification,
+not a guarantee.**
+
+Check first, before starting the scenario:
+
+```bash
+bash code/lab/scripts/sentinel-status.sh                      # who is master?
+bash code/lab/scripts/sentinel-status.sh --watch 2 -n 15      # keep it on screen during the drill
+```
+
+Read `SENTINEL get-master-addr-by-name mymaster` / the `role=master` line in that
+output. If the master is **not** `jl-redis-1`, either edit the `target` fields of
+the scenario for the run, or promote first and re-check - do not run it against a
+replica, because stopping a replica teaches nothing about failover. Also confirm
+the app is actually in `sentinel` mode (`docker logs jl-app-1 | grep 'Redis access mode'`),
+otherwise the drill faults a group the application never talks to.
+
+Configuring the lab to run it (controller side, both gates at once):
+
+```bash
+CHAOS_GUIDE_TARGET_PATTERN='^jl-(app|redis|sentinel)-[0-9]+$' \
+CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-redis-[0-9]+$'
+```
+
+With the default app-only pattern the scenario is invalid and simply **skipped**
+by `GET /lab/guide/scenarios` (logged, never half-loaded) - which is the closed
+default behaviour, not a bug. See `doc/process/step-24c-sentinel-targets.md` for
+the full runbook and the compose wiring this step could not ship.
 
 ## How the driver consumes it
 

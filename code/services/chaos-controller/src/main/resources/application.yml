@@ -54,8 +54,19 @@ chaos:
   guide:
     # Read-only scenario directory; compose mounts code/lab/scenarios here.
     scenario-dir: ${CHAOS_GUIDE_SCENARIO_DIR:/app/scenarios}
-    # Only application instances may be targeted; datastores are always rejected.
+    # Only application instances may be targeted by default; a datastore-named
+    # container additionally needs the allow-list below.
     target-pattern: "${CHAOS_GUIDE_TARGET_PATTERN:^jl-app-[0-9]+$}"
+  # Datastore fault targets (M3-1c): CLOSED BY DEFAULT. Empty = every container
+  # whose name contains mysql|redis|rabbit|mongo|postgres is refused with 403,
+  # exactly like the previous absolute prohibition. The HA Sentinel drill sets it
+  # to the three Redis data nodes only, e.g.
+  # CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-redis-[0-9]+$' (never jl-redis,
+  # jl-mysql, jl-rabbitmq, jl-redis-*-exporter or the observability stack).
+  # Teaching-lab safety valve, not a production affordance; the regex is
+  # compiled at startup so an invalid value fails the context.
+  datastore:
+    allowed-target-pattern: "${CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN:}"
   # Background traffic (Task 23): the compose "traffic" profile container.
   traffic:
     container-name: ${CHAOS_TRAFFIC_CONTAINER:jl-traffic}

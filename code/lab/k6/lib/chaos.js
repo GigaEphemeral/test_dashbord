@@ -19,6 +19,9 @@ import { validateScenario } from './chaos-schema.js';
 
 export {
   ALLOWED_ACTIONS,
+  ALLOWED_DATASTORE_RULE,
+  DATASTORE_TARGET_PATTERN,
+  DEFAULT_ALLOWED_DATASTORE_PATTERN,
   DEFAULT_TARGET_PATTERN,
   SCHEMA_VERSION,
   TTL_ACTIONS,
@@ -82,6 +85,27 @@ function targetPattern() {
   return value;
 }
 
+/**
+ * Datastore allow-list (mirrors chaos.datastore.allowed-target-pattern).
+ * Empty by default: every datastore-looking target stays rejected, so the k6
+ * timeline path cannot be used to smuggle a Redis/MySQL fault in without an
+ * explicit operator decision.
+ */
+function allowedDatastorePattern() {
+  const value = text('CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN', '');
+  if (value.length === 0) {
+    return '';
+  }
+  try {
+    new RegExp(`^(?:${value})$`);
+  } catch (error) {
+    throw new Error(
+      `[k6/chaos] CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN is not a valid RegExp: ${error.message}`,
+    );
+  }
+  return value;
+}
+
 const controllerUrl = httpUrl('CHAOS_CONTROLLER_URL', 'http://chaos-controller:8081');
 const token = text('LAB_TOKEN', '');
 if (token.length === 0) {
@@ -114,6 +138,7 @@ export const chaosConfig = {
   startOffset: offset.raw,
   startOffsetMs: offset.milliseconds,
   targetPattern: targetPattern(),
+  allowedDatastorePattern: allowedDatastorePattern(),
   maxTtlSeconds: positiveInteger('CHAOS_MAX_TTL', 600),
   loadDuration,
   loadDurationMs,
@@ -153,6 +178,7 @@ export function loadScenario(path) {
   return validateScenario(parsed, {
     source: path,
     targetPattern: chaosConfig.targetPattern,
+    allowedDatastorePattern: chaosConfig.allowedDatastorePattern,
     maxTtlSeconds: chaosConfig.maxTtlSeconds,
   });
 }
