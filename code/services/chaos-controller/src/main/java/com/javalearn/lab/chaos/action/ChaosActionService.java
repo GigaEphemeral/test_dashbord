@@ -44,7 +44,6 @@ import java.util.concurrent.TimeUnit;
  * apply fails with an indeterminate transport error the action stays tracked
  * as FAILED and the watchdog performs the revert. Revert failures stay visible
  * as FAILED and are retried up to {@code chaos.max-revert-attempts}. Every
- * attempts. Every
  * Docker call goes through the gateway, which enforces the
  * {@code lab=java-learn} label.</p>
  *
@@ -146,7 +145,20 @@ public class ChaosActionService {
             throw new ContainerNotAllowedException(datastoreRejection);
         }
 
-        requireLabTarget(type, target);
+        ContainerView targetView = requireLabTarget(type, target);
+        // Docker resolves names *and* id-prefixes to the same container, so the
+        // keyword test above can be slipped past by requesting an id reference.
+        // Re-run the allow-list against the container the reference actually
+        // resolved to; only an inspect-reported canonical name can differ here.
+        String canonical = targetView == null ? null : targetView.name();
+        if (canonical != null && !canonical.equals(target)) {
+            String canonicalRejection = datastorePolicy.rejectionReason(canonical);
+            if (canonicalRejection != null) {
+                countAction(type, target, "rejected");
+                throw new ContainerNotAllowedException(
+                        "container reference \"" + target + "\" resolves to " + canonicalRejection);
+            }
+        }
 
         if (!type.reverting()) {
             applyOneShot(type, target);
@@ -506,9 +518,9 @@ public class ChaosActionService {
                 + " (" + existing.type().wireName() + ", expires " + existing.expiresAt() + ")");
     }
 
-    private void requireLabTarget(ChaosActionType type, String target) {
+    private ContainerView requireLabTarget(ChaosActionType type, String target) {
         try {
-            gateway.inspectLabContainer(target);
+            return gateway.inspectLabContainer(target);
         } catch (ContainerNotAllowedException | ContainerNotFoundException e) {
             countAction(type, target, "rejected");
             throw e;

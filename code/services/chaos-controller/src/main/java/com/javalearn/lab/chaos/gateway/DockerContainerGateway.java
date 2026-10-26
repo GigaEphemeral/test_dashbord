@@ -133,7 +133,7 @@ public class DockerContainerGateway implements ContainerGateway {
                     health = inspectedHealth.getStatus();
                 }
             }
-            return new ContainerView(containerName, state, health);
+            return new ContainerView(canonicalName(inspected.getName(), containerName), state, health);
         } catch (NotFoundException e) {
             throw new ContainerNotFoundException("Container not found: " + containerName);
         } catch (DockerException e) {
@@ -270,5 +270,19 @@ public class DockerContainerGateway implements ContainerGateway {
         }
         String name = names[0];
         return name.startsWith("/") ? name.substring(1) : name;
+    }
+
+    /**
+     * Canonical container name from an inspect result ("/jl-mysql" → "jl-mysql").
+     * Docker resolves names <em>and</em> id-prefixes to the same container, so an
+     * id reference echoes a different name than the caller requested; the
+     * datastore allow-list is re-checked against that canonical name
+     * (M3-1c review). Falls back to the requested name when Docker reports none.
+     */
+    private static String canonicalName(String inspectedName, String requestedName) {
+        if (inspectedName == null || inspectedName.isEmpty()) {
+            return requestedName;
+        }
+        return inspectedName.startsWith("/") ? inspectedName.substring(1) : inspectedName;
     }
 }
