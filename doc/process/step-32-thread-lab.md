@@ -90,3 +90,87 @@
 
 - 验证命令：`cd code && export JAVA_HOME="C:\Program Files\Java\jdk-21.0.12.1" && mvn -pl services/seckill-app-jdk21 -am test` → `Tests run: 238, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`。
 - 关键文件：`lab/thread/{FaultMode,HoldMode,LifecycleState,LabThreadProperties,FaultTtlScheduler,ExecutorFaultTtlScheduler,HeapLeakAllocator,FaultAction,ThreadLabMetrics,ThreadFaultService}.java`、`lab/config/ThreadLabConfig.java`、`lab/api/{LabThreadController,FaultStartRequest,ThreadActionView}.java`、`application.yml`（`app.lab.thread.*` 追加块）；测试 `lab/thread/{ThreadFaultServiceTest,FaultActionTest,HeapLeakAllocatorTest,LabThreadPropertiesValidationTest,ThreadLabTestSupport,TestLabThreadProperties}.java`。
+
+# 审核修复（2026-10-27 独立评审，隔离 worktree `agent-Qwen-3.8-51c8ea62`）
+
+评审结论：端点信封/错误码（40001/40401/40901）、TTL=120s 默认、manual 保持、pause 冻结剩余、
+resume 只补剩余、stop-all 全清、单 mode 冲突拒绝与并发抢注、oom 安全门均与 brief 和 §9.1 一致，
+**无 Critical**（实栈验收已如实列为缺陷项，无越界声称）。**3 个 Important + 4 个 Minor**：
+3 Important 与 3 Minor 已修复（`fix:` 提交），2 Minor 记录理由后保留。测试 238 → **249**，
+`mvn -pl services/seckill-app-jdk21 -am test` 全绿。
+
+## Important-1 · deadlock 保真度（重点裁决项 #1）
+
+- 原实现"可耗尽竞争"能产生真实 BLOCKED 窗口，但**永远不会有** `Found one Java-level deadlock`
+  ——§9.1 排查列不可达；默认共享实例上这是合理取舍且已如实登记，但演示模式本身被错标。
+- 裁决依据（从代码论证）：真死锁（synchronized hold-and-wait 的阻塞进入）**不可中断、不可回收**，
+  "清理有保证"与"dump 可见死锁"在同一 JVM 内互斥。brief 给的两条路线中"可中断+jitter"被否决：
+  jitter 只是推迟随机性——成环即永久泄漏、不成环即无症状，两头不得。采用**真互锁 + stop 走
+  "注销并等待重启回收"（restart-not-leak）**路线：
+- 新增操作员级配置门 `app.lab.thread.deadlock.true-deadlock`（env `LAB_THREAD_DEADLOCK_TRUE`，
+  默认 `false`；与 oom 的 throwaway 门同款：配置决定、请求不可翻）。开启后 `startTrueDeadlock`
+  造两监视器反序 hold-and-wait：
+  - 测试用 `ThreadMXBean.findDeadlockedThreads()`（与 jstack 打印死锁段同一检测源）证明环成立，
+    并断言参与线程状态为 `BLOCKED`——dump 可见性等价可证；
+  - `stop()`/TTL 回退仍注销故障（注册表清空、指标回 0、该 mode 可再注入——监视器是
+    FaultAction 实例字段，新一轮不与旧环接触，测试证明独立成环）；死锁 daemon 线程**只能由
+    JVM 重启回收**，故仅适用于一次性实例。
+- 默认路径保持原 drainable contention，并新增 `ThreadStateFingerprintTest` 在活 JVM 上采样
+  真 `BLOCKED`（竞争版指纹若消失即测试失败）；`defaultDeadlockContentionReallyBlocksParticipants`
+  同时把"竞争≠WAITING"钉死。原缺陷项中"需在专门一次性实例上补强互锁变体（待定）"**已被本步实现**
+  （门控形式）；真容器上跑 `jstack` 目视输出仍留实栈验收。
+
+## Important-2 · oom 允许分支不可能 OOM（§3 声明与代码不符）
+
+- 原 `startHeapLeak(true)` 传 `capPercent=100`，分配前判 `used+chunk ≤ 100%×max`——"恰在断崖前
+  停止增长"：即便 throwaway 小堆实例**也不会抛 OOM、不会 ExitOnOutOfMemoryError 退出、不会有
+  容器重启与流量转移**，§9.1 oom 行三个指纹全部落空；且与本文 §3 "oom（复用无封顶分配器）"的
+  说法矛盾（代码未达成文档，非虚报验收，但按原样演示必失败）。
+- 修复：`HeapLeakAllocator.unbounded(...)`（无封顶语义，永不进 capped 判定），oom 路径改用它。
+  回归钉死两端：`unboundedOomSinkAllocatesPastAnyCeiling`（脚本堆越过 100% 界仍继续分配——旧代码
+  在此拒绝）与 `oomSinkAllocatesUnboundedAndDrainsToZeroOnStop`（在测试 JVM 用 1KB chunk 走完
+  oom 装配：增长可见、stop 中断、stop 后计数归零）。真"打挂进程"分支仍不进 `mvn test`（破坏性，
+  维持原实栈延期决定）。
+
+## Important-3 · 回退/停止 与同 mode 重启的指标去发布竞态（ChaosActionService 同型）
+
+- `ThreadLabMetrics.onRevert(mode, reason)` 原按键删除：`stop()` 先摘服务注册表、teardown 后到
+  指标层，其间同 mode 重启 `publish(new)` → 旧 action 的回退**把新故障的 gauge 抹成 0**
+  （故障活着、指标说没有），且不可自愈。
+- 改为 `onRevert(action, ...)` 身份删除 `remove(mode, action)`；`ThreadLabMetricsTest` 确定性复现
+  publish(old→new)→revert(old) 交错，断言新故障 fault_active/state_code/participant_threads 不受
+  影响、`reverted_total` 每次回退恰好计一次。
+
+## Minor（已修）
+
+- **零残留强化**：teardown 在 join 之后二次 `drain()` + `heapLeaked.set(0)`——首轮 drain 与 worker
+  末次分配之间存在竞态残留窗；此后"stop 后无内存残留"是硬保证（oom/heap-leak 测试断言 stop 后
+  计数=0）。
+- **validate() 真实边界**：`deadlock.thread-count` 由 >0 收紧为 ≥2（单线程无法反序抢锁，配置退化
+  即静默无演示）；`true-deadlock` 默认 false 有测试钉住。
+- **指纹断言补齐**（评审轴 #9"清理或症状坏掉时测试必须红"）：新增 `ThreadStateFingerprintTest` 3 例
+  （deadlock→BLOCKED、stuck→WAITING/TIMED_WAITING、cpu-burn→RUNNABLE）与
+  `heapLeakGrowsWithinCapOnRealRuntimeAndDrainsToZero`（真堆增长 ≤80%×max 且回退归零），全部
+  采样 `Thread.getAllStackTraces()` 真线程状态，无 mock。
+
+## Minor（保留，理由）
+
+- **stuck 为 TIMED_WAITING 而非纯 WAITING**：`await(poll)` 带超时是可中断清理的必要代价；
+  "区分 waiting 与 blocked"教学点仍成立（非 BLOCKED），原 §3 已写 "waiting/timed_waiting"。
+- **`thread_lab_lifecycle_state_code` 与 §9.2 六态语义冲突**：维持原延期（#33 另立命名）；本步
+  改名会破坏 #34 已约定的键契约。
+
+## 修复后仍属延期的声明（不变）
+
+- 实栈验收：Grafana D6 上的 `thread_lab_*`、打流量核对 blocked/waiting/cpu/heap 真实指纹、
+  true-deadlock 实例上 `jstack` 目视输出、throwaway 实例真 OOM 的进程退出与容器重启/流量转移
+  ——均留待统一实栈验收；**#33（生命周期与快照）与 #34（线程操作页与 D6）继续延期**，本修复只
+  交付既有 `ThreadActionView` 键契约内的内容。
+- chaos-controller 广播 / 全局急停仍未接（与 toggles/cache 同 TODO）。
+
+## 验证（评审修复后）
+
+- `cd code && export JAVA_HOME="C:\Program Files\Java\jdk-21.0.12.1" && mvn -pl services/seckill-app-jdk21 -am test`
+  → `Tests run: 249, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`
+  （238 → 249，新增 11：FaultActionTest +3、HeapLeakAllocatorTest +1、LabThreadPropertiesValidationTest +2、
+  ThreadLabMetricsTest +2、ThreadStateFingerprintTest +3）。
