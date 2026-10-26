@@ -1,0 +1,345 @@
+package com.javalearn.lab.seckill.lab.thread;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/**
+ * Externalized configuration for the fault-thread lab (design §9.1, Task M5-1).
+ *
+ * <p>Bound from {@code app.lab.thread.*}. Mirrors {@link LabCacheProperties}: the
+ * class declares no Java defaults — {@code application.yml} is the single source
+ * of defaults, every thread count, TTL, interval, chunk size and pool size is
+ * {@code ${ENV:default}} overridable, and {@link #validate()} fails startup on a
+ * missing or nonsensical value instead of hiding it.</p>
+ *
+ * <p>The {@code oom.throwaway-instance} flag is the safety gate from the task
+ * brief: {@code oom} is refused unless an instance is explicitly marked as a
+ * disposable small-heap node, so the shared demo app can never kill itself.</p>
+ */
+@ConfigurationProperties(prefix = "app.lab.thread")
+public class LabThreadProperties {
+
+    /** Default fault lifetime; an {@code auto} fault auto-reverts after this. */
+    private long defaultTtlSeconds;
+    /** How long stop()/revert waits (per thread) for a participant to exit. */
+    private long shutdownJoinTimeoutMs;
+
+    private final Oom oom = new Oom();
+    private final Deadlock deadlock = new Deadlock();
+    private final Stuck stuck = new Stuck();
+    private final CpuBurn cpuBurn = new CpuBurn();
+    private final HeapLeak heapLeak = new HeapLeak();
+    private final ThreadLeak threadLeak = new ThreadLeak();
+    private final Starvation starvation = new Starvation();
+
+    @PostConstruct
+    void validate() {
+        requirePositive(defaultTtlSeconds, "app.lab.thread.default-ttl-seconds");
+        requirePositive(shutdownJoinTimeoutMs, "app.lab.thread.shutdown-join-timeout-ms");
+
+        requirePositive(deadlock.threadCount, "app.lab.thread.deadlock.thread-count");
+        requireNonNegative(deadlock.holdMs, "app.lab.thread.deadlock.hold-ms");
+
+        requirePositive(stuck.threadCount, "app.lab.thread.stuck.thread-count");
+        requirePositive(stuck.pollMs, "app.lab.thread.stuck.poll-ms");
+
+        requirePositive(cpuBurn.threadCount, "app.lab.thread.cpu-burn.thread-count");
+        requireNonNegative(cpuBurn.yieldEveryLoops, "app.lab.thread.cpu-burn.yield-every-loops");
+
+        requirePositive(heapLeak.chunkBytes, "app.lab.thread.heap-leak.chunk-bytes");
+        requirePositive(heapLeak.intervalMs, "app.lab.thread.heap-leak.interval-ms");
+        requirePercent(heapLeak.capPercent, "app.lab.thread.heap-leak.cap-percent");
+
+        // oom.throwaway-instance is a boolean safety gate with a false default:
+        // when it is false POST {mode:"oom"} is simply refused (see the service),
+        // so there is nothing numeric to validate here.
+        requirePositive(oom.chunkBytes, "app.lab.thread.oom.chunk-bytes");
+        requirePositive(oom.intervalMs, "app.lab.thread.oom.interval-ms");
+
+        requirePositive(threadLeak.maxLiveThreads, "app.lab.thread.thread-leak.max-live-threads");
+        requirePositive(threadLeak.spawnCount, "app.lab.thread.thread-leak.spawn-count");
+        requireNonNegative(threadLeak.spawnIntervalMs, "app.lab.thread.thread-leak.spawn-interval-ms");
+        requireNonNegative(threadLeak.holdMs, "app.lab.thread.thread-leak.hold-ms");
+
+        requirePositive(starvation.poolSize, "app.lab.thread.starvation.pool-size");
+        requirePositive(starvation.queueCapacity, "app.lab.thread.starvation.queue-capacity");
+        requirePositive(starvation.submitCount, "app.lab.thread.starvation.submit-count");
+        requirePositive(starvation.taskBlockMs, "app.lab.thread.starvation.task-block-ms");
+    }
+
+    private static void requirePositive(long value, String key) {
+        if (value <= 0L) {
+            throw new IllegalStateException("Configuration must be positive: " + key);
+        }
+    }
+
+    private static void requireNonNegative(long value, String key) {
+        if (value < 0L) {
+            throw new IllegalStateException("Configuration must not be negative: " + key);
+        }
+    }
+
+    private static void requirePercent(long value, String key) {
+        if (value <= 0L || value > 100L) {
+            throw new IllegalStateException("Configuration must be in (0, 100]: " + key);
+        }
+    }
+
+    public long getDefaultTtlSeconds() {
+        return defaultTtlSeconds;
+    }
+
+    public void setDefaultTtlSeconds(long defaultTtlSeconds) {
+        this.defaultTtlSeconds = defaultTtlSeconds;
+    }
+
+    public long getShutdownJoinTimeoutMs() {
+        return shutdownJoinTimeoutMs;
+    }
+
+    public void setShutdownJoinTimeoutMs(long shutdownJoinTimeoutMs) {
+        this.shutdownJoinTimeoutMs = shutdownJoinTimeoutMs;
+    }
+
+    public Oom getOom() {
+        return oom;
+    }
+
+    public Deadlock getDeadlock() {
+        return deadlock;
+    }
+
+    public Stuck getStuck() {
+        return stuck;
+    }
+
+    public CpuBurn getCpuBurn() {
+        return cpuBurn;
+    }
+
+    public HeapLeak getHeapLeak() {
+        return heapLeak;
+    }
+
+    public ThreadLeak getThreadLeak() {
+        return threadLeak;
+    }
+
+    public Starvation getStarvation() {
+        return starvation;
+    }
+
+    /** Gate + geometry of the true-OOM experiment. */
+    public static class Oom {
+        private boolean throwawayInstance;
+        private long chunkBytes;
+        private long intervalMs;
+
+        public boolean isThrowawayInstance() {
+            return throwawayInstance;
+        }
+
+        public void setThrowawayInstance(boolean throwawayInstance) {
+            this.throwawayInstance = throwawayInstance;
+        }
+
+        public long getChunkBytes() {
+            return chunkBytes;
+        }
+
+        public void setChunkBytes(long chunkBytes) {
+            this.chunkBytes = chunkBytes;
+        }
+
+        public long getIntervalMs() {
+            return intervalMs;
+        }
+
+        public void setIntervalMs(long intervalMs) {
+            this.intervalMs = intervalMs;
+        }
+    }
+
+    public static class Deadlock {
+        private long threadCount;
+        private long holdMs;
+
+        public long getThreadCount() {
+            return threadCount;
+        }
+
+        public void setThreadCount(long threadCount) {
+            this.threadCount = threadCount;
+        }
+
+        public long getHoldMs() {
+            return holdMs;
+        }
+
+        public void setHoldMs(long holdMs) {
+            this.holdMs = holdMs;
+        }
+    }
+
+    public static class Stuck {
+        private long threadCount;
+        private long pollMs;
+
+        public long getThreadCount() {
+            return threadCount;
+        }
+
+        public void setThreadCount(long threadCount) {
+            this.threadCount = threadCount;
+        }
+
+        public long getPollMs() {
+            return pollMs;
+        }
+
+        public void setPollMs(long pollMs) {
+            this.pollMs = pollMs;
+        }
+    }
+
+    public static class CpuBurn {
+        private long threadCount;
+        private long yieldEveryLoops;
+
+        public long getThreadCount() {
+            return threadCount;
+        }
+
+        public void setThreadCount(long threadCount) {
+            this.threadCount = threadCount;
+        }
+
+        public long getYieldEveryLoops() {
+            return yieldEveryLoops;
+        }
+
+        public void setYieldEveryLoops(long yieldEveryLoops) {
+            this.yieldEveryLoops = yieldEveryLoops;
+        }
+    }
+
+    /** Bounded leak: allocations stop once heap used crosses {@code capPercent}. */
+    public static class HeapLeak {
+        private long chunkBytes;
+        private long intervalMs;
+        private long capPercent;
+
+        public long getChunkBytes() {
+            return chunkBytes;
+        }
+
+        public void setChunkBytes(long chunkBytes) {
+            this.chunkBytes = chunkBytes;
+        }
+
+        public long getIntervalMs() {
+            return intervalMs;
+        }
+
+        public void setIntervalMs(long intervalMs) {
+            this.intervalMs = intervalMs;
+        }
+
+        public long getCapPercent() {
+            return capPercent;
+        }
+
+        public void setCapPercent(long capPercent) {
+            this.capPercent = capPercent;
+        }
+    }
+
+    /** Rising live-thread count with a hard ceiling; optional virtual-thread variant. */
+    public static class ThreadLeak {
+        private long maxLiveThreads;
+        private long spawnCount;
+        private long spawnIntervalMs;
+        private long holdMs;
+        private boolean virtual;
+
+        public long getMaxLiveThreads() {
+            return maxLiveThreads;
+        }
+
+        public void setMaxLiveThreads(long maxLiveThreads) {
+            this.maxLiveThreads = maxLiveThreads;
+        }
+
+        public long getSpawnCount() {
+            return spawnCount;
+        }
+
+        public void setSpawnCount(long spawnCount) {
+            this.spawnCount = spawnCount;
+        }
+
+        public long getSpawnIntervalMs() {
+            return spawnIntervalMs;
+        }
+
+        public void setSpawnIntervalMs(long spawnIntervalMs) {
+            this.spawnIntervalMs = spawnIntervalMs;
+        }
+
+        public long getHoldMs() {
+            return holdMs;
+        }
+
+        public void setHoldMs(long holdMs) {
+            this.holdMs = holdMs;
+        }
+
+        public boolean isVirtual() {
+            return virtual;
+        }
+
+        public void setVirtual(boolean virtual) {
+            this.virtual = virtual;
+        }
+    }
+
+    /** Tiny pool + blocking tasks so active saturates at max and the queue grows. */
+    public static class Starvation {
+        private long poolSize;
+        private long queueCapacity;
+        private long submitCount;
+        private long taskBlockMs;
+
+        public long getPoolSize() {
+            return poolSize;
+        }
+
+        public void setPoolSize(long poolSize) {
+            this.poolSize = poolSize;
+        }
+
+        public long getQueueCapacity() {
+            return queueCapacity;
+        }
+
+        public void setQueueCapacity(long queueCapacity) {
+            this.queueCapacity = queueCapacity;
+        }
+
+        public long getSubmitCount() {
+            return submitCount;
+        }
+
+        public void setSubmitCount(long submitCount) {
+            this.submitCount = submitCount;
+        }
+
+        public long getTaskBlockMs() {
+            return taskBlockMs;
+        }
+
+        public void setTaskBlockMs(long taskBlockMs) {
+            this.taskBlockMs = taskBlockMs;
+        }
+    }
+}

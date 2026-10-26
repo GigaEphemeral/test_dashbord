@@ -149,6 +149,46 @@ app:
           expected-insertions: ${LAB_CACHE_BLOOM_EXPECTED_INSERTIONS:10000}
           false-probability: ${LAB_CACHE_BLOOM_FALSE_PROBABILITY:0.01}
 
+    # Fault-thread lab (Task M5-1 / design 9.1). /lab/thread/** injects the seven
+    # faulty-thread modes; every thread count, TTL, interval, chunk size, pool size
+    # and the OOM throwaway gate is externalized here — nothing is hardcoded. The
+    # heap-leak cap is a percentage of max heap so the shared JVM is never pushed to
+    # a real OOM, and oom.throwaway-instance defaults to false so /lab/thread/fault
+    # {mode:"oom"} is refused on the shared app unless a node opts in.
+    thread:
+      default-ttl-seconds: ${LAB_THREAD_DEFAULT_TTL_SECONDS:120}
+      shutdown-join-timeout-ms: ${LAB_THREAD_SHUTDOWN_JOIN_TIMEOUT_MS:2000}
+      oom:
+        throwaway-instance: ${LAB_THREAD_OOM_THROWAWAY:false}
+        chunk-bytes: ${LAB_THREAD_OOM_CHUNK_BYTES:8388608}
+        interval-ms: ${LAB_THREAD_OOM_INTERVAL_MS:50}
+      deadlock:
+        thread-count: ${LAB_THREAD_DEADLOCK_THREADS:2}
+        hold-ms: ${LAB_THREAD_DEADLOCK_HOLD_MS:50}
+      stuck:
+        thread-count: ${LAB_THREAD_STUCK_THREADS:4}
+        poll-ms: ${LAB_THREAD_STUCK_POLL_MS:200}
+      cpu-burn:
+        thread-count: ${LAB_THREAD_CPU_BURN_THREADS:2}
+        yield-every-loops: ${LAB_THREAD_CPU_BURN_YIELD_EVERY_LOOPS:100000}
+      heap-leak:
+        chunk-bytes: ${LAB_THREAD_HEAP_LEAK_CHUNK_BYTES:1048576}
+        interval-ms: ${LAB_THREAD_HEAP_LEAK_INTERVAL_MS:200}
+        cap-percent: ${LAB_THREAD_HEAP_LEAK_CAP_PERCENT:80}
+      thread-leak:
+        max-live-threads: ${LAB_THREAD_THREAD_LEAK_MAX_LIVE:200}
+        spawn-count: ${LAB_THREAD_THREAD_LEAK_SPAWN_COUNT:5}
+        spawn-interval-ms: ${LAB_THREAD_THREAD_LEAK_SPAWN_INTERVAL_MS:50}
+        hold-ms: ${LAB_THREAD_THREAD_LEAK_HOLD_MS:60000}
+        # JDK21 contrast switch: true leaks virtual threads (heap growth) instead of
+        # live platform threads; overridable per request via the console.
+        virtual: ${LAB_THREAD_THREAD_LEAK_VIRTUAL:false}
+      starvation:
+        pool-size: ${LAB_THREAD_STARVATION_POOL_SIZE:2}
+        queue-capacity: ${LAB_THREAD_STARVATION_QUEUE_CAPACITY:50}
+        submit-count: ${LAB_THREAD_STARVATION_SUBMIT_COUNT:100}
+        task-block-ms: ${LAB_THREAD_STARVATION_TASK_BLOCK_MS:30000}
+
   # Runtime experiment toggles (Task 17). Per-instance, in-memory and mutable
   # through POST /lab/toggles; the chaos-controller will broadcast later.
   # mq is seeded by the Task 16 startup switch so the old env var still works
