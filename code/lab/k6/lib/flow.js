@@ -155,10 +155,26 @@ function pollSeckill(requestId) {
 }
 
 /**
+ * True when the response already carries the durable terminal outcome
+ * (synchronous path, or the circuit-open degradation added in 48d45fb).
+ */
+function isTerminalCreated(data) {
+  return (
+    data !== null &&
+    data.status === 'CREATED' &&
+    data.orderId !== undefined &&
+    data.orderId !== null
+  );
+}
+
+/**
  * Seckill admission. 200/202/409/429 are expected statuses: 409 (sold out or
  * lock timeout) and 429 (rate limited) are counted instead of being treated as
  * transport failures. A 202/requestId is polled until CREATED/FAILED with a
- * bounded attempt count.
+ * bounded attempt count. When the seckillBackend circuit is open the app
+ * degrades to the synchronous DB path but still answers 202 (the mq toggle is
+ * on), with `requestId: null` and a terminal `CREATED` + `orderId`: that
+ * response is a success, not an error, and must not be polled.
  */
 export function seckill() {
   const key = `${config.seckill.keyPrefix}-${config.runId}-${uniqueSuffix()}`;
@@ -184,10 +200,11 @@ export function seckill() {
         return false;
       }
       if (res.status === 202) {
-        return typeof body.data.requestId === 'string' && body.data.requestId.length > 0;
+        const hasRequestId = typeof body.data.requestId === 'string' && body.data.requestId.length > 0;
+        return hasRequestId || isTerminalCreated(body.data);
       }
       if (res.status === 200) {
-        return body.data.status === 'CREATED' && body.data.orderId !== undefined && body.data.orderId !== null;
+        return isTerminalCreated(body.data);
       }
       return false;
     },
@@ -205,6 +222,10 @@ export function seckill() {
     return { outcome: 'error', key };
   }
   if (accepted.status === 200) {
+    return { outcome: 'created', key, orderId: accepted.data.orderId };
+  }
+  if (isTerminalCreated(accepted.data)) {
+    // Degraded synchronous path answering 202: already durable, no polling.
     return { outcome: 'created', key, orderId: accepted.data.orderId };
   }
   return pollSeckill(accepted.data.requestId);

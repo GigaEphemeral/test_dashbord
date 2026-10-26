@@ -427,6 +427,11 @@ the k6 response callback. The default list is:
 - `409` — sold out or seckill lock timeout;
 - `429` — Resilience4j rate limit rejection.
 
+When the `seckillBackend` circuit breaker is open (Task 17 degradation) the app
+still answers **202** because the `mq` toggle is on, but the body comes from the
+synchronous DB path: `requestId: null` with a terminal `status=CREATED` and
+`orderId`. `lib/flow.js` accepts that shape as a success and does not poll it.
+
 For `200`/`202` the response body must be `code="0"` with a `CREATED` order
 or a `requestId`. `409`/`429` are accepted business rejections: they do not
 count as failed requests and are recorded in:
@@ -450,8 +455,8 @@ also go into `flow_errors`.
 
 - `smoke`, `load`, `soak` and `spike` have thresholds; `stress` deliberately
   has none (record only).
-- k6 1.3 aborts on a crossed threshold and exits non-zero. A negative test
-  with `ERROR_RATE=0` exits **99** and prints
+- k6 1.3 evaluates thresholds at the end of the run and exits **99** when one
+  is crossed. A negative test with `ERROR_RATE=0` exits 99 and prints
   `thresholds on metrics 'flow_errors, server_errors' have been crossed`.
 - `run.sh` propagates k6's exit code unchanged (Docker errors return 125).
 
