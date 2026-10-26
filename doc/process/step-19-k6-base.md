@@ -3,7 +3,7 @@
 > 分支 / HEAD：`feature/ha-lab` / `feat: add k6 base scenarios and remote write`（父提交 `f11a9bc`）
 > 关联任务：#19（M2-1）
 > 测试 / verify：无 Java 代码变更、未编译；k6 smoke 绿、load 2m 绿、spike 短跑绿、stress/soak 短跑绿；负向阈值退出 99；`verify.sh` **96 PASS / 1 WARN**（用 `SECKILL_PRODUCT_ID=2`，见缺陷项）
-> 运行状态：16 个 `lab=java-learn` 容器运行中、三实例健康；product 1 DB 78、product 2 DB/Redis 99、product 20 DB/Redis **0**（spike 打空）、订单 123
+> 运行状态：16 个 `lab=java-learn` 容器运行中、三实例健康；product 1 DB 77、product 2 DB/Redis 99、product 20 DB/Redis **0**（spike 打空）、订单 124
 
 # 当前进展
 
@@ -12,7 +12,7 @@
 - 默认在 `jl-net` 内运行，`BASE_URL=http://nginx`；`K6_NETWORK=host` 时 `BASE_URL` 默认切到 `http://127.0.0.1:8080`，也可用 `BASE_URL=http://host.docker.internal:8080`。
 - 未改应用代码、未重建应用镜像、未改 `verify.sh`；未触碰 Task 18/17 的 review 分支或 worktree。
 - 验收实跑：
-  - smoke：**exit 0**，5 checks 全过、7 requests，run_id `k6-20261026132531-8977`；
+  - smoke：**exit 0**，5 checks 全过、7 requests，run_id `k6-20261026132531-8977`；提交后最终复跑 **exit 0**（5 requests，run_id `k6-20261026140400-16603`，product 20 已空故 409=1）；
   - load 2m：**exit 0**，18,195 requests / 17,995 iterations，product P95 **5.63ms**、P99 **11.56ms**，错误 0，run_id `k6-20261026132550-20193`；
   - spike 短跑（5s baseline + 5s ramp + 20s hold + 5s down，800 VU）：**exit 0**，18,815 requests，409=**4,366**、429=**13,391**、202=86，错误 0，run_id `k6-20261026132911-21845`；
   - stress 短跑（5s/5/5s，10 VU）：exit 0，无阈值，88 requests；
@@ -98,7 +98,7 @@
 
 - **下一步 M2-2**：bench/compare/报告归档与 D9。复用本目录的 `run_id`、remote-write 查询与五个场景；在编排里加入数据重置/重新播种，尤其是 product 20，避免默认 smoke/verify 因 409 失败。
 - **运行状态**：16 个容器运行中，三实例与 Nginx/Prometheus/Grafana/chaos-controller 健康；未重建应用镜像，未改 compose。
-- **数据状态**：product 1 DB 78、product 2 DB/Redis 99、product 20 DB/Redis 0、订单 123；`idempotent_reject` 等业务指标继续累积。无 reset 脚本，演示前需知悉。
+- **数据状态**：product 1 DB 77、product 2 DB/Redis 99、product 20 DB/Redis 0、订单 124；`idempotent_reject` 等业务指标继续累积。无 reset 脚本，演示前需知悉。
 - **Prometheus 查询窗口**：instant query 默认只看 5 分钟回看；查历史 run 需带 `time=<unix>` 或改用 range query。远程写入的 trend 序列名是 `k6_http_req_duration_p95/_p99/_max`，不是 `quantile` 标签。
 - **k6 资源**：spike 800 VU 在 Docker Desktop/WSL2 上短跑约 35s 完成；正式 60s spike 需确认宿主机内存/CPU，避免和 16 个容器争抢。
 - **库存边界**：不要用 load/stress/soak 打 `SECKILL_PRODUCT_ID`；它们只读 product。smoke/spike 会消耗库存。
@@ -134,6 +134,7 @@ SECKILL_PRODUCT_ID=2 bash code/lab/scripts/verify.sh                    # 96/1
 
 - 镜像：`grafana/k6:1.3.0`，digest `sha256:3ddc8b1a...e14eb77d`；`k6 version` = `v1.3.0+dirty`。
 - smoke run_id `k6-20261026132531-8977`：7 requests、5 checks、exit 0；Prometheus `k6_http_req_duration_p95{flow="product"}=17.417ms`。
+- 最终提交后 smoke run_id `k6-20261026140400-16603`：5 requests、5 checks、exit 0；product 20 已空，`seckill_expected_409=1` 仍按预期通过。
 - load run_id `k6-20261026132550-20193`：18,195 requests、17,995 iterations、P95=5.629ms、P99=11.565ms、errors=0、exit 0。
 - spike run_id `k6-20261026132911-21845`：18,815 requests、17,843 iterations、409=4,366、429=13,391、202=86、errors=0、exit 0；`k6_vus_max=800`。
 - 负向 run_id `k6-20261026133110-8136`：exit 99，`thresholds on metrics 'flow_errors, server_errors' have been crossed`。
