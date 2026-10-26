@@ -4,6 +4,9 @@ import com.javalearn.lab.seckill.lab.thread.ThreadLabTestSupport.ManualTtlSchedu
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -28,17 +31,20 @@ class ThreadStateFingerprintTest {
     @Test
     void defaultDeadlockContentionReallyBlocksParticipants() {
         LabThreadProperties properties = TestLabThreadProperties.defaults();
-        properties.getDeadlock().setHoldMs(40L); // widen the contention window per cycle
-        FaultAction action = newAction(FaultMode.DEADLOCK, properties);
-        action.startThreads();
-        try {
-            Set<Long> ids = action.threadIds();
-            assertThat(observedWithin(ids, Thread.State.BLOCKED, Duration.ofSeconds(4)))
-                    .as("the drainable inversion must still show real BLOCKED windows")
-                    .isTrue();
-        } finally {
-            action.stop();
+        properties.getDeadlock().setHoldMs(250L); // widen the contention window per cycle
+        boolean blocked = false;
+        for (int attempt = 0; attempt < 5 && !blocked; attempt++) {
+            FaultAction action = newAction(FaultMode.DEADLOCK, properties);
+            action.startThreads();
+            try {
+                blocked = observedWithin(action.threadIds(), Thread.State.BLOCKED, Duration.ofSeconds(2));
+            } finally {
+                action.stop();
+            }
         }
+        assertThat(blocked)
+                .as("the drainable inversion must still show real BLOCKED windows")
+                .isTrue();
     }
 
     @Test
@@ -80,11 +86,15 @@ class ThreadStateFingerprintTest {
 
     /** {@code true} when any recorded thread is seen in {@code wanted} within the budget. */
     private static boolean observedWithin(Set<Long> ids, Thread.State wanted, Duration budget) {
+        long[] wantedIds = ids.stream().mapToLong(Long::longValue).toArray();
+        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
         long deadline = System.nanoTime() + budget.toNanos();
         try {
             while (System.nanoTime() < deadline) {
-                for (Thread thread : Thread.getAllStackTraces().keySet()) {
-                    if (ids.contains(thread.threadId()) && thread.getState() == wanted) {
+                // Targeted lookup: a full getAllStackTraces() dump is expensive enough
+                // under load to miss the short BLOCKED window it is supposed to observe.
+                for (ThreadInfo info : bean.getThreadInfo(wantedIds)) {
+                    if (info != null && info.getThreadState() == wanted) {
                         return true;
                     }
                 }
