@@ -8,6 +8,7 @@ import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
+import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
 import com.javalearn.lab.seckill.lab.config.LabToggleProperties;
 import com.javalearn.lab.seckill.lab.config.TestLabCacheProperties;
@@ -86,6 +87,11 @@ class CacheExperimentDataServiceTest {
     private final CacheDefenseModeService modeService = new CacheDefenseModeService(properties);
     private final com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense breakdownDefense =
             mock(com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense.class);
+    private final com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense avalancheDefense =
+            mock(com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense.class);
+    private final com.javalearn.lab.seckill.catalog.cache.TtlJitter ttlJitter =
+            new com.javalearn.lab.seckill.catalog.cache.TtlJitter(20D, () -> 0.5D);
+    private final LabCacheAvalancheProperties avalancheProperties = avalancheProperties();
 
     /** The id set the filter was last rebuilt from, to prove its coverage. */
     private Collection<Long> bloomIdsSeen = List.of();
@@ -119,8 +125,24 @@ class CacheExperimentDataServiceTest {
         when(productCache.getNativeCache()).thenReturn(l1);
 
         service = new CacheExperimentDataService(properties, jdbcTemplate, template, objectMapper,
-                bloomFilter, markerStore, modeService, breakdownDefense,
+                bloomFilter, markerStore, modeService, breakdownDefense, avalancheDefense,
+                ttlJitter, avalancheProperties,
                 new LabToggleService(toggles()), cacheManager);
+    }
+
+    private static LabCacheAvalancheProperties avalancheProperties() {
+        LabCacheAvalancheProperties config = new LabCacheAvalancheProperties();
+        config.getTtlJitter().setPercent(20D);
+        config.getL1Cache().setRefreshIntervalSeconds(10L);
+        config.getL1Cache().setStaleWindowSeconds(60L);
+        config.getL1Cache().setMaxEntries(10_000L);
+        config.getL1Cache().setRefreshPoolSize(2);
+        config.getL1Cache().setRefreshQueueCapacity(100);
+        config.getL1Cache().setKeepAliveSeconds(60L);
+        config.getL1Cache().setThreadNamePrefix("avalanche-l1-refresh");
+        config.getDbFallback().setPermits(50L);
+        config.getDbFallback().setPeriodMs(1_000L);
+        return config;
     }
 
     @Test
@@ -238,6 +260,10 @@ class CacheExperimentDataServiceTest {
 
         assertThat(state.defense().mode()).isEqualTo("off");
         assertThat(state.defense().cacheToggleEnabled()).isTrue();
+        assertThat(state.avalanche().strategy()).isEqualTo("off");
+        assertThat(state.avalanche().ttlJitterPercent()).isEqualTo(20D);
+        assertThat(state.avalanche().l1StaleWindowSeconds()).isEqualTo(60L);
+        assertThat(state.avalanche().limiterPermits()).isEqualTo(50L);
         assertThat(state.dataset()).isEqualTo(new CacheStateResponse.Dataset(
                 START_ID, END_ID, PRODUCT_COUNT, 5L, 0L, 2L, 60L, HOT_KEY_ID));
         assertThat(state.keys().redisReachable()).isTrue();

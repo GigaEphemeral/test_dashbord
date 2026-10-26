@@ -4,7 +4,7 @@ import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.api.ProductViewService;
-import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
+import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
@@ -21,13 +21,21 @@ import java.util.Optional;
  * non-transactional, otherwise a cache hit would still open a transaction.</p>
  *
  * <p>The method body is the defense stage of the read path: it only runs after
- * L1 and L2 missed, so {@link ProductBreakdownDefense} sees exactly the traffic
- * the experiment manipulates. It dispatches on the runtime mode — the M4-2
- * breakdown strategies ({@code mutex}, {@code logical-expire}) handle the expired
- * hot key, every other mode delegates unchanged to the M4-1
- * {@code ProductPenetrationDefense}. An absent product still raises the same
- * {@code 40401} {@link BizException} whatever the defense mode; what changes is
- * only whether the database had to be asked.</p>
+ * L1 and L2 missed, so {@link ProductAvalancheDefense} sees exactly the traffic
+ * the experiment manipulates. It dispatches on the runtime mode: the avalanche
+ * strategies handle an L2 avalanche, the M4-2 breakdown strategies
+ * ({@code mutex}, {@code logical-expire}) the expired hot key, and every other
+ * mode delegates unchanged to the M4-1 {@code ProductPenetrationDefense}. An
+ * absent product still raises the same {@code 40401} {@link BizException}
+ * whatever the defense mode; what changes is only whether the database had to
+ * be asked (or, for {@code db-fallback}, whether the budget admitted the
+ * question at all).</p>
+ *
+ * <p>The {@code cacheResolver} is the write-side half of {@code ttl-jitter}: it
+ * hands this read path an {@code AvalancheTtlCache} decorator that rewrites the
+ * L2 TTL after the write when the mode is active. The raw two-level cache and
+ * every other consumer are untouched, so {@code off} stays byte-for-byte the
+ * historical behaviour.</p>
  */
 @Service
 public class CachedProductViewService implements ProductViewService {
@@ -35,18 +43,18 @@ public class CachedProductViewService implements ProductViewService {
     public static final String PRODUCT_CACHE = "product";
 
     private final ProductReadService productReadService;
-    private final ProductBreakdownDefense breakdownDefense;
+    private final ProductAvalancheDefense avalancheDefense;
 
     public CachedProductViewService(ProductReadService productReadService,
-                                    ProductBreakdownDefense breakdownDefense) {
+                                    ProductAvalancheDefense avalancheDefense) {
         this.productReadService = Objects.requireNonNull(productReadService, "productReadService");
-        this.breakdownDefense = Objects.requireNonNull(breakdownDefense, "breakdownDefense");
+        this.avalancheDefense = Objects.requireNonNull(avalancheDefense, "avalancheDefense");
     }
 
     @Override
-    @Cacheable(cacheNames = PRODUCT_CACHE, key = "#id")
+    @Cacheable(cacheNames = PRODUCT_CACHE, key = "#id", cacheResolver = "avalancheCacheResolver")
     public ProductResponse get(long id) {
-        return breakdownDefense.load(id, this::findInDatabase)
+        return avalancheDefense.load(id, this::findInDatabase)
                 .orElseThrow(() -> new BizException(
                         CommonErrorCode.NOT_FOUND, "Product not found: " + id));
     }
