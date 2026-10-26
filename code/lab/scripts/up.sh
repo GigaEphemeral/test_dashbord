@@ -11,7 +11,7 @@ DASHBOARD_DIST_INDEX="$DASHBOARD_DIR/dist/index.html"
 
 usage() {
   cat <<'EOF'
-Usage: up.sh [--profile dev|ha]
+Usage: up.sh [--profile dev|ha|chaos-proxy]
 
 Start the java-learn-lab infrastructure stack.
 
@@ -21,8 +21,14 @@ Profiles:
   ha    the dev stack plus the Redis Sentinel topology from compose.ha.yml
         (1 master + 2 replicas + 3 Sentinels + 1 exporter per data node,
         all gated behind the "ha" compose profile, reachable on jl-net only)
+  chaos-proxy
+        the dev stack plus compose.toxiproxy.yml: one Toxiproxy between the
+        app tier and Redis/MySQL (gated behind the "chaos-proxy" profile,
+        jl-net only). The three app containers are recreated against the
+        proxies, so use it as demo preparation, not as a runtime toggle.
+        It is a dev-stack overlay and does NOT combine with ha / db-ha.
 
-MySQL InnoDB Cluster (design §8.3) is still a later M3 task.
+MySQL InnoDB Cluster (design §8.3) is started by db-ha-up.sh, not here.
 EOF
 }
 
@@ -31,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --profile requires a value (dev or ha)." >&2
+        echo "ERROR: --profile requires a value (dev, ha or chaos-proxy)." >&2
         exit 2
       fi
       PROFILE="$2"
@@ -55,6 +61,10 @@ done
 
 # dev always renders base+dev; ha overlays compose.ha.yml on top of it, so the
 # Sentinel topology is additive and the dev service definitions stay byte-identical.
+# chaos-proxy overlays compose.toxiproxy.yml on the SAME dev stack and selects its
+# profile, so only the three app containers get the proxy endpoints; the option is
+# deliberately exclusive: the overlay rewrites the app datastore links and must not
+# be mixed with the ha / db-ha topologies (those own redis/mysql endpoints).
 COMPOSE_FILES=(-f "$DOCKER_DIR/compose.base.yml" -f "$DOCKER_DIR/compose.dev.yml")
 ACTIVE_PROFILES=()
 case "$PROFILE" in
@@ -68,8 +78,27 @@ case "$PROFILE" in
     COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.ha.yml")
     ACTIVE_PROFILES=(--profile ha)
     ;;
+  chaos-proxy)
+    if [[ ! -f "$DOCKER_DIR/compose.toxiproxy.yml" ]]; then
+      echo "ERROR: --profile chaos-proxy needs $DOCKER_DIR/compose.toxiproxy.yml." >&2
+      exit 1
+    fi
+    COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.toxiproxy.yml")
+    ACTIVE_PROFILES=(--profile chaos-proxy)
+    ;;
+  db-ha)
+    echo "ERROR: --profile db-ha is not an up.sh profile: the MySQL InnoDB Cluster is" >&2
+    echo "       started by db-ha-up.sh, and chaos-proxy is a dev-stack overlay only." >&2
+    exit 2
+    ;;
+  *,*|*+*)
+    echo "ERROR: '$PROFILE' looks like a profile combination. up.sh takes exactly one" >&2
+    echo "       profile: dev, ha or chaos-proxy; chaos-proxy does not combine with" >&2
+    echo "       ha / db-ha." >&2
+    exit 2
+    ;;
   *)
-    echo "ERROR: unknown profile '$PROFILE'. Available: dev, ha." >&2
+    echo "ERROR: unknown profile '$PROFILE'. Available: dev, ha, chaos-proxy." >&2
     exit 2
     ;;
 esac
@@ -198,6 +227,17 @@ for service in "${services[@]}"; do
   # Every service in compose.base.yml sets container_name: jl-<service>.
   container="jl-$service"
   state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+  # chaos-proxy adds one one-shot service by design: toxiproxy-init must have
+  # RUN and exited 0 (the app tier waits for it), so it is the only container
+  # that is allowed - and required - not to be running.
+  if [[ "$PROFILE" == "chaos-proxy" && "$container" == "jl-toxiproxy-init" ]]; then
+    exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$container" 2>/dev/null || true)"
+    if [[ "$state" != "exited" || "$exit_code" != "0" ]]; then
+      echo "ERROR: $container must have exited 0 (state=${state:-missing}, exit=${exit_code:-?})." >&2
+      not_running="$not_running $container"
+    fi
+    continue
+  fi
   if [[ "$state" != "running" ]]; then
     echo "ERROR: $container is not running (state=${state:-missing})." >&2
     not_running="$not_running $container"
@@ -319,4 +359,19 @@ if [[ "$PROFILE" == "ha" ]]; then
   echo
   echo "Read-only topology view : bash $SCRIPT_DIR/sentinel-status.sh"
   echo "Sentinel verify checks  : REDIS_HA_VERIFY=auto bash $SCRIPT_DIR/verify.sh (skipped while jl-sentinel-1 is absent)"
+fi
+
+# Toxiproxy tier summary (chaos-proxy profile only). Nothing here is a dev/ha output.
+if [[ "$PROFILE" == "chaos-proxy" ]]; then
+  echo
+  echo "Toxiproxy network-fault tier (compose profile chaos-proxy, jl-net only):"
+  echo "  control API   : http://toxiproxy:${TOXIPROXY_API_PORT:-8474} (loopback http://127.0.0.1:${TOXIPROXY_API_PORT:-8474})"
+  echo "  redis proxy   : toxiproxy:${TOXIPROXY_REDIS_PORT:-16379} -> jl-redis:6379 (app REDIS_HOST/REDIS_PORT)"
+  echo "  mysql proxy   : toxiproxy:${TOXIPROXY_MYSQL_PORT:-13306} -> jl-mysql:3306 (both app Hikari pools)"
+  echo "  app tier      : jl-app-1/2/3 were recreated with MYSQL_MODE=standalone behind the proxies"
+  echo "  chaos URL     : CHAOS_TOXIPROXY_URL is injected into chaos-controller (Java actions: step-39)"
+  echo
+  echo "Proxy names   : redis, mysql (the chaos-controller actions address them by name)"
+  echo "Back to direct datastore access : bash $SCRIPT_DIR/up.sh --profile dev (recreates the app tier)"
+  echo "After restarting jl-toxiproxy   : docker start jl-toxiproxy-init (recreates the two proxies)"
 fi

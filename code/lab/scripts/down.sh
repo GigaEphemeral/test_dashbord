@@ -16,7 +16,9 @@ Named volumes are preserved by default so the stack can be restarted for debuggi
 
 Both the on-demand "traffic" and "ha" (Redis Sentinel) compose profiles are included, so
 profile-gated containers such as jl-traffic and jl-redis-1..3 / jl-sentinel-1..3 never
-linger after the stack is down.
+linger after the stack is down. The dev-stack "chaos-proxy" overlay (Toxiproxy,
+jl-toxiproxy + the one-shot jl-toxiproxy-init) is included on the same terms: only
+when every env key it needs resolves in the env file.
 
   --purge   Also remove the named volumes jl-mysql-data, jl-redis-data,
             jl-rabbitmq-data, jl-prometheus-data, jl-grafana-data and
@@ -83,6 +85,30 @@ if [[ -f "$DOCKER_DIR/compose.ha.yml" ]]; then
   fi
 fi
 
+# The Toxiproxy tier (compose.toxiproxy.yml, profile "chaos-proxy") is a dev-stack
+# overlay. Same gating rule as the ha block above: include the file plus its profile
+# only when every ${VAR} it uses without a `:-default` resolves to a non-empty value.
+# An older .env (or a half-filled toxiproxy block) then falls back to the existing
+# dev teardown instead of failing the render and leaving containers behind.
+CHAOS_PROXY_PROFILES=()
+if [[ -f "$DOCKER_DIR/compose.toxiproxy.yml" ]]; then
+  proxy_missing=""
+  for proxy_key in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$DOCKER_DIR/compose.toxiproxy.yml" \
+    | tr -d '${}' | sort -u); do
+    grep -Eq "^[[:space:]]*${proxy_key}[[:space:]]*=[[:space:]]*[^[:space:]]" "$ENV_FILE" \
+      || proxy_missing="$proxy_missing $proxy_key"
+  done
+  if [[ -z "$proxy_missing" ]]; then
+    COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.toxiproxy.yml")
+    CHAOS_PROXY_PROFILES=(--profile chaos-proxy)
+  else
+    echo "WARN: compose.toxiproxy.yml needs env keys missing or empty in $ENV_FILE:$proxy_missing" >&2
+    echo "      Skipping the chaos-proxy overlay; a running Toxiproxy tier (jl-toxiproxy," >&2
+    echo "      jl-toxiproxy-init) will NOT be torn down. Add the keys (up.sh prints the" >&2
+    echo "      full missing list) and run down.sh again to remove those containers." >&2
+  fi
+fi
+
 compose() {
   docker compose \
     --project-name java-learn-lab \
@@ -96,11 +122,11 @@ if $PURGE; then
   echo "WARNING: --purge removes the containers, the network AND the named volumes" >&2
   echo "         jl-mysql-data, jl-redis-data, jl-rabbitmq-data, jl-prometheus-data," >&2
   echo "         jl-grafana-data, jl-tempo-data (all local lab data)." >&2
-  compose "${HA_PROFILES[@]}" --profile traffic down -v
+  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic down -v
   echo "java-learn-lab stopped; containers, network and named volumes removed."
 else
   # The traffic profile is included so the created-but-stopped jl-traffic
   # container (Task 23 background traffic) never lingers after the stack is down.
-  compose "${HA_PROFILES[@]}" --profile traffic down
+  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic down
   echo "java-learn-lab stopped; named volumes preserved (use --purge to delete them)."
 fi
