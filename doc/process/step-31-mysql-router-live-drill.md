@@ -103,3 +103,26 @@
 - 演练后的正确拓扑是 `jl-mysql-2` 为主、`jl-mysql-1/3` 为从；不要为了“回到 mysql-1 为主”再制造一次切换。
 - 恢复 app 时重建容器会短暂 502（本次约 20s，Nginx 仍指旧 IP，重载后恢复）；杀主窗口内 Nginx 读没有 5xx，两者不要混淆。
 - 未运行 `verify.sh`/`smoke.sh`/`console-smoke.sh`；批次门禁负责。
+
+---
+
+## 补充（2026-10-27）：探针 exec 挂死缺陷的修复与真机复验
+
+本步发现的 `DockerContainerGateway#execInContainer` 挂死（stdin 挂上后容器进程拿不到 EOF，`timedOut=true`、stdout/stderr 为空）已在 `fcd287d` 修复：
+
+- 探针不再使用 stdin：SQL 作为容器环境变量 `MYSQL_CLUSTER_QUERY` 传入，容器内 `bash -c '... exec mysql ... -e "$MYSQL_CLUSTER_QUERY"'` 执行；口令仍只在容器内展开。
+- `application.yml` 的 `chaos.mysql-cluster.command` 同步更新，并在注释里写明「SQL 不得走 stdin」的原因（docker-java 3.7.1 行为）。
+- 回归：`mvn -pl services/chaos-controller -am test` → **138 tests / BUILD SUCCESS**。
+
+真机复验（重建控制器镜像后）：
+
+```
+mysql_cluster_probe_up      -> 1
+mysql_cluster_member_count  -> 3
+mysql_cluster_primary{member="mysql-2"} -> 1
+mysql_cluster_member_state{member="mysql-1",role="SECONDARY",state="ONLINE"} -> 1
+```
+
+即探针在真栈上按 10s 产出成员与主节点指标，D11 数据面可用；`mysql-2` 为主是本步杀主演练后的正确结果。
+
+未做：探针在「探测节点本身被停」时的 `probe_up=0` 仍需一次针对性演练（当前默认探测 `jl-mysql-1`，与被杀节点重合时应把探针容器改到非目标节点）。

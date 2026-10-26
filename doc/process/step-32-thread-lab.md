@@ -174,3 +174,16 @@ resume 只补剩余、stop-all 全清、单 mode 冲突拒绝与并发抢注、o
   → `Tests run: 249, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`
   （238 → 249，新增 11：FaultActionTest +3、HeapLeakAllocatorTest +1、LabThreadPropertiesValidationTest +2、
   ThreadLabMetricsTest +2、ThreadStateFingerprintTest +3）。
+
+---
+
+## 补充（2026-10-27）：BLOCKED 指纹的可复现性修复
+
+`ThreadStateFingerprintTest.defaultDeadlockContentionReallyBlocksParticipants`（本步审核新增）在并发构建/高负载下会假失败：默认「可排空反转」的两个 worker 同相位循环——一个持 A、一个持 B，交替时**不会同时抢同一个监视器**，BLOCKED 只靠调度抖动偶尔出现；采样用 `getAllStackTraces()` 本身在负载下也很重。
+
+修复 `a37abff`：
+
+- `FaultAction.startDeadlock`：给奇数序 worker 加半个 `hold-ms` 的相位偏移，保证每轮都在同一监视器上相撞（真 BLOCKED，仍可在 stop 时排空）；
+- 测试改用 `ThreadMXBean.getThreadInfo(ids)` 精准采样，窗口 250→500ms，最多 5 次有界重试，断言不变（必须真观测到 `Thread.State.BLOCKED`）。
+
+证据：单类连跑 5 次全绿；app 模块随后 406→434（含快照）全绿。

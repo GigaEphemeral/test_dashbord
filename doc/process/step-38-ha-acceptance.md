@@ -173,3 +173,24 @@ M3 完成标志是"场景 1、8、9 通过"，当前 1/8 通过、9 待执行，
 - 成员从 `replication_group_members` 消失时 MultiGauge 会清除该行，状态时间轴出现空白；空白不等于 UNKNOWN。
 - 所有 Redis 结论只适用于 dev 单机；Redis Sentinel 的验收证据仍以 step-24d 的日志/脚本输出为准。
 - D11 的 annotation 依赖 chaos-controller 的 `CHAOS_ANNOTATION_ENABLED=true` 与 Grafana 管理员凭据；两者缺失时动作仍执行，只是没有标注。
+
+---
+
+## 补充（2026-10-27）：db-ha exporter 抓取接线
+
+D11 的「节点可达性」原本无数据，原因不是面板问题，而是 `prometheus/mysql-ha-scrape.yml` 从未被读取（`prometheus.yml` 没有 `scrape_config_files`，compose 也没挂载该文件）。
+
+尝试一（失败，已回退）：用 `scrape_config_files` 引用独立文件 → Prometheus 3.0.0 报 `cannot unmarshal !!seq into config.ScrapeConfigs` 并崩溃循环。原因未深究，判断不值得为「可切换性」再引入一个格式坑。
+
+最终做法（`c192a0a`）：把 `mysqld-exporter-ha` job **内联**进 `prometheus.yml` 的 `scrape_configs`，删除从未被读取的 `mysql-ha-scrape.yml`，并修正 `compose.mysql.yml` 的注释引用。真机验证：
+
+```
+mysql_up{job="mysqld-exporter-ha",member="mysql-1"} 1
+mysql_up{job="mysqld-exporter-ha",member="mysql-2"} 1
+mysql_up{job="mysqld-exporter-ha",member="mysql-3"} 1
+mysql_up{job="mysqld-exporter"} 1        # dev 单机那条，行为不变
+```
+
+注意：db-ha profile 关闭时这三个 target 会显示 down（不是配置错误），D11 面板需按 `member` 过滤而不是要求恒为 1。
+
+仍未做：Sentinel 与 `jl-redis-*-exporter` 未纳入抓取；Router 本身无指标（D11 用文本面板 + `db-cluster-status.sh` 说明）。
