@@ -18,6 +18,8 @@ dist/
 .env
 .env.*
 !.env.example
+# DB-HA tier template (step 25a): a documented default set, not a secret file.
+!.env.mysql.example
 *.pem
 *.key
 
