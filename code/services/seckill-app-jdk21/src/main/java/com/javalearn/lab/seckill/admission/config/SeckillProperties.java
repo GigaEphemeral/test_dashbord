@@ -16,6 +16,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.seckill")
 public class SeckillProperties {
 
+    /**
+     * Task 16 startup switch. Since Task 17 the runtime {@code mq} toggle is
+     * authoritative; {@code application.yml} uses this value only as the
+     * {@code app.toggles.mq} default seed, so it is bound but no longer read
+     * by the admission service.
+     */
     private boolean asyncEnabled;
     private final Lock lock = new Lock();
     private final Stock stock = new Stock();

@@ -62,6 +62,12 @@ RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://127.0.0.1:15672}"
 SECKILL_CURL_MAX_TIME="${SECKILL_CURL_MAX_TIME:-10}"
 SECKILL_CURL_POLL_MAX_TIME="${SECKILL_CURL_POLL_MAX_TIME:-5}"
 
+# Task 17: mock login and the internal-only lab API.
+LOGIN_TOKEN_KEY_PREFIX="${LOGIN_TOKEN_KEY_PREFIX:-login:token:}"
+LOGIN_CURL_MAX_TIME="${LOGIN_CURL_MAX_TIME:-5}"
+LAB_INTERNAL_BASE_URL="${LAB_INTERNAL_BASE_URL:-http://127.0.0.1:8080}"
+LAB_TOGGLE_KEYS=(lock idempotency mq ratelimit circuitbreaker cache)
+
 compose() {
   docker compose \
     --project-name java-learn-lab \
@@ -379,8 +385,11 @@ done
 
 # The L2 error counter must be exported even at zero, so outage dashboards and
 # alerts can bind to it (a typo'd meter name fails here, not in M3).
-if docker exec jl-app-1 wget -qO- http://127.0.0.1:8080/actuator/prometheus 2>/dev/null \
-  | grep -q '^cache_l2_errors_total'; then
+# Capture first: `grep -q` closes the pipe early and pipefail would then report
+# wget's SIGPIPE as a failed check even when the series matched.
+cache_metrics_body="$(docker exec jl-app-1 wget -qO- \
+  http://127.0.0.1:8080/actuator/prometheus 2>/dev/null || true)"
+if grep -q '^cache_l2_errors_total' <<<"$cache_metrics_body"; then
   pass "app-1 exposes cache_l2_errors_total on /actuator/prometheus"
 else
   fail "app-1 exposes cache_l2_errors_total on /actuator/prometheus" "series missing"
@@ -630,6 +639,145 @@ if grep -q '^seckill_attempts_total' <<<"$seckill_metrics" \
 else
   fail "app-1 exposes seckill metrics" "one or more seckill metric families are missing"
 fi
+
+if grep -q 'result="rate_limited"' <<<"$seckill_metrics" \
+  && grep -q 'result="degraded"' <<<"$seckill_metrics"; then
+  pass "app-1 registers seckill_attempts result=rate_limited and result=degraded"
+else
+  fail "app-1 registers seckill_attempts result=rate_limited and result=degraded" \
+    "one or both Task 17 result series are missing"
+fi
+
+# 2f. Mock login and runtime lab toggles (Task 17).
+login_user="verify-login-$(date +%s)-${RANDOM}-$$"
+login_payload="{\"userId\":\"${login_user}\"}"
+login_response="$(curl -sS -w $'\n%{http_code}' --max-time "$LOGIN_CURL_MAX_TIME" \
+  -X POST -H 'Content-Type: application/json' --data "$login_payload" \
+  http://127.0.0.1:8080/api/login 2>/dev/null || true)"
+login_code="${login_response##*$'\n'}"
+login_body="${login_response%$'\n'*}"
+login_token="$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  <<<"$login_body" | head -n 1)"
+login_expires="$(sed -n 's/.*"expiresInSeconds"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+  <<<"$login_body" | head -n 1)"
+if [[ "$login_code" == "200" ]] \
+  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$login_body" \
+  && [[ -n "$login_token" ]] \
+  && [[ "$login_expires" =~ ^[0-9]+$ ]] \
+  && (( login_expires > 0 )); then
+  pass "nginx POST /api/login returns 200 with a token and expiresInSeconds=${login_expires}"
+else
+  fail "nginx POST /api/login returns 200 with a token and expiresInSeconds" \
+    "HTTP ${login_code:-000} body: ${login_body:0:200}"
+fi
+
+login_key="${LOGIN_TOKEN_KEY_PREFIX}${login_token}"
+login_stored="$(docker exec jl-redis redis-cli get "$login_key" 2>/dev/null | tr -d '\r\n' || true)"
+login_ttl="$(docker exec jl-redis redis-cli ttl "$login_key" 2>/dev/null | tr -d '\r\n' || true)"
+if [[ -n "$login_token" && "$login_stored" == "$login_user" ]] \
+  && [[ "$login_ttl" =~ ^[0-9]+$ ]] && (( login_ttl > 0 )); then
+  pass "redis stores ${login_key} -> ${login_user} with TTL ${login_ttl}s"
+else
+  fail "redis stores the login token with a positive TTL" \
+    "key='${login_key}' value='${login_stored}' ttl='${login_ttl}'"
+fi
+
+# The lab API is internal only: Nginx must not proxy it (exact 404 rule).
+lab_nginx_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+  http://127.0.0.1:8080/lab/toggles 2>/dev/null || true)"
+if [[ "$lab_nginx_code" == "404" ]]; then
+  pass "nginx does not proxy /lab/toggles (404)"
+else
+  fail "nginx does not proxy /lab/toggles (404)" "got HTTP ${lab_nginx_code:-000}"
+fi
+
+# Reach the app directly inside the compose network, as the chaos-controller
+# will. wget -S writes the status line to the captured stream; the body is
+# discarded. No token on the wire means 401 with the Result envelope.
+# pipefail + set -e: a 401 makes wget exit 1, so the pipeline needs || true.
+lab_unauth_status="$(docker exec jl-app-1 sh -c \
+  "wget -S -O /dev/null '${LAB_INTERNAL_BASE_URL}/lab/toggles' 2>&1" \
+  | sed -n 's/.*HTTP\/1\.1 \([0-9][0-9][0-9]\).*/\1/p' | head -n 1 || true)"
+if [[ "$lab_unauth_status" == "401" ]]; then
+  pass "internal GET /lab/toggles without X-Lab-Token returns 401"
+else
+  fail "internal GET /lab/toggles without X-Lab-Token returns 401" \
+    "got '${lab_unauth_status:-unknown}'"
+fi
+
+lab_auth_status="$(docker exec jl-app-1 sh -c \
+  "wget -S -O /dev/null --header='X-Lab-Token: ${LAB_TOKEN}' '${LAB_INTERNAL_BASE_URL}/lab/toggles' 2>&1" \
+  | sed -n 's/.*HTTP\/1\.1 \([0-9][0-9][0-9]\).*/\1/p' | head -n 1 || true)"
+lab_toggles_body="$(docker exec jl-app-1 sh -c \
+  "wget -qO- --header='X-Lab-Token: ${LAB_TOKEN}' '${LAB_INTERNAL_BASE_URL}/lab/toggles'" \
+  2>/dev/null || true)"
+lab_toggles_ok=true
+for lab_key in "${LAB_TOGGLE_KEYS[@]}"; do
+  if ! grep -q "\"${lab_key}\"" <<<"$lab_toggles_body"; then
+    lab_toggles_ok=false
+  fi
+done
+if [[ "$lab_auth_status" == "200" ]] && $lab_toggles_ok; then
+  pass "internal GET /lab/toggles with token returns 200 and all six keys"
+else
+  fail "internal GET /lab/toggles with token returns 200 and all six keys" \
+    "HTTP ${lab_auth_status:-000} body: ${lab_toggles_body:0:200}"
+fi
+
+lab_toggle_false_status="$(docker exec jl-app-1 sh -c \
+  "wget -S -O /dev/null --header='X-Lab-Token: ${LAB_TOKEN}' --header='Content-Type: application/json' --post-data='{\"key\":\"cache\",\"value\":false}' '${LAB_INTERNAL_BASE_URL}/lab/toggles' 2>&1" \
+  | sed -n 's/.*HTTP\/1\.1 \([0-9][0-9][0-9]\).*/\1/p' | head -n 1 || true)"
+lab_toggle_false="$(docker exec jl-app-1 sh -c \
+  "wget -qO- --header='X-Lab-Token: ${LAB_TOKEN}' --header='Content-Type: application/json' --post-data='{\"key\":\"cache\",\"value\":false}' '${LAB_INTERNAL_BASE_URL}/lab/toggles'" \
+  2>/dev/null || true)"
+lab_toggle_true="$(docker exec jl-app-1 sh -c \
+  "wget -qO- --header='X-Lab-Token: ${LAB_TOKEN}' --header='Content-Type: application/json' --post-data='{\"key\":\"cache\",\"value\":true}' '${LAB_INTERNAL_BASE_URL}/lab/toggles'" \
+  2>/dev/null || true)"
+if [[ "$lab_toggle_false_status" == "200" ]] \
+  && grep -Eq '"cache"[[:space:]]*:[[:space:]]*false' <<<"$lab_toggle_false" \
+  && grep -Eq '"cache"[[:space:]]*:[[:space:]]*true' <<<"$lab_toggle_true"; then
+  pass "internal POST /lab/toggles returns 200 and flips cache false then true (no-op experiment)"
+else
+  fail "internal POST /lab/toggles returns 200 and flips cache false then true (no-op experiment)" \
+    "HTTP ${lab_toggle_false_status:-000} false-body: ${lab_toggle_false:0:160} true-body: ${lab_toggle_true:0:160}"
+fi
+
+lab_config_body="$(docker exec jl-app-1 sh -c \
+  "wget -qO- --header='X-Lab-Token: ${LAB_TOKEN}' '${LAB_INTERNAL_BASE_URL}/lab/config'" \
+  2>/dev/null || true)"
+if grep -Eq '"app"[[:space:]]*:[[:space:]]*"seckill-app"' <<<"$lab_config_body" \
+  && grep -Eq '"instance"[[:space:]]*:[[:space:]]*"app-1"' <<<"$lab_config_body" \
+  && grep -Eq '"jvmVersion"[[:space:]]*:[[:space:]]*"21\.' <<<"$lab_config_body" \
+  && grep -q '"toggles"' <<<"$lab_config_body" \
+  && ! grep -qF "$LAB_TOKEN" <<<"$lab_config_body"; then
+  pass "internal GET /lab/config exposes app/env/instance/JVM and toggles without secrets"
+else
+  fail "internal GET /lab/config exposes app/env/instance/JVM and toggles without secrets" \
+    "body: ${lab_config_body:0:240}"
+fi
+
+# Resilience4j meters must reach Prometheus (the app registers both instances
+# at startup, so no rate-limit/circuit-open probe is needed here).
+for resilience_metric in \
+  resilience4j_ratelimiter_available_permissions \
+  resilience4j_circuitbreaker_state; do
+  resilience_body=""
+  for attempt in $(seq 1 30); do
+    resilience_body="$(prometheus_query "$resilience_metric")"
+    if grep -q "\"__name__\":\"${resilience_metric}\"" <<<"$resilience_body"; then
+      break
+    fi
+    if (( attempt < 30 )); then
+      sleep 2
+    fi
+  done
+  if grep -q "\"__name__\":\"${resilience_metric}\"" <<<"$resilience_body"; then
+    pass "prometheus has ${resilience_metric}"
+  else
+    fail "prometheus has ${resilience_metric}" \
+      "response: ${resilience_body:0:200}"
+  fi
+done
 
 # 3. RabbitMQ management API.
 rabbit_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \

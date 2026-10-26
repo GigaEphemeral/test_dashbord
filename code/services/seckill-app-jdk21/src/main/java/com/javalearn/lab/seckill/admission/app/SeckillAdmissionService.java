@@ -5,9 +5,10 @@ import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.CreateSeckillOrderRequest;
 import com.javalearn.lab.seckill.admission.api.SeckillRequestView;
 import com.javalearn.lab.seckill.admission.api.SeckillResponse;
-import com.javalearn.lab.seckill.admission.config.SeckillProperties;
 import com.javalearn.lab.seckill.admission.domain.SeckillOrderMessage;
 import com.javalearn.lab.seckill.admission.domain.SeckillRequest;
+import com.javalearn.lab.seckill.lab.toggle.LabToggle;
+import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.javalearn.lab.seckill.order.api.CreateOrderCommand;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
 import com.javalearn.lab.seckill.order.domain.Order;
@@ -30,15 +31,21 @@ import java.util.UUID;
  * {@link OrderApplicationService}, so the database still reserves stock and
  * enforces the unique idempotency key exactly once.</p>
  *
- * <p>With {@code app.seckill.async-enabled=false} the request goes straight to
- * the existing synchronous order path (no MQ, no Redis stock) for the naive
- * comparison demo.</p>
+ * <p>With the {@code mq} runtime toggle off (or
+ * {@code app.seckill.async-enabled=false} as its startup seed) the request goes
+ * straight to the existing synchronous order path (no MQ, no Redis stock) for
+ * the naive comparison demo.</p>
+ *
+ * <p>Task 17 adds per-instance runtime toggles around each protection:
+ * {@code ratelimit}/{@code circuitbreaker} live in
+ * {@link SeckillResilienceGuard}, {@code lock} and {@code idempotency} are
+ * checked here, and {@code mq} selects the async or synchronous path. Every
+ * toggle is per-instance; the chaos-controller will broadcast later.</p>
  */
 public class SeckillAdmissionService {
 
     private static final Logger log = LoggerFactory.getLogger(SeckillAdmissionService.class);
 
-    private final SeckillProperties properties;
     private final SeckillLockGuard lockGuard;
     private final SeckillIdempotencyStore idempotencyStore;
     private final SeckillStockStore stockStore;
@@ -46,16 +53,18 @@ public class SeckillAdmissionService {
     private final SeckillMessagePublisher publisher;
     private final OrderApplicationService orderApplicationService;
     private final SeckillMetrics metrics;
+    private final LabToggleService toggles;
+    private final SeckillResilienceGuard resilienceGuard;
 
-    public SeckillAdmissionService(SeckillProperties properties,
-                                   SeckillLockGuard lockGuard,
+    public SeckillAdmissionService(SeckillLockGuard lockGuard,
                                    SeckillIdempotencyStore idempotencyStore,
                                    SeckillStockStore stockStore,
                                    SeckillRequestStore requestStore,
                                    SeckillMessagePublisher publisher,
                                    OrderApplicationService orderApplicationService,
-                                   SeckillMetrics metrics) {
-        this.properties = Objects.requireNonNull(properties, "properties");
+                                   SeckillMetrics metrics,
+                                   LabToggleService toggles,
+                                   SeckillResilienceGuard resilienceGuard) {
         this.lockGuard = Objects.requireNonNull(lockGuard, "lockGuard");
         this.idempotencyStore = Objects.requireNonNull(idempotencyStore, "idempotencyStore");
         this.stockStore = Objects.requireNonNull(stockStore, "stockStore");
@@ -64,28 +73,35 @@ public class SeckillAdmissionService {
         this.orderApplicationService = Objects.requireNonNull(
                 orderApplicationService, "orderApplicationService");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.toggles = Objects.requireNonNull(toggles, "toggles");
+        this.resilienceGuard = Objects.requireNonNull(resilienceGuard, "resilienceGuard");
     }
 
     public boolean isAsyncEnabled() {
-        return properties.isAsyncEnabled();
+        return toggles.isEnabled(LabToggle.MQ);
     }
 
     /**
-     * Accepts one seckill request according to the configured mode.
+     * Accepts one seckill request according to the runtime mode.
      *
      * @throws BizException {@code 40001} invalid input, {@code 40901} sold out
-     *                      or lock timeout, {@code 50301} Redis/RabbitMQ failure
+     *                      or lock timeout, {@code 42901} rate limited,
+     *                      {@code 50301} Redis/RabbitMQ failure
      */
     public SeckillResponse admit(String idempotencyKey, CreateSeckillOrderRequest request) {
         validate(idempotencyKey, request);
         long startNanos = System.nanoTime();
         try {
-            if (!properties.isAsyncEnabled()) {
+            if (!toggles.isEnabled(LabToggle.MQ)) {
                 SeckillResponse response = createSynchronously(idempotencyKey, request);
                 metrics.attempt(SeckillMetrics.RESULT_ACCEPTED);
                 return response;
             }
-            return admitAsync(idempotencyKey, request);
+            // The fallback is passed directly (not through admit) so degradation
+            // never re-enters rate limiting, the circuit breaker or the lock.
+            return resilienceGuard.admitAsync(
+                    () -> admitAsync(idempotencyKey, request),
+                    () -> createSynchronously(idempotencyKey, request));
         } finally {
             metrics.recordAcceptNanos(System.nanoTime() - startNanos);
         }
@@ -113,25 +129,35 @@ public class SeckillAdmissionService {
         long productId = request.productId();
         int quantity = request.quantity();
 
-        SeckillLockGuard.LockHandle lock;
-        try {
-            lock = lockGuard.tryLock(productId);
-        } catch (RuntimeException lockFailure) {
-            metrics.attempt(SeckillMetrics.RESULT_ERROR);
-            log.error("Seckill lock failed for product {}", productId, lockFailure);
-            throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
-                    "Seckill lock is unavailable", lockFailure);
-        }
-        if (lock == null) {
-            metrics.attempt(SeckillMetrics.RESULT_LOCK_TIMEOUT);
-            throw new BizException(CommonErrorCode.CONFLICT, "Seckill lock timeout");
+        // `lock` off: skip Redisson. The Redis Lua stock check is still atomic,
+        // so the demo shows the extra serialization the lock buys, not oversell.
+        SeckillLockGuard.LockHandle lock = null;
+        if (toggles.isEnabled(LabToggle.LOCK)) {
+            try {
+                lock = lockGuard.tryLock(productId);
+            } catch (RuntimeException lockFailure) {
+                metrics.attempt(SeckillMetrics.RESULT_ERROR);
+                log.error("Seckill lock failed for product {}", productId, lockFailure);
+                throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
+                        "Seckill lock is unavailable", lockFailure);
+            }
+            if (lock == null) {
+                metrics.attempt(SeckillMetrics.RESULT_LOCK_TIMEOUT);
+                throw new BizException(CommonErrorCode.CONFLICT, "Seckill lock timeout");
+            }
         }
 
         try {
             String requestId = UUID.randomUUID().toString();
-            String claimedRequestId = idempotencyStore.claim(idempotencyKey, requestId);
-            if (claimedRequestId != null) {
-                return replay(claimedRequestId);
+            // `idempotency` off: skip the Redis claim entirely. The DB unique
+            // key (uk_order_idempotency) remains the durable backstop; the
+            // toggle demonstrates the app-layer gap (a second Redis stock hold,
+            // one durable order), never a DB guarantee removal.
+            if (toggles.isEnabled(LabToggle.IDEMPOTENCY)) {
+                String claimedRequestId = idempotencyStore.claim(idempotencyKey, requestId);
+                if (claimedRequestId != null) {
+                    return replay(claimedRequestId);
+                }
             }
             return acceptUnderLock(requestId, idempotencyKey, request, productId, quantity);
         } catch (BizException bizException) {
@@ -142,7 +168,9 @@ public class SeckillAdmissionService {
             throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
                     "Seckill request could not be accepted", unexpected);
         } finally {
-            lock.close();
+            if (lock != null) {
+                lock.close();
+            }
         }
     }
 
@@ -235,6 +263,9 @@ public class SeckillAdmissionService {
     }
 
     private void releaseIdempotency(String idempotencyKey) {
+        if (!toggles.isEnabled(LabToggle.IDEMPOTENCY)) {
+            return;
+        }
         try {
             idempotencyStore.release(idempotencyKey);
         } catch (RuntimeException releaseFailure) {

@@ -56,6 +56,17 @@ x-app-env: &app-env
   RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
   RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
   RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+  # Internal lab API (Task 17). Same shared secret as the chaos-controller;
+  # Nginx does not proxy /lab/**, so only in-network callers can use it.
+  LAB_TOKEN: ${LAB_TOKEN:-lab-token}
+  # Per-instance runtime experiment toggles (Task 17). Runtime POST /lab/toggles
+  # overrides these seeds; the chaos-controller will broadcast later.
+  LAB_TOGGLE_LOCK: ${LAB_TOGGLE_LOCK:-true}
+  LAB_TOGGLE_IDEMPOTENCY: ${LAB_TOGGLE_IDEMPOTENCY:-true}
+  LAB_TOGGLE_MQ: ${LAB_TOGGLE_MQ:-true}
+  LAB_TOGGLE_RATELIMIT: ${LAB_TOGGLE_RATELIMIT:-true}
+  LAB_TOGGLE_CIRCUITBREAKER: ${LAB_TOGGLE_CIRCUITBREAKER:-true}
+  LAB_TOGGLE_CACHE: ${LAB_TOGGLE_CACHE:-true}
   OTEL_SERVICE_NAME: seckill-app
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc

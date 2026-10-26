@@ -4,11 +4,16 @@ import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.CreateSeckillOrderRequest;
 import com.javalearn.lab.seckill.admission.api.SeckillResponse;
-import com.javalearn.lab.seckill.admission.config.SeckillProperties;
 import com.javalearn.lab.seckill.admission.domain.SeckillRequest;
+import com.javalearn.lab.seckill.lab.config.LabToggleProperties;
+import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
 import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +23,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -64,20 +71,25 @@ class SeckillAdmissionServiceTest {
     private OrderApplicationService orderApplicationService;
 
     private SimpleMeterRegistry meterRegistry;
+    private SeckillMetrics metrics;
+    private LabToggleService toggles;
     private SeckillAdmissionService service;
 
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
+        metrics = new SeckillMetrics(meterRegistry);
+        toggles = new LabToggleService(toggleProperties(true, true, true, true, false));
         service = new SeckillAdmissionService(
-                properties(true),
                 lockGuard,
                 idempotencyStore,
                 stockStore,
                 requestStore,
                 publisher,
                 orderApplicationService,
-                new SeckillMetrics(meterRegistry));
+                metrics,
+                toggles,
+                guard(toggles));
     }
 
     @Test
@@ -245,27 +257,114 @@ class SeckillAdmissionServiceTest {
     }
 
     @Test
-    void syncToggleDelegatesToTheDurableOrderPathWithoutMq() {
-        SeckillAdmissionService syncService = new SeckillAdmissionService(
-                properties(false),
-                lockGuard,
-                idempotencyStore,
-                stockStore,
-                requestStore,
-                publisher,
-                orderApplicationService,
-                new SeckillMetrics(meterRegistry));
+    void mqToggleOffDelegatesToTheDurableOrderPathWithoutMq() {
+        toggles.update("mq", false);
+        assertThat(service.isAsyncEnabled()).isFalse();
         Order order = new Order(7L, "order-no-7", "u1", PRODUCT_ID, 1,
                 OrderStatus.CREATED, "key-1", Instant.parse("2026-10-26T08:00:00Z"));
         given(orderApplicationService.create(any())).willReturn(order);
 
-        SeckillResponse response = syncService.admit("key-1", request(1));
+        SeckillResponse response = service.admit("key-1", request(1));
 
         assertThat(response.status()).isEqualTo("CREATED");
         assertThat(response.orderId()).isEqualTo(7L);
         assertThat(response.requestId()).isNull();
         verifyNoInteractions(lockGuard, idempotencyStore, stockStore, requestStore, publisher);
         assertThat(attempts("accepted")).isEqualTo(1.0d);
+    }
+
+    @Test
+    void lockToggleOffSkipsRedissonButKeepsAtomicRedisStock() {
+        toggles.update("lock", false);
+        given(idempotencyStore.claim(eq("key-1"), anyString())).willReturn(null);
+        given(stockStore.reserve(PRODUCT_ID, 1))
+                .willReturn(new SeckillStockStore.Reservation(
+                        SeckillStockStore.ReservationStatus.RESERVED, 9L));
+
+        SeckillResponse response = service.admit("key-1", request(1));
+
+        assertThat(response.status()).isEqualTo("ACCEPTED");
+        verifyNoInteractions(lockGuard);
+        verify(stockStore).reserve(PRODUCT_ID, 1);
+        verify(publisher).publish(any());
+        assertThat(attempts("accepted")).isEqualTo(1.0d);
+    }
+
+    @Test
+    void idempotencyToggleOffSkipsTheRedisClaimAndRelease() {
+        toggles.update("idempotency", false);
+        given(lockGuard.tryLock(PRODUCT_ID)).willReturn(lockHandle);
+        given(stockStore.reserve(PRODUCT_ID, 1))
+                .willReturn(new SeckillStockStore.Reservation(
+                        SeckillStockStore.ReservationStatus.RESERVED, 9L));
+
+        SeckillResponse response = service.admit("key-1", request(1));
+
+        assertThat(response.status()).isEqualTo("ACCEPTED");
+        assertThat(response.requestId()).isNotBlank();
+        verifyNoInteractions(idempotencyStore);
+        verify(lockHandle).close();
+        assertThat(attempts("accepted")).isEqualTo(1.0d);
+    }
+
+    @Test
+    void openCircuitDegradesToTheSynchronousDbPath() {
+        LabToggleService circuitToggles = new LabToggleService(
+                toggleProperties(true, true, true, true, true));
+        CircuitBreaker openBreaker = CircuitBreaker.of("seckillBackend-test",
+                CircuitBreakerConfig.custom()
+                        .slidingWindowSize(1)
+                        .minimumNumberOfCalls(1)
+                        .failureRateThreshold(50)
+                        .waitDurationInOpenState(Duration.ofMinutes(1))
+                        .build());
+        openBreaker.onError(0, TimeUnit.MILLISECONDS, new IllegalStateException("force open"));
+        RateLimiter limiter = RateLimiter.of("seckill-test",
+                RateLimiterConfig.custom()
+                        .limitForPeriod(1000)
+                        .limitRefreshPeriod(Duration.ofSeconds(1))
+                        .timeoutDuration(Duration.ZERO)
+                        .build());
+        SeckillAdmissionService degradedService = new SeckillAdmissionService(
+                lockGuard,
+                idempotencyStore,
+                stockStore,
+                requestStore,
+                publisher,
+                orderApplicationService,
+                metrics,
+                circuitToggles,
+                new SeckillResilienceGuard(circuitToggles, limiter, openBreaker, metrics));
+        Order order = new Order(7L, "order-no-7", "u1", PRODUCT_ID, 1,
+                OrderStatus.CREATED, "key-1", Instant.parse("2026-10-26T08:00:00Z"));
+        given(orderApplicationService.create(any())).willReturn(order);
+
+        SeckillResponse response = degradedService.admit("key-1", request(1));
+
+        assertThat(response.status()).isEqualTo("CREATED");
+        assertThat(response.orderId()).isEqualTo(7L);
+        assertThat(response.requestId()).isNull();
+        verifyNoInteractions(lockGuard, idempotencyStore, stockStore, requestStore, publisher);
+        assertThat(attempts("degraded")).isEqualTo(1.0d);
+        assertThat(attempts("accepted")).isZero();
+    }
+
+    @Test
+    void mqToggleCanBeFlippedBackOnAtRuntime() {
+        toggles.update("mq", false);
+        toggles.update("mq", true);
+
+        assertThat(service.isAsyncEnabled()).isTrue();
+        given(lockGuard.tryLock(PRODUCT_ID)).willReturn(lockHandle);
+        given(idempotencyStore.claim(eq("key-1"), anyString())).willReturn(null);
+        given(stockStore.reserve(PRODUCT_ID, 1))
+                .willReturn(new SeckillStockStore.Reservation(
+                        SeckillStockStore.ReservationStatus.RESERVED, 9L));
+
+        SeckillResponse response = service.admit("key-1", request(1));
+
+        assertThat(response.status()).isEqualTo("ACCEPTED");
+        verify(orderApplicationService, never()).create(any());
     }
 
     private static CreateSeckillOrderRequest request(int quantity) {
@@ -277,30 +376,37 @@ class SeckillAdmissionServiceTest {
         return counter == null ? 0.0d : counter.count();
     }
 
-    private static SeckillProperties properties(boolean asyncEnabled) {
-        SeckillProperties properties = new SeckillProperties();
-        properties.setAsyncEnabled(asyncEnabled);
-        properties.getLock().setKeyPrefix("lock:test:");
-        properties.getLock().setWaitMs(100L);
-        properties.getLock().setLeaseMs(1000L);
-        properties.getStock().setKeyPrefix("test:stock:");
-        properties.getStock().setSeedOnStartup(false);
-        properties.getStock().setLuaPath("lua/seckill_stock.lua");
-        properties.getRequest().setKeyPrefix("test:request:");
-        properties.getRequest().setTtlSeconds(60L);
-        properties.getIdempotency().setKeyPrefix("test:idem:");
-        properties.getIdempotency().setTtlSeconds(60L);
-        properties.getMq().setExchange("test.exchange");
-        properties.getMq().setQueue("test.queue");
-        properties.getMq().setRoutingKey("test.routing");
-        properties.getConsumer().setDelayMs(0L);
-        properties.getRedisson().setConnectTimeoutMs(1000);
-        properties.getRedisson().setTimeoutMs(1000);
-        properties.getRedisson().setRetryAttempts(1);
-        properties.getRedisson().setRetryIntervalMs(100);
-        properties.getRedisson().setConnectionMinimumIdleSize(1);
-        properties.getRedisson().setConnectionPoolSize(2);
-        properties.getRedisson().setLazyInitialization(true);
+    private SeckillResilienceGuard guard(LabToggleService toggleService) {
+        RateLimiter rateLimiter = RateLimiter.of("seckill-test",
+                RateLimiterConfig.custom()
+                        .limitForPeriod(1000)
+                        .limitRefreshPeriod(Duration.ofSeconds(1))
+                        .timeoutDuration(Duration.ZERO)
+                        .build());
+        CircuitBreaker circuitBreaker = CircuitBreaker.of("seckillBackend-test",
+                CircuitBreakerConfig.custom()
+                        .slidingWindowSize(10)
+                        .minimumNumberOfCalls(5)
+                        .failureRateThreshold(50)
+                        .waitDurationInOpenState(Duration.ofMinutes(1))
+                        .permittedNumberOfCallsInHalfOpenState(1)
+                        .ignoreExceptions(BizException.class)
+                        .build());
+        return new SeckillResilienceGuard(toggleService, rateLimiter, circuitBreaker, metrics);
+    }
+
+    private static LabToggleProperties toggleProperties(boolean lock,
+                                                        boolean idempotency,
+                                                        boolean mq,
+                                                        boolean ratelimit,
+                                                        boolean circuitbreaker) {
+        LabToggleProperties properties = new LabToggleProperties();
+        properties.setLock(lock);
+        properties.setIdempotency(idempotency);
+        properties.setMq(mq);
+        properties.setRatelimit(ratelimit);
+        properties.setCircuitbreaker(circuitbreaker);
+        properties.setCache(true);
         return properties;
     }
 }

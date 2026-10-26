@@ -4,6 +4,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.javalearn.lab.seckill.MySqlRedisIntegrationTestSupport;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.api.ProductViewService;
+import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.zaxxer.hikari.HikariDataSource;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -57,11 +58,17 @@ class ProductCacheIT extends MySqlRedisIntegrationTestSupport {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private LabToggleService toggles;
+
+    @Autowired
     @Qualifier("readDataSource")
     private HikariDataSource readDataSource;
 
     @BeforeEach
     void clearCache() {
+        // The cache toggle is per-instance runtime state; a failed earlier test
+        // must not leave this context in bypass mode.
+        toggles.update("cache", true);
         cache().clear();
         assertThat(nativeCache().estimatedSize()).isZero();
         assertThat(redisTemplate.hasKey(REDIS_KEY)).isFalse();
@@ -141,6 +148,50 @@ class ProductCacheIT extends MySqlRedisIntegrationTestSupport {
         assertThat(counter("cache_db_fallbacks", "cache", "product", "reason", "miss"))
                 .isEqualTo(fallbackBefore + 1);
         assertThat(redisTemplate.hasKey(REDIS_KEY)).isTrue();
+    }
+
+    @Test
+    void cacheToggleOffBypassesBothLevelsAndReenableRestoresHits() {
+        TwoLevelCache realCache = cache();
+        double l1MissBefore = counter("cache_l1_requests", "cache", "product", "result", "miss");
+        double fallbackBefore = counter("cache_db_fallbacks", "cache", "product", "reason", "miss");
+        double acquiresBefore = readPoolAcquireCount();
+
+        toggles.update("cache", false);
+        try {
+            assertThat(cacheManager.getCache(TwoLevelCacheManager.PRODUCT_CACHE))
+                    .isInstanceOf(NoOpCache.class);
+
+            ProductResponse first = productViewService.get(PRODUCT_ID);
+            ProductResponse second = productViewService.get(PRODUCT_ID);
+
+            assertThat(first).isNotNull();
+            assertThat(second).isEqualTo(first);
+            // No L1 read and no L2 write happened; both requests hit MySQL.
+            assertThat(counter("cache_l1_requests", "cache", "product", "result", "miss"))
+                    .isEqualTo(l1MissBefore);
+            assertThat(counter("cache_db_fallbacks", "cache", "product", "reason", "miss"))
+                    .isEqualTo(fallbackBefore);
+            assertThat(redisTemplate.hasKey(REDIS_KEY)).isFalse();
+            assertThat(readPoolAcquireCount()).isEqualTo(acquiresBefore + 2);
+        } finally {
+            toggles.update("cache", true);
+        }
+
+        double fallbackAfterEnable = counter(
+                "cache_db_fallbacks", "cache", "product", "reason", "miss");
+        ProductResponse reloaded = productViewService.get(PRODUCT_ID);
+        assertThat(reloaded).isNotNull();
+        assertThat(redisTemplate.hasKey(REDIS_KEY)).isTrue();
+        assertThat(counter("cache_db_fallbacks", "cache", "product", "reason", "miss"))
+                .isEqualTo(fallbackAfterEnable + 1);
+
+        double l1HitBefore = counter("cache_l1_requests", "cache", "product", "result", "hit");
+        productViewService.get(PRODUCT_ID);
+        assertThat(counter("cache_l1_requests", "cache", "product", "result", "hit"))
+                .isEqualTo(l1HitBefore + 1);
+        assertThat(counter("cache_db_fallbacks", "cache", "product", "reason", "miss"))
+                .isEqualTo(fallbackAfterEnable + 1);
     }
 
     @Test

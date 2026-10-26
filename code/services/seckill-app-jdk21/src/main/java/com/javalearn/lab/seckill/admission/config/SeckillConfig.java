@@ -8,6 +8,7 @@ import com.javalearn.lab.seckill.admission.app.SeckillMessagePublisher;
 import com.javalearn.lab.seckill.admission.app.SeckillMetrics;
 import com.javalearn.lab.seckill.admission.app.SeckillOrderConsumer;
 import com.javalearn.lab.seckill.admission.app.SeckillRequestStore;
+import com.javalearn.lab.seckill.admission.app.SeckillResilienceGuard;
 import com.javalearn.lab.seckill.admission.app.SeckillStockStore;
 import com.javalearn.lab.seckill.admission.infra.RabbitSeckillMessagePublisher;
 import com.javalearn.lab.seckill.admission.infra.RedissonSeckillLockGuard;
@@ -15,6 +16,7 @@ import com.javalearn.lab.seckill.admission.infra.RedisSeckillIdempotencyStore;
 import com.javalearn.lab.seckill.admission.infra.RedisSeckillRequestStore;
 import com.javalearn.lab.seckill.admission.infra.RedisSeckillStockStore;
 import com.javalearn.lab.seckill.admission.infra.SeckillStockSeeder;
+import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
 import com.javalearn.lab.seckill.order.app.OrderQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -92,23 +94,25 @@ public class SeckillConfig {
 
     @Bean
     public SeckillAdmissionService seckillAdmissionService(
-            SeckillProperties properties,
             SeckillLockGuard seckillLockGuard,
             SeckillIdempotencyStore seckillIdempotencyStore,
             SeckillStockStore seckillStockStore,
             SeckillRequestStore seckillRequestStore,
             SeckillMessagePublisher seckillMessagePublisher,
             OrderApplicationService orderApplicationService,
-            SeckillMetrics seckillMetrics) {
+            SeckillMetrics seckillMetrics,
+            LabToggleService labToggleService,
+            SeckillResilienceGuard seckillResilienceGuard) {
         return new SeckillAdmissionService(
-                properties,
                 seckillLockGuard,
                 seckillIdempotencyStore,
                 seckillStockStore,
                 seckillRequestStore,
                 seckillMessagePublisher,
                 orderApplicationService,
-                seckillMetrics);
+                seckillMetrics,
+                labToggleService,
+                seckillResilienceGuard);
     }
 
     @Bean

@@ -56,6 +56,30 @@ app:
       minimum-idle: 2
       pool-name: read-pool
 
+  # Mock login (Task 17): the k6/demo token store. No user table and no auth
+  # enforcement yet; the Redis value is the future principal lookup key.
+  login:
+    token-key-prefix: ${LOGIN_TOKEN_KEY_PREFIX:login:token:}
+    token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:1800}
+
+  # Internal runtime lab API (Task 17). Nginx does not proxy /lab/**; the app
+  # instances have no host port, so only in-network callers (docker exec, the
+  # chaos-controller later) can reach it. The token is never logged.
+  lab:
+    token: ${LAB_TOKEN:lab-token}
+
+  # Runtime experiment toggles (Task 17). Per-instance, in-memory and mutable
+  # through POST /lab/toggles; the chaos-controller will broadcast later.
+  # mq is seeded by the Task 16 startup switch so the old env var still works
+  # when LAB_TOGGLE_MQ is not set.
+  toggles:
+    lock: ${LAB_TOGGLE_LOCK:true}
+    idempotency: ${LAB_TOGGLE_IDEMPOTENCY:true}
+    mq: ${LAB_TOGGLE_MQ:${SECKILL_ASYNC_ENABLED:true}}
+    ratelimit: ${LAB_TOGGLE_RATELIMIT:true}
+    circuitbreaker: ${LAB_TOGGLE_CIRCUITBREAKER:true}
+    cache: ${LAB_TOGGLE_CACHE:true}
+
   # Async seckill admission (Task 16). Every path, timeout, TTL, key prefix,
   # queue/exchange name, pacing delay and pool size is externalized here and
   # overridable through the environment; no runtime value is hardcoded in Java.
@@ -92,6 +116,32 @@ app:
       # (Task 14 health/degradation contract) and RedisOutageCacheIT proves it.
       lazy-initialization: ${SECKILL_REDISSON_LAZY_INIT:true}
 
+# Resilience4j (Task 17). The Boot 3 starter binds these instances into the
+# registries; the admission service resolves them and executes them manually so
+# the runtime toggles can skip protection. BizException (sold out, lock timeout,
+# invalid input, Redis/MQ 503) is ignored by the circuit breaker: expected
+# business outcomes must never open the circuit.
+resilience4j:
+  ratelimiter:
+    instances:
+      seckill:
+        limit-for-period: ${SECKILL_RATE_LIMIT_PER_PERIOD:50}
+        limit-refresh-period: ${SECKILL_RATE_LIMIT_REFRESH:1s}
+        timeout-duration: ${SECKILL_RATE_LIMIT_TIMEOUT:0}
+  circuitbreaker:
+    instances:
+      seckillBackend:
+        sliding-window-size: ${SECKILL_CB_WINDOW:10}
+        failure-rate-threshold: ${SECKILL_CB_FAILURE_RATE:50}
+        wait-duration-in-open-state: ${SECKILL_CB_WAIT:10s}
+        permitted-number-of-calls-in-half-open-state: ${SECKILL_CB_HALF_OPEN:3}
+        # Resilience4j's default (100) can never be reached inside a 10-call
+        # window, so the circuit would never open. Five calls are enough to
+        # calculate an honest rate and keep the demo observable.
+        minimum-number-of-calls: ${SECKILL_CB_MIN_CALLS:5}
+        ignore-exceptions:
+          - com.javalearn.lab.common.BizException
+
 server:
   port: 8080
   # Boot 3 disables the Tomcat MBean registry by default; D2 reads
@@ -105,6 +155,15 @@ observability:
   instance: ${INSTANCE_ID:app-local}
 
 management:
+  health:
+    # An OPEN circuit or an empty rate-limiter budget is a lab result, not an
+    # application failure: keep it out of /actuator/health (and the container
+    # gate), otherwise Docker would mark a deliberately degraded instance
+    # unhealthy and Nginx would drop it mid-experiment.
+    circuitbreakers:
+      enabled: false
+    ratelimiters:
+      enabled: false
   endpoint:
     health:
       probes:

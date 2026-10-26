@@ -28,6 +28,10 @@
     <!-- Testcontainers 1.21.4 (the Boot-managed line), pinned for the RabbitMQ
          module used by every full-context test. -->
     <rabbitmq-testcontainers.version>1.21.4</rabbitmq-testcontainers.version>
+    <!-- Resilience4j 2.4.0 (Maven Central, 2026-03-14) is the 2.x line built
+         for Spring 6 / Boot 3 and Java 17+; the registries are used
+         programmatically so the runtime lab toggles can skip protection. -->
+    <resilience4j.version>2.4.0</resilience4j.version>
   </properties>
 
   <dependencyManagement>
@@ -125,6 +129,22 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+
+    <!-- Rate limiting and circuit breaking (Task 17). The Boot 3 starter binds
+         resilience4j.ratelimiter/circuitbreaker instances from application.yml;
+         the app resolves the registries and executes them manually (annotations
+         cannot be skipped by the runtime lab toggles). resilience4j-micrometer
+         exports resilience4j_ratelimiter_* and resilience4j_circuitbreaker_*. -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-spring-boot3</artifactId>
+      <version>${resilience4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-micrometer</artifactId>
+      <version>${resilience4j.version}</version>
     </dependency>
 
     <dependency>

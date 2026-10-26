@@ -27,6 +27,10 @@ public final class SeckillMetrics {
     public static final String RESULT_LOCK_TIMEOUT = "lock_timeout";
     public static final String RESULT_INVALID = "invalid";
     public static final String RESULT_ERROR = "error";
+    /** Rate limiter rejected the request (HTTP 429); Task 17. */
+    public static final String RESULT_RATE_LIMITED = "rate_limited";
+    /** Async admission failed and the synchronous DB path served the request. */
+    public static final String RESULT_DEGRADED = "degraded";
 
     public static final String CONSUMER_CREATED = "created";
     public static final String CONSUMER_DUPLICATE = "duplicate";
@@ -42,7 +46,8 @@ public final class SeckillMetrics {
         this.attempts = registerCounters(meterRegistry, "seckill_attempts",
                 "Seckill admission attempts by result",
                 List.of(RESULT_ACCEPTED, RESULT_REPLAY, RESULT_SOLD_OUT,
-                        RESULT_LOCK_TIMEOUT, RESULT_INVALID, RESULT_ERROR));
+                        RESULT_LOCK_TIMEOUT, RESULT_INVALID, RESULT_ERROR,
+                        RESULT_RATE_LIMITED, RESULT_DEGRADED));
         this.consumerProcessed = registerCounters(meterRegistry, "order_consumer_processed",
                 "Seckill order messages processed by the consumer",
                 List.of(CONSUMER_CREATED, CONSUMER_DUPLICATE, CONSUMER_FAILED));
