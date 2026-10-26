@@ -241,8 +241,16 @@ services:
   # --- initialisation job 2: bootstrap the Router (metadata cache) ----------
   mysql-router-init:
     <<: *mysql-ha-init
-    image: ${MYSQL_HA_ROUTER_IMAGE:-mysql/mysql-router:8.4.4}
+    image: ${MYSQL_HA_ROUTER_IMAGE:-container-registry.oracle.com/mysql/community-router:8.4}
     container_name: jl-mysql-router-init
+    # The router image runs as a non-root uid (999), but /var/lib/mysqlrouter does
+    # not exist inside the image, so the fresh named volume is root-owned and the
+    # 999 init could not write mysqlrouter.conf into it. The bootstrap job therefore
+    # runs as root: it writes the config and chowns the data dir to the Router's own
+    # user (router-bootstrap-entrypoint.sh's --user / chown_data_dir path, which is
+    # gated on uid==0). The long-running mysql-router service keeps the image default
+    # uid and just reads the now-999-owned config.
+    user: "${MYSQL_HA_ROUTER_INIT_USER:-0}"
     entrypoint:
       - ${MYSQL_HA_SHELL_BIN:-bash}
       - ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}/router-bootstrap-entrypoint.sh
@@ -258,8 +266,10 @@ services:
       MYSQL_HA_ROUTER_DATA_DIR: ${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}
       MYSQL_HA_ROUTER_CONF_NAME: ${MYSQL_HA_ROUTER_CONF_NAME:-mysqlrouter.conf}
       MYSQL_HA_ROUTER_NAME: ${MYSQL_HA_ROUTER_NAME:-lab-router}
-      MYSQL_HA_ROUTER_CONF_SCOPE: ${MYSQL_HA_ROUTER_CONF_SCOPE:-ROUTING}
-      MYSQL_HA_ROUTER_SSL_MODE: ${MYSQL_HA_ROUTER_SSL_MODE:-DISABLED}
+      # No --log-level flag exists in Router (8.0 or 8.4); the level is written to
+      # [logger] in the generated config by the bootstrap job, validated there.
+      MYSQL_HA_ROUTER_LOG_LEVEL: ${MYSQL_HA_ROUTER_LOG_LEVEL:-info}
+      MYSQL_HA_ROUTER_SSL_MODE: ${MYSQL_HA_ROUTER_SSL_MODE:-REQUIRED}
       MYSQL_HA_ROUTER_USER: ${MYSQL_HA_ROUTER_USER:-mysqlrouter}
       MYSQL_HA_ROUTER_PASSWORD_MODE: ${MYSQL_HA_ROUTER_PASSWORD_MODE:-stdin}
       MYSQL_HA_ROUTER_FORCE_BOOTSTRAP: ${MYSQL_HA_ROUTER_FORCE_BOOTSTRAP:-false}
@@ -283,7 +293,7 @@ services:
   # ONLINE secondaries. The app never addresses a node directly, which is what makes
   # the failover invisible to it.
   mysql-router:
-    image: ${MYSQL_HA_ROUTER_IMAGE:-mysql/mysql-router:8.4.4}
+    image: ${MYSQL_HA_ROUTER_IMAGE:-container-registry.oracle.com/mysql/community-router:8.4}
     container_name: jl-mysql-router
     restart: unless-stopped
     profiles: ["db-ha", "ha"]
@@ -296,10 +306,13 @@ services:
     command:
       - --config
       - ${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}/${MYSQL_HA_ROUTER_CONF_NAME:-mysqlrouter.conf}
-      # stdout/stderr instead of a log file: `docker logs jl-mysql-router` is the
-      # primary evidence source for the failover demo (backend role flips show up
-      # here as re-routing lines).
-      - --log-to-console
+      # No log flag here: Router 8.4.10 has no --log-to-console (nor 8.0), it was
+      # removed from the command. Router logs to [DEFAULT] logging_folder in the
+      # generated config, i.e. ${MYSQL_HA_ROUTER_DATA_DIR}/log/mysqlrouter.log inside
+      # the named volume, so failover evidence is read with
+      #   docker exec jl-mysql-router tail -n 30 /var/lib/mysqlrouter/log/mysqlrouter.log
+      # while routing health comes from db-cluster-status.sh's 6446/6447 probe.
+      # Log verbosity is MYSQL_HA_ROUTER_LOG_LEVEL, applied by the bootstrap job.
     environment:
       TZ: ${TZ:-UTC}
     ports:

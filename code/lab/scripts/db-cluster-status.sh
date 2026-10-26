@@ -269,7 +269,7 @@ if (( answers == 0 )); then
   exit 1
 fi
 if (( primaries == 1 )) && (( FAILURES == 0 )) && (( answers == node_total )); then
-  echo "RESULT: healthy - $answers/$node_total node(s) answering, exactly one PRIMARY."
+  echo "RESULT: ok - $answers/$node_total node(s) answering, exactly one PRIMARY."
   exit 0
 fi
 echo "RESULT: degraded - answering=$answers/$node_total, PRIMARY count=$primaries, failures=$FAILURES."

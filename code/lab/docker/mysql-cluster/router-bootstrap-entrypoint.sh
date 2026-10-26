@@ -28,7 +28,7 @@ require_env \
   MYSQL_HA_ROUTER_DATA_DIR \
   MYSQL_HA_ROUTER_CONF_NAME \
   MYSQL_HA_ROUTER_NAME \
-  MYSQL_HA_ROUTER_CONF_SCOPE \
+  MYSQL_HA_ROUTER_LOG_LEVEL \
   MYSQL_HA_ROUTER_SSL_MODE \
   MYSQL_HA_ROUTER_USER \
   MYSQL_HA_ROUTER_PASSWORD_MODE \
@@ -98,17 +98,54 @@ preflight_data_dir() {
   rm -f "$MYSQL_HA_ROUTER_DATA_DIR/.wtest"
 }
 
+# --- log level -------------------------------------------------------------
+# MySQL Router has no --log-level flag (neither 8.0 nor 8.4): the level lives in
+# [logger] level in the generated config, and the accepted values are fixed. An
+# invalid value is not ignored - Router refuses to start with
+# "Configuration error: Log level 'X' is not valid" - which is exactly how a
+# hand-edited debug_3 in the named volume kept a "healthy" container from ever
+# binding 6446/6447. So the value is externalised (MYSQL_HA_ROUTER_LOG_LEVEL) and
+# validated here, before anything is written.
+ROUTER_LOG_LEVELS="debug error fatal info note system warning"
+
+validate_log_level() {
+  local level
+  # Router's own parser is case-insensitive (it accepts the bootstrap default
+  # "INFO"), so compare lower-cased and pass the lower-cased value through.
+  level="$(printf '%s' "${MYSQL_HA_ROUTER_LOG_LEVEL}" | tr '[:upper:]' '[:lower:]')"
+  if [[ " $ROUTER_LOG_LEVELS " != *" $level "* ]]; then
+    err "MYSQL_HA_ROUTER_LOG_LEVEL='$MYSQL_HA_ROUTER_LOG_LEVEL' is not valid for MySQL Router 8.4."
+    err "valid values: $ROUTER_LOG_LEVELS (case-insensitive)."
+    return 1
+  fi
+  MYSQL_HA_ROUTER_LOG_LEVEL="$level"
+}
+
+# --conf-set-option writes the level at bootstrap time; this also repairs an
+# existing config on the skip path, where the old volume may still carry a level
+# the current image rejects (the live 8.0->8.4 switch hit exactly that).
+apply_log_level() {
+  [[ -f "$CONF_PATH" ]] || return 0
+  if grep -qE '^[[:space:]]*level[[:space:]]*=' "$CONF_PATH"; then
+    sed -i -E "s/^([[:space:]]*level[[:space:]]*=).*/\1${MYSQL_HA_ROUTER_LOG_LEVEL}/" "$CONF_PATH"
+  else
+    printf '\n[logger]\nlevel=%s\n' "$MYSQL_HA_ROUTER_LOG_LEVEL" >>"$CONF_PATH"
+  fi
+}
+
 bootstrap_args() {
-  # Shared arguments for every password mode. --conf-scope ROUTING writes the
-  # classic RW (6446) / RO (6447) routes the design requires; X-protocol routes
-  # (6448/6449) come along and are unused by the app.
+  # Shared arguments for every password mode.
+  # NB: the RW (6446) / RO (6447) classic routes and the X-protocol routes
+  # (6448/6449, unused by the app) are what bootstrap generates by default; there
+  # is no --conf-scope switch to ask for them (8.0.3x and 8.4.10 both reject it).
+  # Same for --config-name: bootstrap always writes <directory>/mysqlrouter.conf,
+  # which is exactly ${MYSQL_HA_ROUTER_CONF_NAME} here.
   printf '%s\0' \
     "--bootstrap=$TARGET" \
     "--directory=$MYSQL_HA_ROUTER_DATA_DIR" \
-    "--config-name=$MYSQL_HA_ROUTER_CONF_NAME" \
     "--name=$MYSQL_HA_ROUTER_NAME" \
-    "--conf-scope=$MYSQL_HA_ROUTER_CONF_SCOPE" \
-    "--ssl-mode=$MYSQL_HA_ROUTER_SSL_MODE"
+    "--ssl-mode=$MYSQL_HA_ROUTER_SSL_MODE" \
+    "--conf-set-option=logger.level=$MYSQL_HA_ROUTER_LOG_LEVEL"
   # --user is only accepted when the process is root; passing it otherwise makes
   # mysqlrouter abort, so it is conditional on the actual uid, not on a flag.
   if [[ "$(id -u)" == "0" ]]; then
@@ -181,21 +218,23 @@ chown_data_dir() {
 
 # Routing summary: only port numbers and backend addresses, never credentials.
 print_summary() {
-  log "generated $CONF_PATH"
+  log "generated $CONF_PATH (logger level=$MYSQL_HA_ROUTER_LOG_LEVEL)"
   grep -E '^(bind_ports|bind_address|routing_name|destinations|protocol|max_connections)\s*=' \
     "$CONF_PATH" 2>/dev/null | sed 's/^/    /' || log "  (could not read the config summary)"
   log "expected: ${MYSQL_HA_ROUTER_RW_PORT}=read/write, ${MYSQL_HA_ROUTER_RO_PORT}=read-only"
 }
 
 main() {
+  validate_log_level
   if [[ -f "$CONF_PATH" && "${MYSQL_HA_ROUTER_FORCE_BOOTSTRAP:-false}" != "true" ]]; then
     log "config already present at $CONF_PATH - skipping bootstrap (set MYSQL_HA_ROUTER_FORCE_BOOTSTRAP=true to redo)"
+    apply_log_level
     print_summary
     return 0
   fi
   wait_for_metadata
   preflight_data_dir
-  log "bootstrapping Router against $TARGET (mode=$MYSQL_HA_ROUTER_PASSWORD_MODE, scope=$MYSQL_HA_ROUTER_CONF_SCOPE)"
+  log "bootstrapping Router against $TARGET (mode=$MYSQL_HA_ROUTER_PASSWORD_MODE, log-level=$MYSQL_HA_ROUTER_LOG_LEVEL)"
   if ! run_bootstrap; then
     err "mysqlrouter --bootstrap failed with mode=$MYSQL_HA_ROUTER_PASSWORD_MODE."
     err "retry with MYSQL_HA_ROUTER_PASSWORD_MODE=option-file, then =argv if the"
@@ -207,6 +246,7 @@ main() {
     err "bootstrap reported success but $CONF_PATH is missing - check the volume mount."
     return 1
   fi
+  apply_log_level
   print_summary
   log "ROUTER BOOTSTRAP COMPLETE"
 }
