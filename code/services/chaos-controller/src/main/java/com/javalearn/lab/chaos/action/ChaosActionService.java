@@ -68,6 +68,12 @@ import java.util.concurrent.TimeUnit;
  * {@code POST /lab/guide/reset} (or resume) to unfreeze the service. A stop-all
  * that only deferred an APPLYING action is also subject to the pause: its
  * checkpoint revert waits for resume, where the watchdog then reverts it.</p>
+ *
+ * <p>Stop-all additionally calls {@link NetworkFaultCleaner#resetAll()}: network
+ * toxics are not tracked as {@link ChaosAction}s (they have no Docker state to
+ * probe and no TTL), but a demo must still be recoverable by the same button.
+ * That cleanup is reported in {@link StopAllResult#toxiproxy()} and never
+ * prevents the container reverts above.</p>
  */
 @Service
 public class ChaosActionService {
@@ -83,6 +89,7 @@ public class ChaosActionService {
     private final ScheduledExecutorService scheduler;
     private final Clock clock;
     private final DatastoreTargetPolicy datastorePolicy;
+    private final NetworkFaultCleaner networkFaultCleaner;
 
     private final ConcurrentHashMap<String, ChaosAction> active = new ConcurrentHashMap<>();
     private volatile boolean paused;
@@ -92,8 +99,20 @@ public class ChaosActionService {
                               ChaosAnnotator annotator,
                               ChaosProperties properties,
                               MeterRegistry meterRegistry,
+                              ScheduledExecutorService chaosActionScheduler,
+                              NetworkFaultCleaner networkFaultCleaner) {
+        this(gateway, annotator, properties, meterRegistry, chaosActionScheduler,
+                Clock.systemUTC(), networkFaultCleaner);
+    }
+
+    /** Test seam without a network cleaner (legacy constructor). */
+    public ChaosActionService(ContainerGateway gateway,
+                              ChaosAnnotator annotator,
+                              ChaosProperties properties,
+                              MeterRegistry meterRegistry,
                               ScheduledExecutorService chaosActionScheduler) {
-        this(gateway, annotator, properties, meterRegistry, chaosActionScheduler, Clock.systemUTC());
+        this(gateway, annotator, properties, meterRegistry, chaosActionScheduler,
+                Clock.systemUTC(), NetworkFaultCleaner.NONE);
     }
 
     /** Test seam: a controllable clock makes freeze/resume remaining-TTL deterministic. */
@@ -103,12 +122,29 @@ public class ChaosActionService {
                               MeterRegistry meterRegistry,
                               ScheduledExecutorService chaosActionScheduler,
                               Clock clock) {
+        this(gateway, annotator, properties, meterRegistry, chaosActionScheduler, clock,
+                NetworkFaultCleaner.NONE);
+    }
+
+    /**
+     * Canonical constructor: the network cleaner is part of stop-all, so tests
+     * can record that stop-all really resets Toxiproxy.
+     */
+    public ChaosActionService(ContainerGateway gateway,
+                              ChaosAnnotator annotator,
+                              ChaosProperties properties,
+                              MeterRegistry meterRegistry,
+                              ScheduledExecutorService chaosActionScheduler,
+                              Clock clock,
+                              NetworkFaultCleaner networkFaultCleaner) {
         this.gateway = gateway;
         this.annotator = annotator;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
         this.scheduler = chaosActionScheduler;
         this.clock = clock;
+        this.networkFaultCleaner = networkFaultCleaner == null
+                ? NetworkFaultCleaner.NONE : networkFaultCleaner;
         // Fail fast: an invalid chaos.datastore.allowed-target-pattern must stop
         // the context, not surface as a 500 on the first fault request.
         this.datastorePolicy = DatastoreTargetPolicy.from(properties);
@@ -382,7 +418,35 @@ public class ChaosActionService {
             }
         }
         log.warn("Chaos stop-all finished: reverted={} failed={} pending={}", reverted, failed, pending);
-        return new StopAllResult(reverted, failed, pending);
+        NetworkResetReport network = resetNetworkFaults();
+        return new StopAllResult(reverted, failed, pending, network);
+    }
+
+    /**
+     * Network faults have no TTL action record, so they are outside the loop
+     * above; stop-all still restores them so one button recovers the demo.
+     * Failures are reported, never thrown: container reverts already happened
+     * and must not be reported as a failed stop-all because Toxiproxy is down.
+     */
+    private NetworkResetReport resetNetworkFaults() {
+        NetworkResetReport report;
+        try {
+            report = networkFaultCleaner.resetAll();
+        } catch (RuntimeException e) {
+            log.error("Network-fault cleanup failed after stop-all: {}", e.toString());
+            return new NetworkResetReport(NetworkResetReport.STATUS_FAILED, 0, 0,
+                    List.of("network cleanup failed: " + e.getMessage()));
+        }
+        if (report == null) {
+            return new NetworkResetReport(NetworkResetReport.STATUS_FAILED, 0, 0,
+                    List.of("network cleaner returned no report"));
+        }
+        if (!NetworkResetReport.STATUS_RESET.equals(report.status())
+                && !NetworkResetReport.STATUS_DISABLED.equals(report.status())) {
+            log.warn("Network-fault cleanup after stop-all: status={} reset={}/{} errors={}",
+                    report.status(), report.proxiesReset(), report.proxiesTotal(), report.errors());
+        }
+        return report;
     }
 
     /** Watchdog second safety net; also retries FAILED reverts. */

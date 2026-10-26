@@ -6,6 +6,8 @@ import com.javalearn.lab.chaos.annotation.HttpGrafanaAnnotator;
 import com.javalearn.lab.chaos.annotation.NoOpChaosAnnotator;
 import com.javalearn.lab.chaos.cluster.MysqlClusterMonitor;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
+import com.javalearn.lab.chaos.toxiproxy.HttpToxiproxyGateway;
+import com.javalearn.lab.chaos.toxiproxy.ToxiproxyGateway;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -46,6 +48,16 @@ public class ChaosConfig {
             return new NoOpChaosAnnotator();
         }
         return new HttpGrafanaAnnotator(properties.getAnnotation(), objectMapper);
+    }
+
+    /**
+     * Toxiproxy control client. Always created: the service owns the
+     * {@code enabled} switch, so a disabled layer answers 503/50301 instead of
+     * failing context startup when the {@code chaos-proxy} profile is absent.
+     */
+    @Bean
+    public ToxiproxyGateway toxiproxyGateway(ChaosProperties properties, ObjectMapper objectMapper) {
+        return new HttpToxiproxyGateway(properties.getToxiproxy(), objectMapper);
     }
 
     /**

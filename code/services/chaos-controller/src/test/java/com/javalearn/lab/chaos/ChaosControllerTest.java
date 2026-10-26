@@ -3,6 +3,7 @@ package com.javalearn.lab.chaos;
 import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionView;
+import com.javalearn.lab.chaos.action.NetworkResetReport;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
@@ -162,5 +163,18 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.data.reverted").value(2))
                 .andExpect(jsonPath("$.data.failed").value(0))
                 .andExpect(jsonPath("$.data.pending").value(1));
+    }
+
+    @Test
+    void stopAllAlsoReportsNetworkReset() throws Exception {
+        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(1, 0, 0,
+                new NetworkResetReport(NetworkResetReport.STATUS_RESET, 2, 2, List.of())));
+
+        mockMvc.perform(post("/chaos/stop-all"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.toxiproxy.status").value("reset"))
+                .andExpect(jsonPath("$.data.toxiproxy.proxiesReset").value(2))
+                .andExpect(jsonPath("$.data.toxiproxy.proxiesTotal").value(2))
+                .andExpect(jsonPath("$.data.toxiproxy.errors.length()").value(0));
     }
 }
