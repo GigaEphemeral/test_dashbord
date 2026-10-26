@@ -237,12 +237,13 @@ BENCH_REPORTS_DIR=/path/to/reports PROM_URL=http://127.0.0.1:8080/prom \
 Compare env: `BENCH_REPORTS_DIR` (default `<repo>/code/lab/k6/reports`),
 `PROM_URL` (default `http://127.0.0.1:8080/prom`), `BENCH_COMPARE_TIMEOUT_MS`
 (default 5000, per Prometheus query), `BENCH_COMPARE_WINDOW_GRACE_SECONDS`
-(default 15, peak-window margin over the run — must cover at least one 5s
-scrape), `BENCH_COMPARE_OUT` (optional default output file),
-`BENCH_COMPARE_SCRIPT` (override the node script path). Exit codes: `0` on a
-rendered comparison (including Prometheus `n/a` rows), `2` on usage errors
-(wrong arg count, missing `--out` value), unreadable/absent `manifest.json`,
-unsupported `schemaVersion`, invalid timing, or write failure.
+(default 15, positive integer seconds rounded up; peak-window margin over the
+run — must cover at least one 5s scrape), `BENCH_COMPARE_OUT` (optional default
+output file), `BENCH_COMPARE_SCRIPT` (override the node script path). Exit
+codes: `0` on a rendered comparison (including Prometheus `n/a` rows and
+unusable run timing, which is noted in the output), `2` on usage errors (wrong
+arg count, missing `--out` value), unreadable/absent `manifest.json`,
+unsupported `schemaVersion`, or write failure.
 
 409/429 are expected business rejections; the manifest records their counts and
 the table derives a `Expected 429 rate` (expected429 / total requests). They do

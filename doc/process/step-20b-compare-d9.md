@@ -94,6 +94,9 @@ bash code/lab/scripts/verify.sh
   `ROOT_DIR`、`promMax` 未用的 `durationSeconds` 死参；`BENCH_COMPARE_SCRIPT`/新增
   env 写入 `compare.sh` 与 `k6/README.md`；`k6/README.md` 去掉“Task 20b 尚无 compare”
   过期说明并补 compare 用法/环境变量/退出码与 D9 指向。
+- **复核追加（配置/文档）**：`BENCH_COMPARE_WINDOW_GRACE_SECONDS` 改为向上取整；实测
+  小数（如 1.5）会生成非法 PromQL range `[8.5s]`，使所有峰值静默 n/a。README 退出码
+  说明同步修正：无效/缺失运行时间窗是 n/a + exit 0（输出中提示），不是 exit 2。
 
 - 验证（只读，不触碰共享栈与 reports）：`node --check`、`bash -n`、`JSON.parse` 均通过；
   对 `20261026-145555-smoke` vs `neg-threshold` 实跑 compare 退出 0，`PROM_URL` 指向

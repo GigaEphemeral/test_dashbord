@@ -8,7 +8,7 @@
 #   BENCH_REPORTS_DIR                  default <repo>/code/lab/k6/reports
 #   PROM_URL                           default http://127.0.0.1:8080/prom
 #   BENCH_COMPARE_TIMEOUT_MS           default 5000 (per Prometheus query)
-#   BENCH_COMPARE_WINDOW_GRACE_SECONDS default 15 (peak-window margin over the run)
+#   BENCH_COMPARE_WINDOW_GRACE_SECONDS default 15 (positive integer, rounded up; peak-window margin)
 #   BENCH_COMPARE_OUT                  optional default output file
 #   BENCH_COMPARE_SCRIPT               override the node script path
 set -euo pipefail

@@ -36,7 +36,9 @@ function numberFromEnv(value, fallback) {
 }
 
 const timeoutMs = numberFromEnv(process.env.BENCH_COMPARE_TIMEOUT_MS, 5000);
-const windowGraceSeconds = numberFromEnv(process.env.BENCH_COMPARE_WINDOW_GRACE_SECONDS, 15);
+// PromQL range durations are integer seconds; a fractional grace would render
+// e.g. "[8.5s]", fail to parse and silently turn every peak into n/a.
+const windowGraceSeconds = Math.ceil(numberFromEnv(process.env.BENCH_COMPARE_WINDOW_GRACE_SECONDS, 15));
 
 function usage() {
   console.error('Usage: compare.sh <runA> <runB> [--out <file>]');
