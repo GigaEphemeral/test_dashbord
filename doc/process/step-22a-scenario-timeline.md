@@ -109,3 +109,33 @@ docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}
   - `quick-failover-teardown.log`：`chaos-teardown-20261026160931`，10s/2 VU，`stop-all reverted=1 failed=0`，紧接着 `/chaos/actions` 为空、app-3 恢复 `running starting` 后 healthy；该短跑因单次约 2s 慢请求 p95 超阈值 exit 99（flow/server error 0）。
 - Prometheus：`k6_chaos_events_total{action="kill",result="accepted",run_id="chaos-quick-20261026160758",scenario="chaos",target="jl-app-3"} 1`。
 - 最终栈：16 个 `lab=java-learn` 容器 running/healthy，app-3 healthy，`/chaos/actions` 为空。
+
+# 审核修复（2026-10-26 独立评审）
+
+评审结论：实现与 brief 一致，live 证据成立；修复 4 个 Medium、3 个 Low，提交
+`d35927b` / `15d7133` / `90f7ff5`（均在隔离 worktree，待合并）。
+
+- `lib/chaos.js`：`postJson` 改为使用调用方传入的 `baseUrl`（原先 `action()` 的
+  baseUrl 参数被忽略、固定用模块级 URL）；成功状态显式为 action=200/202、
+  stop-all=200（与 controller 契约一致）；`CHAOS_START_OFFSET` 的零值形式
+  （`0`/`0.0`/`00`）统一规范化为 k6 可接受的 `0s`。
+- `scenarios/ha-failover.js`：负载窗口告警从模块 init 移入 `chaosTimeline()`，
+  只打印一次（原先每个 VU init 与 teardown 上下文重复打印，证据日志中可见
+  6 次重复），并且比较 `loadDuration - CHAOS_START_OFFSET` 的有效窗口，
+  offset >= load 时给出专门提示。
+- `run.sh`：chaos 场景目录检查、`/chaos-scenarios` 只读挂载、`LAB_TOKEN`/
+  `CHAOS_*` 转发与 `scenarios` 打印行全部限定为 `SCENARIO=ha-failover`；
+  其余五个场景的挂载、输出、环境与退出码恢复为 22a 之前的原状，
+  `K6_FORWARD_ENV` 语义不变。
+- 新增可复跑回归测试 `code/lab/k6/test/chaos-schema.test.mjs`（brief 要求的
+  Node schema 验证，18 个用例：两个真实场景 + 乱序/0 偏移/重复
+  `(atSeconds,target)`/未知动作/一次性动作带 TTL/kill 缺 TTL/TTL 上限/放宽
+  pattern 后 datastore 仍拒/冻结返回/稳定排序等）：
+  `node --test code/lab/k6/test/chaos-schema.test.mjs`。
+- 文档：`scenarios/README.md` 明确 `id` 的 `[a-z0-9-]` 是约定而非校验项；
+  `k6/README.md` 记录挂载/转发的 ha-failover 限定范围、零值 offset 规范化与
+  测试命令。
+
+复验输出：`node --check` 三个 JS 通过；`bash -n run.sh` 通过；
+`node --test` 18/18 通过。既有 live 证据（`quick-failover-*` 日志）不受影响，
+本次未运行任何 docker/k6/真实压测。
