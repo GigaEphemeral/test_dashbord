@@ -186,3 +186,48 @@ curl -s http://127.0.0.1:8080/lab-api/metrics | grep '^chaos_'
 - Grafana：`/api/annotations?tags=chaos&limit=20` 返回 8 条（kill/freeze/revert/start/restart），标签 `chaos,java-learn,jl-app-3,<action>`；重建后最终一条 text 含 `trigger=ttl`。
 - 指标实例（重建前那次进程）：`chaos_actions_total{result="accepted"|"rejected"|"unready"}`、`chaos_reverts_total{result="success"}`、`chaos_active_actions 0`。
 - 重建后 `up.sh`：16 个容器全部 running/healthy；非 lab `redis` 容器 `Up 9 days`、`StartedAt` 未变化。
+
+# 审核修复（2026-10-26 独立评审）
+
+评审结论：动作/白名单/TTL/annotation/指标与 brief 一致，无 Critical；3 个 Important
+并发窗口 + 1 个配置硬编码已在隔离 worktree 修复（`e70aded` / `4f74d10` / `31d9c12`），
+主会话与 Task 22b 的复审修复合并后为 `56e8e10` / `08cdbf6` / `2296f7c`。
+
+- **APPLYING 门**：`ChaosAction` 初值改为 `ChaosActionStatus.APPLYING`，只有
+  `markApplied()` 之后 `claimRevert()` 才可能成功。修复前的窗口是：Docker `stop`
+  尚未返回时 TTL/看门狗就 `start`，Docker 回 304“已运行”→ 回滚被当成成功并清除条目
+  → stop 随后完成，容器永久停机。到期时间若已在 apply 期间越过，在完成检查点立即回滚。
+- **不确定失败保留跟踪**：apply 抛 `DockerUnavailableException`（传输层，结果未知）时
+  动作记为 FAILED 并保留在 `active`，由看门狗执行 start/SIGCONT（对未故障容器是幂等
+  no-op）；只有“确定未生效”的错误（未知容器、SIGSTOP 时容器未运行）才丢弃动作。
+- **FAILED 替换与看门狗竞态**：`register()` 在动作监视器内原子地
+  `markSuperseded()`，被替换的 FAILED 动作不可能再跑一次回滚去撤销新动作的故障；
+  `claimRevert()` 改为同一监视器上的 `synchronized`。
+- **stop-all 不再对 APPLYING 动作空转**：为其打上 stop 请求、取消 TTL 任务，回滚在
+  apply 完成检查点触发；`StopAllResult` 新增诚实的 `pending` 字段（不计入 reverted）。
+- **`lastError` 透出**：`ChaosActionView` 增加回滚失败原因，UI 可直接显示。
+- **配置外置**：调度池大小由硬编码常量改为 `chaos.scheduler-threads`
+  （env `CHAOS_SCHEDULER_THREADS`，compose 同步默认 4）。
+- 新增回归测试：latch/hook 驱动的 `ChaosActionServiceTest`（+11）、
+  `ChaosActionStateMachineTest`（7）、`ChaosConfigTest`（3）。
+
+## 与 Task 22b 复审修复的合并裁决
+
+`ChaosActionService` / `ChaosActionServiceTest` 同时被两侧修改，合并保留双方语义：
+
+- `execute()` 的 `register` + 调度仍在 Task 22b 的 `synchronized (this)` 内，
+  Task 21 的 `markApplied()` 与完成检查点位于其后；检查点使用注入的
+  `clock.instant()`（原提交用 `Instant.now()`，会破坏 `MutableClock` 的确定性）。
+- `ChaosAction.expiresAt` 保持 `volatile`（resume 会移动到期），只采用 APPLYING 初值。
+- `freeze()` 对 `ACTIVE` 与 `APPLYING` 都记录剩余 TTL，否则“冻结期间新建的动作”
+  在 APPLYING 门下会丢剩余量。
+- `GuideStateMachineTest` 适配 8 参 `ChaosActionView` 与 3 参 `StopAllResult`；
+  `GuideService.reset()` 日志补 `pending`。
+- 边界补充：stop-all 仅置为待回滚的 APPLYING 动作若遇上 paused，回滚推迟到 resume 后
+  由看门狗完成（类 Javadoc“Documented limitations”）。
+
+复验（JDK 21）：chaos-controller **98 tests**、全 reactor **256 tests, 0 failures**；
+控制器镜像重建后 `verify.sh` **97 PASS / 1 WARN**、`smoke.sh` **7/7**。真实链路（仅
+app-3）：`POST /chaos/instances/jl-app-3/actions {"action":"kill","ttlSeconds":12}`
+→ 202 `status=active`、`lastError=null`，容器 `Exited (143)`；约 15s 后自动
+`start`，`/chaos/actions` 清空，随后 `healthy`。

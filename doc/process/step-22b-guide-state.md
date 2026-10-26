@@ -122,3 +122,56 @@ curl -s -X POST -H "X-Lab-Token: $TOKEN" -H 'Content-Type: application/json' \
   - `freeze-live.log`：临时两步场景；08:23:39 pause，原 TTL 到期 08:23:52Z，至 08:24:09 app-3 仍 `exited` 且 action active；08:24:09 resume，08:24:25 起 `running starting`，08:24:57 healthy；全程 `/api/products/1` 200；08:24:35 reset 后 actions `[]`、guide `idle`。
 - `verify.sh`：97 PASS / 1 WARN（cAdvisor/WSL2）。
 - 最终栈：16 个 `lab=java-learn` 容器 running/healthy。
+
+# 审核修复（2026-10-26 独立评审）
+
+评审结论：API/状态机/配置外置与 brief 一致，无 Critical；5 个 Important 已在隔离
+worktree 修复并提交（`0e341d8` / `e7984a3` / `adadf2c`），主会话 cherry-pick 为
+`5d9b649` / `53fb69a` / `39fb4d8`。
+
+- **execute/pause 竞态**：`register` + `paused` 检查 + `schedule` 现在在同一
+  `synchronized (this)` 内完成，并带同线程重入后的双检（迟到任务被取消并重新冻结），
+  否则 pause 落在检查与挂接之间时 `freeze()` 取消的是尚不存在的 future，残留的
+  完整 TTL 任务会在 resume 后提前回滚。回归测试
+  `pauseLandingDuringScheduleLeavesNoFullTtlTaskBehind`。
+- **resume 与看门狗竞态**：`resume()` 改为“仍在 paused 时先把全部 ACTIVE 到期移到
+  `now + remaining`，随后才解冻并补挂任务”；同时 `remainingMillis == -1`（从未冻结）
+  不再被 `Math.max(0,-1)` 当成 0 立即回滚，而是保留原到期交给自身任务/看门狗。
+  回归测试 `resumeUpdatesEveryExpiryBeforeUnpausingTheWatchdog`。
+- **场景加载**：`GuideScenarioLoader` 统一按目录扫描、以内嵌 `id` 为唯一键；跨文件
+  重复 id 在 list 跳过并 WARN、在 load 返回 400 并列出冲突文件名；文件名恰等于请求
+  id 的坏文件仍给出具体 400 原因（不掩盖成 404）。整数校验 `requireIntegerValue`
+  与 k6 `Number.isInteger` 对齐，`1.0/15.0` 两端一致接受。
+- **单事件 + pause 契约**：`quick-failover` 只有 1 个事件，step 后立即 COMPLETED，
+  pause 按 RUNNING-only 返回 409——定级为 Important 语义缺口而非代码缺陷，
+  `GuideService.pause()` Javadoc 明示 Task 23 控制台在 COMPLETED/FAILED 后必须禁用
+  pause、reset 是仍持有动作时的逃生舱，并由 `pauseAndResumeAreRejectedAfterCompletion`
+  锁定契约。
+- 新增 8 个确定性回归测试（chaos-controller 75 → 83）。
+
+## 与 Task 21 复审修复的合并裁决
+
+Task 21 的 `e70aded`/`31d9c12` 与本任务修复改到同一段代码，主会话合并时按以下裁决
+（两侧回归测试同时保留并通过）：
+
+- `ChaosAction.expiresAt` 保持 `volatile`（resume 会移动到期），状态初值改为
+  Task 21 的 `APPLYING`。
+- `ChaosAction.freeze()` 扩展为对 `ACTIVE` **和** `APPLYING` 都记录剩余 TTL：
+  Task 21 的 APPLYING 门会让“冻结期间新建的动作”停留在 APPLYING，若不记录，
+  resume 只会走 `-1` 防御分支、按原到期由看门狗兜底，本任务的
+  `actionCreatedWhilePausedIsFrozenUntilResume` 语义（精确剩余量）就无法成立。
+- `execute()` 的到期检查与 stop-all 检查点统一使用注入的 `clock.instant()`
+  （而非 `Instant.now()`），保证 `MutableClock` 测试确定性。
+- `ChaosActionView` 增加 `lastError`、`StopAllResult` 增加 `pending` 后，
+  `GuideStateMachineTest` 的两处构造改为 8 参 / 3 参；`GuideService.reset()` 日志
+  同时打印 `pending`。
+- 合并后补充的边界说明：若 stop-all 只把一个 APPLYING 动作置为待回滚，而此刻处于
+  paused，则回滚等 resume 后由看门狗完成（已写入类 Javadoc 的“Documented
+  limitations”）。
+
+复验（JDK 21）：chaos-controller **98 tests**、全 reactor **256 tests, 0 failures**；
+`node --test "code/lab/k6/test/*.test.mjs"` 31/31；`test-lab-safety.sh` 通过；
+`test-smoke.sh` 5/5。控制器镜像重建后 `verify.sh` **97 PASS / 1 WARN**、`smoke.sh`
+**7/7**。真实链路（仅 app-3）：`kill ttl=12` → 容器 exited → TTL 到点自动 start →
+`/chaos/actions` 空 → healthy；`/lab/guide/start → pause → state → resume → reset`
+全程 200，IDLE 下 pause 返回 409。
