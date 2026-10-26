@@ -320,7 +320,7 @@ class CacheExperimentDataServiceTest {
         assertThat(logicalState.breakdown().strategy()).isEqualTo("logical-expire");
         assertThat(logicalState.breakdown().logicalExpireActive()).isTrue();
         assertThat(logicalState.breakdown().logicalTtlSeconds()).isEqualTo(30L);
-        assertThat(logicalState.breakdown().retentionSeconds()).isEqualTo(120L);
+        assertThat(logicalState.breakdown().retentionSeconds()).isEqualTo(600L);
         assertThat(logicalState.breakdown().refreshPoolSize()).isEqualTo(2);
     }
 

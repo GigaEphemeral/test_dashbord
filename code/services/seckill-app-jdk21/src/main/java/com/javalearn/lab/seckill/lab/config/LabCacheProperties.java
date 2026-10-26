@@ -106,6 +106,16 @@ public class LabCacheProperties {
             throw new IllegalStateException("app.lab.cache.breakdown.logical-expire"
                     + ".retention-seconds must exceed logical-ttl-seconds");
         }
+        if (logical.getRetentionSeconds() <= seed.getHotKeyTtlSeconds()) {
+            // The guard only sees traffic once the L2 hot key expires. If the
+            // stale retention window is shorter than the hot-key TTL, every
+            // breakdown burst finds an EMPTY stale store: logical-expire would
+            // silently behave like `off` (cold stampede, no stale-serve metric).
+            throw new IllegalStateException("app.lab.cache.breakdown.logical-expire"
+                    + ".retention-seconds must exceed app.lab.cache.seed.hot-key-ttl-seconds ("
+                    + seed.getHotKeyTtlSeconds() + ") or the stale fallback is evicted"
+                    + " before the hot key expires");
+        }
         requirePositive(logical.getMaxEntries(),
                 "app.lab.cache.breakdown.logical-expire.max-entries");
         requirePositive(logical.getRefreshPoolSize(),

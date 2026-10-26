@@ -54,7 +54,9 @@ public final class TestLabCacheProperties {
         breakdown.getMutex().setOnLockTimeout("db");
         LabCacheProperties.LogicalExpire logical = breakdown.getLogicalExpire();
         logical.setLogicalTtlSeconds(30L);
-        logical.setRetentionSeconds(120L);
+        // Must exceed seed.hotKeyTtlSeconds (300) exactly like the production
+        // default; LabCacheProperties.validate() enforces that relationship.
+        logical.setRetentionSeconds(600L);
         logical.setMaxEntries(1_000L);
         logical.setRefreshPoolSize(2);
         logical.setRefreshQueueCapacity(100);

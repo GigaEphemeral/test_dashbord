@@ -168,9 +168,14 @@ app:
         logical-expire:
           # Value keeps its own logical TTL; after that it is served stale for
           # up to retention-seconds (physical window, must be larger) while ONE
-          # async refresh rebuilds it.
+          # async refresh rebuilds it and publishes the fresh value back into
+          # the shared cache, so the stale window is one refresh, not a TTL.
+          # retention-seconds must ALSO exceed seed.hot-key-ttl-seconds (and the
+          # fixed 5-minute L2 write TTL), or the stale entry is already gone when
+          # the hot key expires and the demo degrades to a cold stampede; this
+          # relationship is enforced at startup.
           logical-ttl-seconds: ${LAB_CACHE_LOGICAL_TTL_SECONDS:30}
-          retention-seconds: ${LAB_CACHE_LOGICAL_RETENTION_SECONDS:120}
+          retention-seconds: ${LAB_CACHE_LOGICAL_RETENTION_SECONDS:600}
           # Per-instance bounded stale store; a key storm cannot grow it.
           max-entries: ${LAB_CACHE_LOGICAL_MAX_ENTRIES:10000}
           # Bounded refresh pool; saturation is counted as

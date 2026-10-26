@@ -74,8 +74,8 @@ class CachedProductViewServiceTest {
                 redisson,
                 new LogicalStaleStore(properties.getBreakdown().getLogicalExpire().getMaxEntries(),
                         Duration.ofSeconds(120), Duration.ofSeconds(30), System::nanoTime),
-                Runnable::run, id -> Optional.empty(), properties, System::currentTimeMillis,
-                registry);
+                Runnable::run, id -> Optional.empty(), (id, value) -> Optional.empty(),
+                properties, System::currentTimeMillis, registry);
         this.service = new CachedProductViewService(readService, breakdown);
     }
 

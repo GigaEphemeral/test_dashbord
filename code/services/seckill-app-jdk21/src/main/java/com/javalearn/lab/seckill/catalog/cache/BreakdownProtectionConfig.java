@@ -87,7 +87,8 @@ public class BreakdownProtectionConfig {
             MeterRegistry meterRegistry) {
         return new ProductBreakdownDefense(cacheDefenseModeService, productPenetrationDefense,
                 redissonClient, logicalStaleStore, breakdownRefreshExecutor,
-                springCacheProbe(cacheManager), properties, System::currentTimeMillis, meterRegistry);
+                springCacheProbe(cacheManager), springCacheWriter(cacheManager),
+                properties, System::currentTimeMillis, meterRegistry);
     }
 
     /**
@@ -109,6 +110,22 @@ public class BreakdownProtectionConfig {
                         : Optional.empty();
             } catch (RuntimeException ex) {
                 return Optional.empty();
+            }
+        };
+    }
+
+    /**
+     * Publish path for the async refresh result: the refreshed value goes back
+     * into the SAME Spring cache {@code @Cacheable} uses, so "briefly stale"
+     * really means "until the refresh lands" instead of "until the next physical
+     * expiry". Cache writes already degrade internally (toggle off, Redis down),
+     * and any escape is swallowed by the guard's publishQuietly.
+     */
+    static ProductBreakdownDefense.CacheWriter springCacheWriter(CacheManager cacheManager) {
+        return (id, value) -> {
+            Cache cache = cacheManager.getCache(TwoLevelCacheManager.PRODUCT_CACHE);
+            if (cache != null) {
+                cache.put(id, value);
             }
         };
     }

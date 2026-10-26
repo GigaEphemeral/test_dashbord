@@ -40,7 +40,9 @@ import java.util.function.LongSupplier;
  *       {@link LogicalStaleStore} with a logical expiry inside a longer physical
  *       retention. A logically expired value is served immediately while ONE
  *       bounded-async refresh rebuilds it; an in-flight set deduplicates
- *       concurrent refreshes so the async path cannot stampede either.</li>
+ *       concurrent refreshes so the async path cannot stampede either. The
+ *       refreshed value is ALSO published back into the shared Spring cache,
+ *       because the stale serve itself re-caches the old value there.</li>
  * </ul>
  */
 public final class ProductBreakdownDefense {
@@ -56,12 +58,25 @@ public final class ProductBreakdownDefense {
         Optional<ProductResponse> peek(long id);
     }
 
+    /**
+     * Publish path for the async refresh result. The refresh runs outside the
+     * {@code @Cacheable} method, so WITHOUT this the freshly rebuilt value would
+     * only live in the guard's stale store while the shared cache kept serving
+     * the stale value the interceptor cached on the stale serve — "briefly
+     * stale" would stretch into the full L2 entry lifetime.
+     */
+    @FunctionalInterface
+    public interface CacheWriter {
+        void write(long id, ProductResponse value);
+    }
+
     private final CacheDefenseModeService modeService;
     private final ProductPenetrationDefense penetrationDefense;
     private final RedissonClient redissonClient;
     private final LogicalStaleStore staleStore;
     private final Executor refreshExecutor;
     private final CacheProbe cacheProbe;
+    private final CacheWriter cacheWriter;
     private final LabCacheProperties properties;
     private final LongSupplier nowMillis;
 
@@ -89,6 +104,7 @@ public final class ProductBreakdownDefense {
                                    LogicalStaleStore staleStore,
                                    Executor refreshExecutor,
                                    CacheProbe cacheProbe,
+                                   CacheWriter cacheWriter,
                                    LabCacheProperties properties,
                                    LongSupplier nowMillis,
                                    MeterRegistry meterRegistry) {
@@ -98,6 +114,7 @@ public final class ProductBreakdownDefense {
         this.staleStore = Objects.requireNonNull(staleStore, "staleStore");
         this.refreshExecutor = Objects.requireNonNull(refreshExecutor, "refreshExecutor");
         this.cacheProbe = Objects.requireNonNull(cacheProbe, "cacheProbe");
+        this.cacheWriter = Objects.requireNonNull(cacheWriter, "cacheWriter");
         this.properties = Objects.requireNonNull(properties, "properties");
         this.nowMillis = Objects.requireNonNull(nowMillis, "nowMillis");
 
@@ -265,6 +282,14 @@ public final class ProductBreakdownDefense {
             // the stale entry's logical deadline.
             Optional<ProductResponse> fresh = querySource(id, finder);
             if (fresh.isPresent()) {
+                // The stale serve passed the OLD value back through @Cacheable,
+                // so the shared cache now holds stale data until its physical
+                // TTL ends. Publishing the refreshed value is what keeps the
+                // promised "briefly stale" window at ONE refresh instead of a
+                // full physical TTL. A rare interleaving (this write landing
+                // before that serve's own cache write) is self-healing on the
+                // next cycle and disclosed in the step handover.
+                publishQuietly(id, fresh.get());
                 refreshSucceeded.increment();
             } else {
                 // The product vanished: keep serving stale until the retention
@@ -274,6 +299,16 @@ public final class ProductBreakdownDefense {
         } catch (RuntimeException ex) {
             refreshFailed.increment();
             log.warn("Async breakdown refresh failed for product {}; stale value retained: {}",
+                    id, ex.toString());
+        }
+    }
+
+    /** Publishing to the shared cache is best-effort: the stale store already carries the value. */
+    private void publishQuietly(long id, ProductResponse value) {
+        try {
+            cacheWriter.write(id, value);
+        } catch (RuntimeException ex) {
+            log.warn("Breakdown refresh could not publish product {} to the shared cache: {}",
                     id, ex.toString());
         }
     }

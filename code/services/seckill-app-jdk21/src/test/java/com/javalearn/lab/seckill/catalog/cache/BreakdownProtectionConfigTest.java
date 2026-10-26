@@ -129,7 +129,7 @@ class BreakdownProtectionConfigTest {
         LogicalStaleStore store = new BreakdownProtectionConfig()
                 .logicalStaleStore(properties);
 
-        assertThat(store.retention()).isEqualTo(Duration.ofSeconds(120));
+        assertThat(store.retention()).isEqualTo(Duration.ofSeconds(600));
         assertThat(store.logicalTtl()).isEqualTo(Duration.ofSeconds(30));
     }
 }

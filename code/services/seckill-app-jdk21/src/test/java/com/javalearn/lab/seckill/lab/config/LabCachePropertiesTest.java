@@ -87,7 +87,7 @@ class LabCachePropertiesTest {
         assertThat(stringOf(logical, "logical-ttl-seconds"))
                 .isEqualTo("${LAB_CACHE_LOGICAL_TTL_SECONDS:30}");
         assertThat(stringOf(logical, "retention-seconds"))
-                .isEqualTo("${LAB_CACHE_LOGICAL_RETENTION_SECONDS:120}");
+                .isEqualTo("${LAB_CACHE_LOGICAL_RETENTION_SECONDS:600}");
         assertThat(stringOf(logical, "max-entries")).isEqualTo("${LAB_CACHE_LOGICAL_MAX_ENTRIES:10000}");
         assertThat(stringOf(logical, "refresh-pool-size"))
                 .isEqualTo("${LAB_CACHE_LOGICAL_REFRESH_POOL_SIZE:2}");
@@ -117,7 +117,7 @@ class LabCachePropertiesTest {
         assertThat(bound.getBreakdown().getMutex().getLeaseMs()).isEqualTo(2_000L);
         assertThat(bound.getBreakdown().getMutex().getOnLockTimeout()).isEqualTo("db");
         assertThat(bound.getBreakdown().getLogicalExpire().getLogicalTtlSeconds()).isEqualTo(30L);
-        assertThat(bound.getBreakdown().getLogicalExpire().getRetentionSeconds()).isEqualTo(120L);
+        assertThat(bound.getBreakdown().getLogicalExpire().getRetentionSeconds()).isEqualTo(600L);
         assertThat(bound.getBreakdown().getLogicalExpire().getRefreshPoolSize()).isEqualTo(2);
         assertThat(bound.getBreakdown().getLogicalExpire().getRefreshQueueCapacity()).isEqualTo(100);
         assertThat(bound.getBreakdown().getLogicalExpire().getThreadNamePrefix())

@@ -15,7 +15,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +62,9 @@ class ProductBreakdownDefenseTest {
                     tickerNanos::get);
     private final AtomicReference<Optional<ProductResponse>> probeResult =
             new AtomicReference<>(Optional.empty());
+    /** Values the async refresh published back into the shared cache. */
+    private final Map<Long, ProductResponse> published = new ConcurrentHashMap<>();
+    private final ProductBreakdownDefense.CacheWriter cacheWriter = published::put;
     /** Inline by default: refreshes complete before load() returns, so assertions are race-free. */
     private final Executor executor = Runnable::run;
     private final List<Runnable> deferredRefreshes = new ArrayList<>();
@@ -71,7 +76,7 @@ class ProductBreakdownDefenseTest {
         when(redisson.getLock("lock:product:1")).thenReturn(lock);
         when(lock.isHeldByCurrentThread()).thenReturn(true);
         defense = new ProductBreakdownDefense(modeService, penetration, redisson, staleStore,
-                executor, id -> probeResult.get(), properties, nowMillis::get, registry);
+                executor, id -> probeResult.get(), cacheWriter, properties, nowMillis::get, registry);
     }
 
     // ---------------------------------------------------------------- mutex
@@ -211,7 +216,8 @@ class ProductBreakdownDefenseTest {
     void onlyOneRefreshPerKeyCanEverBeInFlight() {
         modeService.update("logical-expire");
         defense = new ProductBreakdownDefense(modeService, penetration, redisson, staleStore,
-                deferredRefreshes::add, id -> probeResult.get(), properties, nowMillis::get, registry);
+                deferredRefreshes::add, id -> probeResult.get(), cacheWriter, properties,
+                nowMillis::get, registry);
         ProductPenetrationDefense.ProductFinder finder = finder(OLD);
         defense.load(1L, finder);                             // cold rebuild
         advanceLogical();
@@ -251,7 +257,7 @@ class ProductBreakdownDefenseTest {
         defense = new ProductBreakdownDefense(modeService, penetration, redisson, staleStore,
                 task -> {
                     throw new RejectedExecutionException("saturated");
-                }, id -> probeResult.get(), properties, nowMillis::get, registry);
+                }, id -> probeResult.get(), cacheWriter, properties, nowMillis::get, registry);
         defense.load(1L, finder(OLD));                        // cold rebuild
         advanceLogical();
 
