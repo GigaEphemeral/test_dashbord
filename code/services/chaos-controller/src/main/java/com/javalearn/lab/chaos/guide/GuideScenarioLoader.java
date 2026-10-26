@@ -3,6 +3,7 @@ package com.javalearn.lab.chaos.guide;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.config.DatastoreTargetPolicy;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import org.slf4j.Logger;
@@ -31,8 +32,10 @@ import java.util.stream.Stream;
  * <p>The rules mirror {@code code/lab/scenarios/README.md} and the k6
  * {@code chaos-schema.js} validator: version, id/name, ascending positive
  * offsets, allowed actions, TTL bounds from {@code chaos.max-ttl-seconds},
- * unique {@code (atSeconds,target)}, lab-app target pattern and a hard datastore
- * rejection. Scenario ids are additionally unique across the whole directory:
+ * unique {@code (atSeconds,target)}, lab-app target pattern and the datastore
+ * rule from {@code chaos.datastore.allowed-target-pattern} (empty = refuse every
+ * datastore, the closed default). Scenario ids are additionally unique across
+ * the whole directory:
  * colliding files are skipped for listing and rejected with 400 on start; the
  * lookup keys on the embedded id, not the file name. Invalid files never take
  * the controller down.</p>
@@ -44,9 +47,6 @@ public class GuideScenarioLoader {
 
     private static final int SCHEMA_VERSION = 1;
     private static final Pattern ID_PATTERN = Pattern.compile("^[a-z0-9-]+$");
-    /** Datastores are forbidden regardless of the configured target pattern. */
-    private static final Pattern DATASTORE_PATTERN =
-            Pattern.compile("(?i)(mysql|redis|rabbit|mongo|postgres)");
     private static final Set<String> ALLOWED_ACTIONS =
             Set.of("kill", "start", "restart", "freeze", "resume");
     private static final Set<String> TTL_ACTIONS = Set.of("kill", "freeze");
@@ -54,6 +54,7 @@ public class GuideScenarioLoader {
     private final ObjectMapper objectMapper;
     private final ChaosProperties properties;
     private final Pattern targetPattern;
+    private final DatastoreTargetPolicy datastorePolicy;
 
     public GuideScenarioLoader(ObjectMapper objectMapper, ChaosProperties properties) {
         this.objectMapper = objectMapper;
@@ -65,6 +66,8 @@ public class GuideScenarioLoader {
             throw new IllegalStateException(
                     "chaos.guide.target-pattern is not a valid regular expression: " + configured, e);
         }
+        // Invalid allow-list regex fails here too, i.e. at context startup.
+        this.datastorePolicy = DatastoreTargetPolicy.from(properties);
     }
 
     /** Valid, uniquely-id'd scenarios in the configured directory, sorted by id. */
@@ -245,9 +248,13 @@ public class GuideScenarioLoader {
                 throw invalid(source, label + ".target \"" + target + "\" does not match "
                         + targetPattern.pattern());
             }
-            if (DATASTORE_PATTERN.matcher(target).find()) {
-                throw invalid(source, label + ".target \"" + target
-                        + "\" is a datastore; datastore actions are forbidden");
+            // Second, independent gate: a datastore-looking name needs the
+            // allow-list as well, and the message names the refusing rule.
+            String datastoreRejection = datastorePolicy.rejectionReason(target);
+            if (datastoreRejection != null) {
+                // rejectionReason already starts with target "<name>", so the
+                // composed message reads events[N].target "<name>" is a datastore...
+                throw invalid(source, label + "." + datastoreRejection);
             }
 
             String offsetKey = Double.toString(atSeconds) + ":" + target;

@@ -2,6 +2,7 @@ package com.javalearn.lab.chaos.action;
 
 import com.javalearn.lab.chaos.annotation.ChaosAnnotator;
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.config.DatastoreTargetPolicy;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
@@ -43,8 +44,16 @@ import java.util.concurrent.TimeUnit;
  * apply fails with an indeterminate transport error the action stays tracked
  * as FAILED and the watchdog performs the revert. Revert failures stay visible
  * as FAILED and are retried up to {@code chaos.max-revert-attempts}. Every
+ * attempts. Every
  * Docker call goes through the gateway, which enforces the
  * {@code lab=java-learn} label.</p>
+ *
+ * <p>Stateful datastores are additionally gated by
+ * {@link DatastoreTargetPolicy}: unless
+ * {@code chaos.datastore.allowed-target-pattern} admits the name, every action
+ * on a mysql/redis/rabbit/mongo/postgres container is refused with 403 before
+ * anything else runs. Automatic TTL reverts bypass that rule on purpose - a
+ * fault that was allowed to be applied must always be allowed to be undone.</p>
  *
  * <p>The guide can freeze the whole action set: while paused, scheduled reverts
  * and the watchdog do not fire, and every action keeps its remaining TTL.
@@ -74,6 +83,7 @@ public class ChaosActionService {
     private final MeterRegistry meterRegistry;
     private final ScheduledExecutorService scheduler;
     private final Clock clock;
+    private final DatastoreTargetPolicy datastorePolicy;
 
     private final ConcurrentHashMap<String, ChaosAction> active = new ConcurrentHashMap<>();
     private volatile boolean paused;
@@ -100,6 +110,9 @@ public class ChaosActionService {
         this.meterRegistry = meterRegistry;
         this.scheduler = chaosActionScheduler;
         this.clock = clock;
+        // Fail fast: an invalid chaos.datastore.allowed-target-pattern must stop
+        // the context, not surface as a 500 on the first fault request.
+        this.datastorePolicy = DatastoreTargetPolicy.from(properties);
 
         Gauge.builder("chaos.active.actions", active, map -> map.size())
                 .description("Chaos actions tracked with a pending automatic revert")
@@ -122,6 +135,16 @@ public class ChaosActionService {
         }
         ChaosActionType type = ChaosActionType.parse(request == null ? null : request.action());
         Integer ttl = resolveTtl(type, request == null ? null : request.ttlSeconds());
+
+        // Datastore rule (M3-1c): closed by default, so a fault on a
+        // datastore-named container needs chaos.datastore.allowed-target-pattern.
+        // Pure regex - still no Docker call before a refusal, and the reason
+        // names the rule that refused.
+        String datastoreRejection = datastorePolicy.rejectionReason(target);
+        if (datastoreRejection != null) {
+            countAction(type, target, "rejected");
+            throw new ContainerNotAllowedException(datastoreRejection);
+        }
 
         requireLabTarget(type, target);
 

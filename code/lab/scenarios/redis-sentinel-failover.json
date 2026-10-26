@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "redis-sentinel-failover",
+  "name": "Redis Sentinel 主从切换（HA 组）",
+  "description": "Drive a Redis Sentinel failover from the lab console: stop the Redis data node that is currently the HA master, watch the Sentinels promote a replica while the app reconnects without a restart, and let the TTL bring the stopped node back as a replica. Targets are the HA group only (jl-redis-1/2/3); the standalone jl-redis, jl-mysql and jl-rabbitmq stay refused unless chaos.datastore.allowed-target-pattern admits them. TEACHING SIMPLIFICATION: step 1 names jl-redis-1 as the master - the real master drifts after every failover, so run code/lab/scripts/sentinel-status.sh first and edit the target (or use a node that status reports as master) if it is not jl-redis-1.",
+  "durationHintSeconds": 90,
+  "events": [
+    {
+      "atSeconds": 10,
+      "action": "kill",
+      "target": "jl-redis-1",
+      "ttlSeconds": 45,
+      "title": "停掉当前 HA 主（固定写 jl-redis-1，先核对）",
+      "text": "先跑 sentinel-status.sh 确认 mymaster 就在 jl-redis-1；docker stop 语义，45s TTL 到点自动 start 并以副本回归。",
+      "explain": {
+        "symptom": "停主后的切换窗口内，商品读接口出现少量 5xx/超时（实测个别请求挂到客户端超时才回落），app 三实例的 Redis 指标同步骤降；Nginx 侧 product P95 抬升一个台阶。",
+        "rootCause": "Sentinel 判定主观下线（+sdown）需要 down-after-milliseconds，再经仲裁、选主、切配置（+promoted-slave / +switch-master）才公布新主；应用侧 Lettuce/Redisson 只能在这个事件之后重连，异步复制还可能在切换瞬间丢掉最近若干写入。",
+        "fix": "什么都不用做：应用按主名 mymaster 发现，不写死地址，Sentinel 公布新主后自动重挂（24b 实测免重启恢复 ≈9.5s）。要缩短感知就调 REDIS_HA_DOWN_AFTER_MS；要演示丢写用 docker kill 停主（本场景用 stop，回归更干净）。",
+        "expectation": "sentinel-status.sh 在 5-10s 内把 master 从 jl-redis-1 的地址换到另一节点；jl-app-* 日志出现 master ... has been changed to ...；读接口恢复 200，且没有任何容器被重建；TTL 到点后 jl-redis-1 以 role=slave、master_link_status=up 回归。"
+      }
+    },
+    {
+      "atSeconds": 25,
+      "action": "resume",
+      "target": "jl-redis-2",
+      "title": "观察点：确认晋升（SIGCONT 幂等）",
+      "text": "此步只打一个 Grafana 注解做时间线锚点：对运行中的容器 SIGCONT 无副作用。此刻执行 sentinel-status.sh，核对新主、两从 master_link_status=up、三个哨兵同意。",
+      "explain": {
+        "symptom": "如果这一步之前读接口仍持续 5xx 而不是短暂抖动，说明应用没跟上切换。",
+        "rootCause": "常见两种：REDIS_MODE 还是 standalone（应用连的是单机 jl-redis，与 HA 组无关，日志行 Redis access mode 可确认）；或哨兵多数不可达 / 主名拼错，发现不到新主。",
+        "fix": "先看 app 日志的 Redis access mode 与 Sentinel discovered master 行，再用 sentinel-status.sh 比对哨兵眼中的主地址；主名统一取 REDIS_HA_MASTER_NAME（默认 mymaster）。",
+        "expectation": "注解时间点之后应用读全绿；三实例都指向同一个新主地址；jl-redis-1 仍是 stopped（TTL 未到）。"
+      }
+    },
+    {
+      "atSeconds": 60,
+      "action": "start",
+      "target": "jl-redis-1",
+      "title": "确认旧主以副本回归（start 幂等）",
+      "text": "TTL 在 t≈55s 已把它 start 过；这里再 start 一次是幂等的（Docker 304 视为完成），只用来在时间线上标记回归点并复核 replicaof 指向新主。",
+      "explain": {
+        "symptom": "回归后若哨兵仍显示该节点 down，或它自认 master（role=master 而无人是主），就是脑裂/复制没接上。",
+        "rootCause": "Redis 的 STOP 写入配置不会自动重建 replicaof 链；若节点在停机期间被人为改过角色，或旧主地址与哨兵记录的地址不一致，就会形成双主。",
+        "fix": "用 sentinel-status.sh 复核：只有一个 master、其余节点 role=slave 且 master_link_status=up。教学演示里绝不 rm、绝不删卷、不手工 SENTINEL FAILOVER。",
+        "expectation": "拓扑回到 1 主 2 从、chaos-controller 的 GET /chaos/actions 为空（stop-all 也应为空）、guide 状态 COMPLETED；应用侧无需重启即可继续读写新主。"
+      }
+    }
+  ]
+}

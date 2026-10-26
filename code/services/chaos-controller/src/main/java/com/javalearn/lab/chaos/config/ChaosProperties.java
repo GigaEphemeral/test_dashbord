@@ -37,6 +37,8 @@ public class ChaosProperties {
     /** Fault cleanup when the interactive guide reaches a terminal state. */
     private ResetMode resetMode = ResetMode.MANUAL;
 
+    private final Datastore datastore = new Datastore();
+
     private final Annotation annotation = new Annotation();
 
     private final Guide guide = new Guide();
@@ -107,6 +109,10 @@ public class ChaosProperties {
         this.resetMode = resetMode;
     }
 
+    public Datastore getDatastore() {
+        return datastore;
+    }
+
     public Annotation getAnnotation() {
         return annotation;
     }
@@ -124,7 +130,7 @@ public class ChaosProperties {
         /** Directory holding shared scenario JSON; compose mounts it read-only. */
         private String scenarioDir = "/app/scenarios";
 
-        /** Container names a scenario may target; datastores are always rejected. */
+        /** Container names a scenario may target; datastores need the allow-list too. */
         private String targetPattern = "^jl-app-[0-9]+$";
 
         public String getScenarioDir() {
@@ -141,6 +147,30 @@ public class ChaosProperties {
 
         public void setTargetPattern(String targetPattern) {
             this.targetPattern = targetPattern;
+        }
+    }
+
+    /**
+     * Datastore fault targets (M3-1c). Closed by default: an empty pattern means
+     * every datastore-looking container (mysql/redis/rabbit/mongo/postgres) is
+     * refused, exactly like the old absolute prohibition. Only an explicitly
+     * configured pattern can admit one, and the lab uses it for the Redis
+     * Sentinel topology (see doc/process/step-24c-sentinel-targets.md). It is a
+     * teaching-lab safety valve, not a production affordance: the standalone
+     * {@code jl-redis}, {@code jl-mysql}, {@code jl-rabbitmq}, the exporters and
+     * every non-lab container must stay outside any pattern written to {@code .env}.
+     */
+    public static class Datastore {
+
+        /** Whole-string regex of datastore containers a fault may target; empty = refuse all. */
+        private String allowedTargetPattern = "";
+
+        public String getAllowedTargetPattern() {
+            return allowedTargetPattern;
+        }
+
+        public void setAllowedTargetPattern(String allowedTargetPattern) {
+            this.allowedTargetPattern = allowedTargetPattern;
         }
     }
 

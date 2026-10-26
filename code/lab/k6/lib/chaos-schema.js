@@ -11,8 +11,23 @@ export const ALLOWED_ACTIONS = ['kill', 'start', 'restart', 'freeze', 'resume'];
 export const TTL_ACTIONS = ['kill', 'freeze'];
 export const DEFAULT_TARGET_PATTERN = '^jl-app-[0-9]+$';
 export const DATASTORE_TARGET_PATTERN = /(mysql|redis|rabbit|mongo|postgres)/i;
+/**
+ * Datastore allow-list (mirrors chaos.datastore.allowed-target-pattern).
+ * Empty (the default) refuses every datastore-looking target, exactly like the
+ * old absolute prohibition; only a whole-name match is admitted.
+ */
+export const DEFAULT_ALLOWED_DATASTORE_PATTERN = '';
+export const ALLOWED_DATASTORE_RULE = 'chaos.datastore.allowed-target-pattern';
 /** Optional per-step teaching block shown by the lab console (现象/根因/处方/预期曲线). */
 export const EXPLAIN_FIELDS = ['symptom', 'rootCause', 'fix', 'expectation'];
+
+/**
+ * Whole-string RegExp, so the JS verdict matches Java's Pattern.matcher(..).matches().
+ * Throws on an invalid source; callers translate that into a validation error.
+ */
+function wholeStringRegExp(source) {
+  return new RegExp(`^(?:${source})$`);
+}
 
 function fail(source, message) {
   throw new Error(`[k6/chaos] ${source}: ${message}`);
@@ -85,6 +100,19 @@ export function validateScenario(input, options) {
     fail(source, `target pattern is not a valid RegExp: ${error.message}`);
   }
 
+  const allowedDatastoreRaw =
+    opts.allowedDatastorePattern === undefined || opts.allowedDatastorePattern === null
+      ? DEFAULT_ALLOWED_DATASTORE_PATTERN
+      : String(opts.allowedDatastorePattern).trim();
+  let allowedDatastorePattern = null;
+  if (allowedDatastoreRaw.length > 0) {
+    try {
+      allowedDatastorePattern = wholeStringRegExp(allowedDatastoreRaw);
+    } catch (error) {
+      fail(source, `${ALLOWED_DATASTORE_RULE} is not a valid RegExp: ${error.message}`);
+    }
+  }
+
   if (!isObject(input)) {
     fail(source, 'root must be a JSON object');
   }
@@ -135,7 +163,22 @@ export function validateScenario(input, options) {
       fail(source, `${label}.target "${target}" does not match ${targetPattern}`);
     }
     if (DATASTORE_TARGET_PATTERN.test(target)) {
-      fail(source, `${label}.target "${target}" is a datastore; datastore actions are forbidden`);
+      if (allowedDatastorePattern === null) {
+        fail(
+          source,
+          `${label}.target "${target}" is a datastore; datastore actions are forbidden`
+            + ` (${ALLOWED_DATASTORE_RULE} is empty: no datastore container may be faulted;`
+            + ` keyword set ${DATASTORE_TARGET_PATTERN.source})`,
+        );
+      }
+      if (!allowedDatastorePattern.test(target)) {
+        fail(
+          source,
+          `${label}.target "${target}" is a datastore and is refused by ${ALLOWED_DATASTORE_RULE}`
+            + `="${allowedDatastoreRaw}": only a datastore container matching that allow-list may be`
+            + ` faulted (keyword set ${DATASTORE_TARGET_PATTERN.source})`,
+        );
+      }
     }
 
     const offsetKey = `${atSeconds}:${target}`;
