@@ -9,10 +9,22 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Read-side service. Each lookup runs in its own read-only transaction, which
- * matters for the duplicate-key retry: after a rollback, the retry must start a
- * fresh transaction to see the winner's committed row (MySQL's default
- * REPEATABLE READ snapshot is created per transaction).
+ * Read-side service.
+ *
+ * <p>Task 15 review fix: these lookups are deliberately plain
+ * {@code @Transactional} (read-write), <em>not</em> {@code readOnly = true}.
+ * The routing datasource sends read-only transactions to the read pool, which
+ * from M3 on is the Router 6447 replica, and both calls here must be
+ * read-after-write consistent: the duplicate-key retry re-reads the winner's
+ * just-committed row, and {@code GET /api/orders/{id}} must find the order the
+ * POST just returned. Lag-tolerant reads (the catalog cache loader) are the
+ * ones that go through a dedicated read-only service; see
+ * {@code OrderQueryRoutingTest}.</p>
+ *
+ * <p>Each lookup still runs in its own transaction, which is what matters for
+ * the duplicate-key retry: after a rollback, the retry must start a fresh
+ * transaction to see the winner's committed row (MySQL's default REPEATABLE
+ * READ snapshot is created per transaction).</p>
  */
 public class OrderQueryService {
 
@@ -24,12 +36,12 @@ public class OrderQueryService {
         this.orderRepository = Objects.requireNonNull(orderRepository, "orderRepository");
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Optional<Order> findByIdempotencyKey(String idempotencyKey) {
         return orderRepository.findByIdempotencyKey(idempotencyKey);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Order get(long id) {
         return orderService.get(id);
     }
