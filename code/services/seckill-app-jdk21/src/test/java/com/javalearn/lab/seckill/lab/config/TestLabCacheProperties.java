@@ -1,0 +1,51 @@
+package com.javalearn.lab.seckill.lab.config;
+
+import java.math.BigDecimal;
+
+/**
+ * A fully populated {@link LabCacheProperties} for tests. The YAML supplies these
+ * values in production and {@code LabCachePropertiesTest} proves the binding
+ * contract; tests that only need a coherent configuration use these defaults and
+ * override the one field they care about.
+ *
+ * <p>Test-scope fixture, not runtime configuration: the numbers here are the
+ * application.yml defaults, deliberately small enough to keep tests fast.</p>
+ */
+public final class TestLabCacheProperties {
+
+    public static final long START_ID = 90_000L;
+    public static final long PRODUCT_COUNT = 5L;
+    public static final long AVALANCHE_KEY_COUNT = 2L;
+    public static final long HOT_KEY_INDEX = 2L;
+
+    private TestLabCacheProperties() {
+    }
+
+    public static LabCacheProperties defaults() {
+        LabCacheProperties properties = new LabCacheProperties();
+        LabCacheProperties.Seed seed = properties.getSeed();
+        seed.setProductCount(PRODUCT_COUNT);
+        seed.setStartId(START_ID);
+        seed.setProtectedMaxId(1_000L);
+        seed.setAvalancheKeyCount(AVALANCHE_KEY_COUNT);
+        seed.setAvalancheTtlSeconds(60L);
+        seed.setHotKeyIndex(HOT_KEY_INDEX);
+        seed.setHotKeyTtlSeconds(300L);
+        seed.setWriteBatchSize(2);
+        seed.setNamePrefix("实验商品");
+        seed.setStatus("ON_SALE");
+        seed.setPrice(new BigDecimal("99.00"));
+
+        properties.getState().setScanCount(500L);
+
+        LabCacheProperties.Penetration penetration = properties.getPenetration();
+        penetration.setMode("off");
+        penetration.getNullCache().setKeyPrefix("null:product:");
+        penetration.getNullCache().setTtlSeconds(10L);
+        penetration.getNullCache().setJitterSeconds(5L);
+        penetration.getBloom().setKey("bloom:product-ids");
+        penetration.getBloom().setExpectedInsertions(10_000L);
+        penetration.getBloom().setFalseProbability(0.01D);
+        return properties;
+    }
+}
