@@ -339,7 +339,7 @@ services:
     command:
       - --mysqld.address=mysql-1:${MYSQL_HA_NODE_PORT:-3306}
       - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
-      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+      - --web.listen-address=:${MYSQL_HA_EXPORTER_PORT:-9104}
     depends_on:
       mysql-1:
         condition: service_healthy
@@ -350,7 +350,7 @@ services:
     command:
       - --mysqld.address=mysql-2:${MYSQL_HA_NODE_PORT:-3306}
       - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
-      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+      - --web.listen-address=:${MYSQL_HA_EXPORTER_PORT:-9104}
     depends_on:
       mysql-2:
         condition: service_healthy
@@ -361,7 +361,7 @@ services:
     command:
       - --mysqld.address=mysql-3:${MYSQL_HA_NODE_PORT:-3306}
       - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
-      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+      - --web.listen-address=:${MYSQL_HA_EXPORTER_PORT:-9104}
     depends_on:
       mysql-3:
         condition: service_healthy

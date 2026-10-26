@@ -62,25 +62,34 @@ replica_preserve_commit_order           = ON
 plugin-load-add                        = group_replication.so
 
 # --- Group Replication ------------------------------------------------------
-group_replication_group_name           = @@MYSQL_HA_CLUSTER_GROUP_NAME@@
-group_replication_start_on_boot        = OFF
-group_replication_bootstrap_group      = OFF
-group_replication_local_address        = @@MYSQL_HA_GR_LOCAL_ADDRESS@@
-group_replication_group_seeds          = @@MYSQL_HA_GROUP_SEEDS@@
+# IMPORTANT (live-bootstrap finding, 2026-10-27): every group_replication_* option
+# below is written with the `loose-` prefix. Without it mysqld aborts with
+# "unknown variable 'group_replication_...'" during the image's first `--initialize`
+# pass, because the GR plugin cannot be loaded while initializing (mysqld prints
+# "Ignoring --plugin-load[_add] list as the server is running with --initialize"),
+# so the plugin's variables are not yet registered and are treated as unknown.
+# `loose-` = "apply it if the variable exists, ignore it (warn only) if it does
+# not": harmless during initdb, and at normal runtime plugin-load-add has already
+# registered the variables so each value is applied exactly as before.
+loose-group_replication_group_name           = @@MYSQL_HA_CLUSTER_GROUP_NAME@@
+loose-group_replication_start_on_boot        = OFF
+loose-group_replication_bootstrap_group      = OFF
+loose-group_replication_local_address        = @@MYSQL_HA_GR_LOCAL_ADDRESS@@
+loose-group_replication_group_seeds          = @@MYSQL_HA_GROUP_SEEDS@@
 # Allowlist for the group-communication port. In a shared Docker bridge network
 # member IPs change on every recreate, so the default AUTOMATERIALIZE entries go
 # stale and rejoin is rejected; 0.0.0.0/0 keeps the lab deterministic. The
 # blast radius is one local-only bridge network - tighten it for any real
 # deployment.
-group_replication_ip_allowlist         = @@MYSQL_HA_GR_IP_ALLOWLIST@@
+loose-group_replication_ip_allowlist         = @@MYSQL_HA_GR_IP_ALLOWLIST@@
 # READ_ONLY instead of the default ABORT_SERVER: a partitioned minority demotes
 # itself to super_read_only and comes back on its own, which is exactly the
 # behaviour the failover demo needs to show (and it never restart-loops a node).
-group_replication_exit_state_action    = @@MYSQL_HA_EXIT_STATE_ACTION@@
-group_replication_single_primary_mode  = ON
-group_replication_member_weight        = @@MYSQL_HA_MEMBER_WEIGHT@@
-group_replication_auto_rejoin_tries    = @@MYSQL_HA_AUTO_REJOIN_TRIES@@
-group_replication_member_expel_timeout = @@MYSQL_HA_EXPEL_TIMEOUT_SECONDS@@
+loose-group_replication_exit_state_action    = @@MYSQL_HA_EXIT_STATE_ACTION@@
+loose-group_replication_single_primary_mode  = ON
+loose-group_replication_member_weight        = @@MYSQL_HA_MEMBER_WEIGHT@@
+loose-group_replication_auto_rejoin_tries    = @@MYSQL_HA_AUTO_REJOIN_TRIES@@
+loose-group_replication_member_expel_timeout = @@MYSQL_HA_EXPEL_TIMEOUT_SECONDS@@
 
 # --- lab sizing -------------------------------------------------------------
 # performance_schema must stay ON: performance_schema.replication_group_members

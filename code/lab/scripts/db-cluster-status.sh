@@ -155,11 +155,13 @@ mysql_query() {
   local attempt output="" remote
   # The password never reaches argv: bash inside the container expands
   # MYSQL_PWD from its own environment, then exec replaces bash with mysql.
-  remote="MYSQL_PWD=\"\${${ADMIN_PASSWORD_ENV}:-}\" exec ${MYSQL_BIN} \
---connect-timeout=${CONNECT_TIMEOUT} --write-timeout=${PROBE_TIMEOUT} \
+  # NB: the mysql CLI has no --write-timeout (that is a mysqlsh option); the query
+  # is bounded instead by the external `timeout` command using PROBE_TIMEOUT.
+  remote="MYSQL_PWD=\"\${${ADMIN_PASSWORD_ENV}:-}\" exec timeout ${PROBE_TIMEOUT} ${MYSQL_BIN} \
+--connect-timeout=${CONNECT_TIMEOUT} \
 -N -B -h '${host}' -P '${port}' -u '${ADMIN_USER}'"
   for attempt in $(seq 1 "$PROBE_RETRIES"); do
-    if output="$(docker exec "$container" bash -c "$remote" <<<"$sql" 2>&1)" \
+    if output="$(docker exec -i "$container" bash -c "$remote" <<<"$sql" 2>&1)" \
        && [[ -n "$output" && "$output" == *$'\t'* ]]; then
       printf '%s\n' "$output" | tr -d '\r'
       return 0

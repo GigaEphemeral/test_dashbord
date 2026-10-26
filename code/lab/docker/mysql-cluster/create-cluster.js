@@ -1,9 +1,11 @@
 // lab-mysql-cluster bootstrap for MySQL Shell (AdminAPI, JavaScript).
 //
 // Invoked by cluster-init-entrypoint.sh as:
-//   mysqlsh --js --no-log --file "$ASSET_DIR/create-cluster.js"
-// (no --uri on the command line: credentials are read from the environment inside
-// this file, so nothing sensitive lands in the process list or in docker logs).
+//   mysqlsh --js --mc --log-file=/dev/null --uri=<admin>@<seed>:<port> \
+//           -e "load(lab-env.js); load(create-cluster.js);"
+// (the launch --uri authenticates from a 0600 ~/.my.cnf the entrypoint writes, so
+// no password is on argv; create-cluster.js reads config/credentials from the
+// generated global LAB_ENV object, never from process.env, which mysqlsh lacks).
 //
 // Responsibilities (the *shape* of the cluster only; accounts and grants are a
 // separate SQL step so each half can be re-run independently):
@@ -19,18 +21,27 @@
 // It never prints a password.
 
 // --- environment -----------------------------------------------------------
+// LIVE-BOOTSTRAP FINDING (2026-10-27): MySQL Shell 8.4.4 does NOT expose Node's
+// `process` global to JavaScript scripts (a `print(typeof process)` returns
+// "undefined"), so credentials/config CANNOT be read from process.env here. The
+// launcher (cluster-init-entrypoint.sh) therefore writes a sibling `lab-env.js`
+// (mode 0600, inside the container's ephemeral tmp dir, never on argv and never
+// printed) that defines a global LAB_ENV object populated from the container
+// environment, and loads it before this file. env() reads that object.
 function env(name, fallback) {
-  var v = (typeof process !== 'undefined' && process.env) ? process.env[name] : undefined;
+  var src = (typeof LAB_ENV !== 'undefined' && LAB_ENV) ? LAB_ENV : {};
+  var v = src[name];
   if (v === undefined || v === null || v === '') {
     return fallback;
   }
   return String(v);
 }
 
-if (typeof process === 'undefined' || !process.env) {
+if (typeof LAB_ENV === 'undefined' || !LAB_ENV) {
   throw new Error(
-    'MySQL Shell JS has no process.env - create-cluster.js cannot read credentials ' +
-    'from the environment. Check the mysqlsh version (MYSQL_HA_INIT_IMAGE).');
+    'LAB_ENV is not defined - create-cluster.js must be loaded AFTER lab-env.js. ' +
+    'Launch mysqlsh with: -e "load(lab-env.js); load(create-cluster.js);" ' +
+    '(see cluster-init-entrypoint.sh).');
 }
 
 var ADMIN_USER = env('MYSQL_HA_ADMIN_USER', 'root');
@@ -103,11 +114,14 @@ function sleep(ms) {
 }
 
 function instanceOpts(host) {
+  // MySQL Shell 8.4.4 addInstance() accepts `localAddress` and `recoveryMethod`
+  // only for what we pass here: `accountHostPattern`, `waitSyncTimeout` and
+  // `interactive` are all rejected as invalid options on this shell (they abort
+  // with "Argument #2: Invalid options: ..."). The recovery accounts are created
+  // with mysql-shell's own defaults, and the admin account already exists as
+  // root@'%' (created by MYSQL_ROOT_HOST at initdb), so no host pattern is needed.
   return Object.assign({
     localAddress: localAddressOf(host),
-    interactive: false,
-    accountHostPattern: ACCOUNT_HOST_PATTERN,
-    waitSyncTimeout: WAIT_SYNC_TIMEOUT,
   }, EXTRA_OPTS);
 }
 
@@ -170,7 +184,8 @@ function checkInstances() {
 function configureInstances() {
   HOSTS.forEach(function (host) {
     try {
-      dba.configureInstance(conn(host), { interactive: false });
+      // No options: `interactive` is rejected by configureInstance() on this shell.
+      dba.configureInstance(conn(host));
       println('configured ' + redacted(host));
     } catch (e) {
       // Not fatal: every startup-only GR setting is already in the node option
@@ -183,7 +198,13 @@ function configureInstances() {
 // --- membership ------------------------------------------------------------
 function topologyOf(cluster) {
   var status = cluster.status();
-  var topology = (status && status.defaultReplicaSet && status.defaultReplicaSet.topology) || {};
+  // MySQL Shell 8.4.4 dba.Cluster.status(): the aggregate state is under
+  // `state` (NOT `clusterStatus`), and the member table lives under
+  // defaultReplicaSet.topology with roles spelled `R/W` (primary) and `R/O`
+  // (secondary) - NOT `PRIMARY`/`SECONDARY` (those are the SQL
+  // replication_group_members spellings used elsewhere).
+  var rs = (status && status.defaultReplicaSet) || {};
+  var topology = rs.topology || {};
   var rows = [];
   Object.keys(topology).forEach(function (addr) {
     rows.push({
@@ -192,7 +213,8 @@ function topologyOf(cluster) {
       status: topology[addr].status || '?',
     });
   });
-  return { clusterState: status ? status.clusterStatus : 'UNKNOWN', members: rows };
+  var st = (status && status.state) || rs.status || 'UNKNOWN';
+  return { clusterState: st, members: rows };
 }
 
 function onlineCount(rows) {
@@ -203,7 +225,7 @@ function onlineCount(rows) {
 
 function primaryOf(rows) {
   var n = 0;
-  rows.forEach(function (r) { if (r.role === 'PRIMARY') { n += 1; } });
+  rows.forEach(function (r) { if (String(r.role).indexOf('R/W') === 0) { n += 1; } });
   return n;
 }
 
@@ -293,12 +315,14 @@ function waitForOnline(cluster) {
   if (!cluster) {
     println('creating cluster "' + CLUSTER_NAME + '" on ' + redacted(SEED_HOST) +
       ' (single-primary)');
+    // MySQL Shell 8.4.4 dba.createCluster() rejects accountHostPattern /
+    // waitSyncTimeout / interactive as options (they belong to addInstance or are
+    // global), so only pass the ones it accepts. The seed's admin account already
+    // exists as root@'%' (created by MYSQL_ROOT_HOST at initdb), so no account host
+    // pattern is needed here.
     cluster = dba.createCluster(CLUSTER_NAME, Object.assign({
       localAddress: localAddressOf(SEED_HOST),
       multiPrimary: false,
-      interactive: false,
-      accountHostPattern: ACCOUNT_HOST_PATTERN,
-      waitSyncTimeout: WAIT_SYNC_TIMEOUT,
     }, CLUSTER_GROUP_NAME ? { groupName: CLUSTER_GROUP_NAME } : {}, EXTRA_OPTS));
   }
 
@@ -306,8 +330,10 @@ function waitForOnline(cluster) {
   var view = waitForOnline(cluster);
 
   // Final rescan so Router metadata (M3-2b) sees exactly the current instances.
+  // `{}` (no options): the `addInstances` option is deprecated on 8.4.4 and must be
+  // a string/list if used, which is not what we want here.
   try {
-    cluster.rescan({ addInstances: false, interactive: false });
+    cluster.rescan();
   } catch (e) {
     println('WARN: rescan failed (non-fatal): ' + e.message);
   }
@@ -315,6 +341,6 @@ function waitForOnline(cluster) {
   println('BOOTSTRAP OK: clusterState=' + view.clusterState +
     ' ONLINE=' + onlineCount(view.members) + '/' + EXPECTED_MEMBERS +
     ' primary=' + JSON.stringify(view.members.filter(function (m) {
-      return m.role === 'PRIMARY';
+      return String(m.role).indexOf('R/W') === 0;
     })));
 })();

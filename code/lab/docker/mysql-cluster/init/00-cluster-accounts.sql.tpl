@@ -34,7 +34,10 @@ CREATE USER IF NOT EXISTS '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_P
 GRANT USAGE ON *.* TO '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_PATTERN@@';
 GRANT PROCESS, REPLICATION CLIENT ON *.* TO '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_PATTERN@@';
 GRANT SELECT ON `performance_schema`.* TO '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_PATTERN@@';
-GRANT SELECT ON `information_schema`.* TO '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_PATTERN@@';
+-- No GRANT on `information_schema`.*: MySQL forbids granting on it
+-- (ERROR 1044 "Access denied ... to database 'information_schema'"). Its tables are
+-- globally readable to every authenticated session anyway, so lab_monitor can
+-- SELECT from information_schema without any grant.
 -- InnoDB Cluster metadata: needed by mysqlsh dba.getCluster()/status(), and by any
 -- tool that must resolve the cluster from the metadata schema instead of argv.
 GRANT SELECT ON `mysql_innodb_cluster_metadata`.* TO '@@MYSQL_HA_MONITOR_USER@@'@'@@MYSQL_HA_ACCOUNT_HOST_PATTERN@@';
