@@ -4,7 +4,7 @@
 > 关联任务：M5 双 JDK（设计 §10）；上游：JDK 21 外壳（Task 13–17、M3-1b）、共享 MySQL/Flyway 种子；下游：D7 面板、compose 第二运行时服务、k6 双目标
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §10.1（`seckill-app-jdk8` = Temurin 8 + Spring Boot 2.7.18，仅实验用途、标注 EOL）、§10.2（相同限额/同一套 k6 场景，记录吞吐/P99/GC/堆/线程/启动耗时）、D7（§6 面板表：JDK 8 vs 21）；`doc/design/工程规约.md` 第 1 节（配置外置）、第 2 节（五段式交接）
 > 测试 / verify：`mvn -q -pl services/seckill-app-jdk8 -am test` → **exit 0，Tests run: 11, Failures: 0, Errors: 0, Skipped: 0**（`ProductApiTest` 5、`ActuatorEndpointsTest` 3、`ExternalizedConfigTest` 3；兄弟模块 `platform-common` 10、`seckill-core` 13 同批通过）；`mvn -q -pl services/seckill-app-jdk8 -am -DskipTests package` → **exit 0**，`target/seckill-app-jdk8-0.1.0-SNAPSHOT.jar`（44,030,521 B，repackage 后的可执行 jar，class 文件版本 52）
-> 运行状态：**本机 JRE 8 实跑通过并已退出**（`java -version` = 1.8.0_503；`SERVER_PORT=18081 APP_PROFILE=demo` 启动 → `Started SeckillJdk8Application in 6.302 seconds (JVM running for 6.837)`；curl：`/actuator/health` 200 UP、`/actuator/health/app` 200 UP、`/api/products/1` 200、`/api/products/20` 200、`/api/products/9999` 404、`/actuator/prometheus` 200 / 66,972 B / 452 行）；`taskkill` 后 18081 无监听、`git status --short` 只剩本步文件；**未启动任何容器、未碰 Docker 栈、未改 compose/k6/dashboard**
+> 运行状态：**本机 JRE 8 实跑通过并已退出**（`java -version` = 1.8.0_503；`SERVER_PORT=18082 APP_PROFILE=demo` 启动最终 jar → `Started SeckillJdk8Application in 5.641 seconds (JVM running for 6.193)`；curl：`/actuator/health` 200 UP、`/actuator/health/app` 200 UP、`/api/products/1` 200、`/api/products/20` 200、`/api/products/9999` 404、`/actuator/info` 200、`/actuator/prometheus` 200 / 75,118 B）；`taskkill` 后 18081/18082 均无监听、`git status --short` 为空；**未启动任何容器、未碰 Docker 栈、未改 compose/k6/dashboard**
 
 # 当前进展
 
@@ -62,7 +62,7 @@
 - `mysql` profile 未对活体 MySQL 跑过：只验证了占位符装配与 `demo` 启动。首个 compose 接线者需实跑一次 `APP_PROFILE=mysql` 并确认 `ddl-auto=validate` 对 Flyway 表通过（H2 与 MySQL 的 `TIMESTAMP ON UPDATE` 差异不影响映射列）。
 - 本机 Java 8 **只有 JRE**（`C:\Program Files\Java\jre1.8.0_503`，无 javac），编译靠 `--release 8` + Maven（跑在 JDK 25 上）。设计 §10.1 写的是 Temurin 8 运行时；真要容器化仍需基础镜像提供 JDK/JRE 8，本步未定镜像。
 - 测试在 **JDK 25 上跑 Boot 2.7/Spring 5.3**（surefire fork 跟随 Maven）：通过，但伴随 Tomcat native-access 与 `Java 25.0.3` 运行时告警；Spring 5.3 官方支持上限远低于 25，这条路径**能用但非受支持**。若要"测试也在 8/21 上跑"，需 Maven toolchains 或把 `JAVA_HOME` 指到 `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.1`（step-24b 文档的既有做法）。
-- 启动耗时 6.302s 是**未加 `-Xmx512m` 的裸默认堆**读数，且只有单次样本；设计 §10.2 要求"相同 CPU/内存限额、相同 `-Xmx512m`"才进 D7 正式对比表。当前数字仅用于"能跑起来"的证据，**不得直接抄进对比表**。
+- 启动耗时只有 **5.641s / 6.302s 两个未加 `-Xmx512m` 的裸默认堆样本**；设计 §10.2 要求"相同 CPU/内存限额、相同 `-Xmx512m`"、多次取中位才进 D7 正式对比表。当前数字仅用于"能跑起来 + 量级参考"，**不得直接抄进对比表**。
 - 健康 group `app` 的 `include` 默认 `db,ping`（本壳无 Redis 贡献者），与 JDK 21 侧的 `exclude:[redis]` 语义等价但**写法不同**；将来给本壳加缓存 L2 时，这条 include 需要同步调整，否则新贡献者会被静默排除在容器门外。
 
 # 待定事项和注意事项
@@ -104,6 +104,8 @@ curl -i localhost:18081/actuator/health localhost:18081/api/products/1 localhost
 
 - Maven：`TEST_EXIT=0` / `PKG_EXIT=0`；`Tests run: 5 ... ProductApiTest`、`Tests run: 3 ... ActuatorEndpointsTest`、`Tests run: 3 ... ExternalizedConfigTest`（模块合计 11/0/0/0），`Started ActuatorEndpointsTest in 6.827 seconds`。
 - JRE 8：`java version "1.8.0_503"`、`Java(TM) SE Runtime Environment (build 1.8.0_503-b01)`、`HotSpot(TM) 64-Bit Server VM (build 25.503-b01)`；jar 内主类 `od` 读 class 版本 = `52`。
-- 启动行：`Tomcat started on port(s): 18081 (http)` + `Started SeckillJdk8Application in 6.302 seconds (JVM running for 6.837)`。
-- curl：`/actuator/health` → `200 {"status":"UP","groups":["app","liveness","readiness"]}`；`/actuator/health/app` → `200 {"status":"UP"}`；`/api/products/1` → `200 {"code":"0","message":"OK","data":{"id":1,"name":"极客机械键盘","price":299.00,"status":"ON_SALE","description":"87 键热插拔轴体，PBT 键帽"},"success":true}`；`/api/products/20` → 200；`/api/products/9999` → 404；`/actuator/info` → `{"app":{"name":"seckill-app-jdk8","runtime":"jre8","shell":"seckill-app-jdk8","purpose":"D7 dual-JDK comparison, EOL teaching-only"}}`；`/actuator/prometheus` → 200 / 66,972 B / 452 行，含 `jvm_memory_used_bytes{app="seckill-app-jdk8",area="nonheap",env="dev",id="Code Cache",instance="app-jdk8-local",jvm_version="1.8.0_503",}`；`# TYPE jvm_*` 清单为 buffer/classes/gc/memory/threads 五族，**无 `jvm_info`**。
-- 收尾：`taskkill //PID <jre8 java>` 成功，18081 无 LISTENING；`git status --short` 仅 `code/services/seckill-app-jdk8/pom.xml` 与 `src/`（无 `target/`、无日志、无 `.env`）。
+- 启动行（**最终 jar、两次独立启动**）：`Tomcat started on port(s): 18082 (http)` + `Started SeckillJdk8Application in 5.641 seconds (JVM running for 6.193)`；此前一次同 jar 前置构建的启动为 `Started SeckillJdk8Application in 6.302 seconds (JVM running for 6.837)`（18081）。**5.6–6.3s 是裸默认堆、单次样本，不能直接进 D7 对比表**（§10.2 要求同限额 + `-Xmx512m` + 多次取中位）。
+- curl（对最终 jar）：`/actuator/health` → 200、`/actuator/health/app` → 200、`/api/products/1` → 200、`/api/products/20` → 200、`/api/products/9999` → 404、`/actuator/info` → 200、`/actuator/prometheus` → 200 / 75,118 B；`/actuator/health` 体 `{"status":"UP","groups":["app","liveness","readiness"]}`、`/actuator/health/app` 体 `{"status":"UP"}`、`/actuator/info` 体 `{"app":{"name":"seckill-app-jdk8","runtime":"jre8","shell":"seckill-app-jdk8","purpose":"D7 dual-JDK comparison, EOL teaching-only"}}`。
+- 商品体（JRE 8 实测，UTF-8 中文与两位小数刻度完好）：`{"code":"0","message":"OK","data":{"id":1,"name":"极客机械键盘","price":299.00,"status":"ON_SALE","description":"87 键热插拔轴体，PBT 键帽"},"success":true}`。
+- 标签（JRE 8 实测）：`jvm_memory_used_bytes{app="seckill-app-jdk8",area="nonheap",env="dev",id="Code Cache",instance="app-jdk8-local",jvm_version="1.8.0_503",}`；`# TYPE jvm_*` 清单为 buffer/classes/gc/memory/threads 五族，**无 `jvm_info`**。
+- 收尾：两次分别 `taskkill` 其 java 进程（PID 39204 / 44316），复核 18081/18082 **无 LISTENING**；`git status --short` 为空（`target/` 未被跟踪、日志只写 `/tmp`、未碰 `.env`）。
