@@ -1,0 +1,188 @@
+# Network-fault overlay: one Toxiproxy between the app tier and the
+# Redis/MySQL datastores, profile-gated behind "chaos-proxy".
+#
+# Design refs: doc/design/2026-10-26-ha-concurrency-lab-design.md §3.1 (one
+# Toxiproxy, 64MB, disabled by default, switch belongs to demo preparation),
+# §3.3 (the `chaos-proxy` profile), §11.3 (chaos-controller toxics: latency,
+# bandwidth, outage, recovery on the Redis/MySQL paths).
+#
+# Composition: this file is only ever loaded by `up.sh --profile chaos-proxy`,
+# i.e. compose.base.yml + compose.dev.yml + this file with the "chaos-proxy"
+# profile selected. It is a DEV-STACK overlay: it does not combine with the
+# "ha" / "db-ha" profiles (up.sh rejects those combinations explicitly).
+# Including this file WITHOUT `--profile chaos-proxy` fails closed instead of
+# half-applying: the app overrides below depend on the profile-gated
+# toxiproxy-init service, so Compose reports "depends on undefined service".
+#
+# Why `docker compose config --services` keeps its invariants: both NEW
+# services declare `profiles: ["chaos-proxy"]`, exactly like `traffic` in
+# compose.base.yml. The default render (base+dev, no overlay) stays at 16; with
+# the overlay + profile selected the render is 18 = 16 + toxiproxy + the
+# one-shot toxiproxy-init job.
+#
+# What the app tier sees under this profile (env maps are union-merged into the
+# existing app services, the same mechanism compose.ha.yml uses):
+#   Redis  -> toxiproxy:<TOXIPROXY_REDIS_PORT>  (default 16379) -> jl-redis:6379
+#   MySQL  -> toxiproxy:<TOXIPROXY_MYSQL_PORT> (default 13306) -> jl-mysql:3306
+# The endpoints are resolved when a container starts, so the app tier must be
+# RECREATED for the switch to take effect - up.sh does that for the three app
+# containers. That is why the switch is a preparation step (design §3.1), not a
+# mid-drill toggle: going back is `up.sh --profile dev`, which recreates the app
+# containers against the datastores again.
+#
+# No datastore, exporter or controller service is redefined here. The only
+# non-app override is the chaos-controller's CHAOS_TOXIPROXY_URL, the base URL
+# the Java toxiproxy actions read (env key contract in
+# doc/process/step-39-toxiproxy-tier.md).
+
+services:
+  # --- the proxy itself ------------------------------------------------------
+  # toxiproxy-server keeps proxies and toxics in memory only: a restarted
+  # jl-toxiproxy comes back WITHOUT proxies, so re-run the init job afterwards
+  # (recipe in step-39-toxiproxy-tier.md).
+  toxiproxy:
+    image: ${TOXIPROXY_IMAGE}
+    container_name: jl-toxiproxy
+    restart: unless-stopped
+    profiles: ["chaos-proxy"]
+    mem_limit: ${TOXIPROXY_MEM_LIMIT}
+    # toxiproxy-server defaults to localhost:8474, which is unreachable from
+    # jl-net; bind the control API to the container network explicitly.
+    command: ["-host", "0.0.0.0", "-port", "${TOXIPROXY_API_PORT}"]
+    environment:
+      TZ: ${TZ}
+    # Control API only, loopback-only like every other host binding. The proxy
+    # listen ports stay internal: the app reaches them as toxiproxy:16379 /
+    # toxiproxy:13306 on jl-net.
+    ports:
+      - "127.0.0.1:${TOXIPROXY_API_PORT}:${TOXIPROXY_API_PORT}"
+    expose:
+      - "${TOXIPROXY_API_PORT}"
+      - "${TOXIPROXY_REDIS_PORT}"
+      - "${TOXIPROXY_MYSQL_PORT}"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "toxiproxy"
+    healthcheck:
+      # The image is Alpine-based (busybox wget); /version answers as soon as
+      # the API socket is up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${TOXIPROXY_API_PORT}/version | grep -q '\"version\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # --- create-or-update the two proxies --------------------------------------
+  # One-shot job: exits 0 once both proxies exist with the configured listen
+  # ports; the app tier waits for that (depends_on service_completed_successfully)
+  # so no connection can race the proxy creation. Idempotent: GET first, then
+  # POST update when present, POST create when absent.
+  #
+  # busybox wget is used because it ships with the pinned toxiproxy image (no
+  # second image tag to pull) and supports --post-data/--header. The image's
+  # default entrypoint (/toxiproxy-server) is replaced by /bin/sh, so the job
+  # needs no extra image and no mounted script.
+  toxiproxy-init:
+    image: ${TOXIPROXY_IMAGE}
+    container_name: jl-toxiproxy-init
+    restart: "no"
+    profiles: ["chaos-proxy"]
+    mem_limit: ${TOXIPROXY_INIT_MEM_LIMIT}
+    environment:
+      TZ: ${TZ}
+      TOXIPROXY_API_URL: http://toxiproxy:${TOXIPROXY_API_PORT}
+      TOXIPROXY_REDIS_PORT: "${TOXIPROXY_REDIS_PORT}"
+      TOXIPROXY_MYSQL_PORT: "${TOXIPROXY_MYSQL_PORT}"
+    depends_on:
+      toxiproxy:
+        condition: service_healthy
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "toxiproxy-init"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        api="$$TOXIPROXY_API_URL"
+        upsert() {
+          name="$$1"
+          listen="$$2"
+          upstream="$$3"
+          body="$$(printf '{"name":"%s","listen":"%s","upstream":"%s","enabled":true}' "$$name" "$$listen" "$$upstream")"
+          if wget -q -O /dev/null "$$api/proxies/$$name" 2>/dev/null; then
+            echo "toxiproxy: updating proxy $$name -> $$upstream (listen $$listen)"
+            wget -q -O /dev/null --header "Content-Type: application/json" --post-data "$$body" "$$api/proxies/$$name"
+          else
+            echo "toxiproxy: creating proxy $$name -> $$upstream (listen $$listen)"
+            wget -q -O /dev/null --header "Content-Type: application/json" --post-data "$$body" "$$api/proxies"
+          fi
+        }
+        upsert redis "0.0.0.0:$$TOXIPROXY_REDIS_PORT" "jl-redis:6379"
+        upsert mysql "0.0.0.0:$$TOXIPROXY_MYSQL_PORT" "jl-mysql:3306"
+        echo "toxiproxy: proxies now:"
+        wget -qO- "$$api/proxies"
+        echo
+
+  # --- app tier overrides -----------------------------------------------------
+  # Redis: host/port point at the redis proxy. REDIS_MODE stays unset
+  # (standalone, dev semantics) and no REDIS_PASSWORD is injected - the proxied
+  # jl-redis has no requirepass, exactly like the dev stack.
+  #
+  # MySQL: MYSQL_MODE is pinned to standalone so the render never depends on a
+  # .env that was switched to router. In standalone mode the app reads
+  # app.datasource.write/read.jdbc-url and IGNORES DB_WRITE_URL / DB_READ_URL
+  # (DataSourceAccessProperties.effectiveWriteUrl only consults the router keys
+  # in router mode). Spring's relaxed binding lets APP_DATASOURCE_WRITE_JDBC_URL
+  # / _READ_JDBC_URL override exactly those two standalone keys from the
+  # environment, so BOTH pools really traverse the mysql proxy while the mode
+  # (and therefore the code path) stays standalone. The DB_*_URL keys are set
+  # to the same URLs as the documented router-mode contract; they are inert in
+  # standalone and become the single source if this overlay is ever combined
+  # with router mode.
+  app-1:
+    environment: &app-proxy-env
+      REDIS_HOST: toxiproxy
+      REDIS_PORT: "${TOXIPROXY_REDIS_PORT}"
+      MYSQL_MODE: standalone
+      DB_WRITE_URL: "jdbc:mysql://toxiproxy:${TOXIPROXY_MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      DB_READ_URL: "jdbc:mysql://toxiproxy:${TOXIPROXY_MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      APP_DATASOURCE_WRITE_JDBC_URL: "jdbc:mysql://toxiproxy:${TOXIPROXY_MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      APP_DATASOURCE_READ_JDBC_URL: "jdbc:mysql://toxiproxy:${TOXIPROXY_MYSQL_PORT}/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+    depends_on:
+      # No app connection may race the proxy creation: the one-shot job is a
+      # hard dependency (its failure fails the stack, never a silent direct
+      # connection to the datastores).
+      toxiproxy-init:
+        condition: service_completed_successfully
+
+  app-2:
+    environment: *app-proxy-env
+    depends_on:
+      toxiproxy-init:
+        condition: service_completed_successfully
+
+  app-3:
+    environment: *app-proxy-env
+    depends_on:
+      toxiproxy-init:
+        condition: service_completed_successfully
+
+  # --- chaos-controller: toxiproxy base URL -----------------------------------
+  # The Java toxiproxy actions (separate step) read CHAOS_TOXIPROXY_URL. It is
+  # only injected under this profile: in the dev/ha renders the chaos-controller
+  # keeps its previous environment exactly, and the actions must treat a missing
+  # key as "toxiproxy tier not enabled" instead of guessing an address.
+  chaos-controller:
+    environment:
+      CHAOS_TOXIPROXY_URL: ${CHAOS_TOXIPROXY_URL:-http://toxiproxy:${TOXIPROXY_API_PORT}}
+
+networks:
+  # Reuses base.yml's jl-net (same pattern as compose.ha.yml / compose.mysql.yml):
+  # no new network means the dev containers are never recreated by this profile.
+  jl-net:
+    name: jl-net
+    driver: bridge

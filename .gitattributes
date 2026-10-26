@@ -7,3 +7,8 @@
 #     silently changes port/quorum/auth-pass values).
 *.sh text eol=lf
 *.tpl text eol=lf
+# compose.toxiproxy.yml embeds the toxiproxy-init script in a YAML block scalar
+# that is executed by /bin/sh INSIDE the container; a CRLF checkout would feed
+# trailing \r into every line (shebang-free `set -eu` included). The other
+# compose files stay LF by convention and need no rule.
+code/lab/docker/compose.toxiproxy.yml text eol=lf
