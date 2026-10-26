@@ -114,10 +114,10 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
         double counterBefore = ordersCreatedCount();
         double rejectsBefore = idempotentRejectCount();
 
-        Order first = orderApplicationService.create(command);
+        Order first = orderApplicationService.create(command, OrderRequestSource.SYNC_API);
         double counterAfterCreate = ordersCreatedCount();
         double rejectsAfterCreate = idempotentRejectCount();
-        Order replay = orderApplicationService.create(command);
+        Order replay = orderApplicationService.create(command, OrderRequestSource.SYNC_API);
         double counterAfterReplay = ordersCreatedCount();
         double rejectsAfterReplay = idempotentRejectCount();
 
@@ -134,7 +134,8 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
     @Test
     void getReturnsCreatedOrder() {
         Order created = orderApplicationService.create(
-                new CreateOrderCommand("u1", PRODUCT_ID, 1, "get-key"));
+                new CreateOrderCommand("u1", PRODUCT_ID, 1, "get-key"),
+                OrderRequestSource.SYNC_API);
 
         Order found = orderApplicationService.get(created.getId());
 
@@ -155,7 +156,7 @@ class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
                     ready.countDown();
                     start.await();
                     try {
-                        return new AttemptResult(orderApplicationService.create(command), null, null);
+                        return new AttemptResult(orderApplicationService.create(command, OrderRequestSource.SYNC_API), null, null);
                     } catch (BizException exception) {
                         return new AttemptResult(null, exception.getErrorCode().code(), null);
                     } catch (Throwable throwable) {

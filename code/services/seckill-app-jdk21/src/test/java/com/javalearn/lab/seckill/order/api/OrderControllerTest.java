@@ -3,6 +3,7 @@ package com.javalearn.lab.seckill.order.api;
 import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -42,7 +44,7 @@ class OrderControllerTest {
 
     @Test
     void createsOrderWithSuccessEnvelope() throws Exception {
-        given(orderApplicationService.create(any(CreateOrderCommand.class))).willReturn(ORDER);
+        given(orderApplicationService.create(any(CreateOrderCommand.class), eq(OrderRequestSource.SYNC_API))).willReturn(ORDER);
 
         mockMvc.perform(post("/api/orders")
                         .header("Idempotency-Key", "key-1")
@@ -61,7 +63,7 @@ class OrderControllerTest {
 
     @Test
     void repeatingSameKeyReturnsSameOrderId() throws Exception {
-        given(orderApplicationService.create(any(CreateOrderCommand.class))).willReturn(ORDER);
+        given(orderApplicationService.create(any(CreateOrderCommand.class), eq(OrderRequestSource.SYNC_API))).willReturn(ORDER);
 
         MvcResult first = mockMvc.perform(post("/api/orders")
                         .header("Idempotency-Key", "key-1")
@@ -79,7 +81,8 @@ class OrderControllerTest {
         assertThat(first.getResponse().getContentAsString())
                 .isEqualTo(replay.getResponse().getContentAsString());
         assertThat(replay.getResponse().getContentAsString()).contains("\"id\":7");
-        verify(orderApplicationService, times(2)).create(any(CreateOrderCommand.class));
+        verify(orderApplicationService, times(2))
+                .create(any(CreateOrderCommand.class), eq(OrderRequestSource.SYNC_API));
     }
 
     @Test
@@ -108,7 +111,7 @@ class OrderControllerTest {
 
     @Test
     void invalidQuantityReturns400() throws Exception {
-        given(orderApplicationService.create(any(CreateOrderCommand.class))).willAnswer(invocation -> {
+        given(orderApplicationService.create(any(CreateOrderCommand.class), eq(OrderRequestSource.SYNC_API))).willAnswer(invocation -> {
             CreateOrderCommand command = invocation.getArgument(0);
             if (command.getQuantity() <= 0) {
                 throw new BizException(CommonErrorCode.INVALID_ARGUMENT, "quantity must be positive");
@@ -127,7 +130,7 @@ class OrderControllerTest {
 
     @Test
     void soldOutReturns409Conflict() throws Exception {
-        given(orderApplicationService.create(any(CreateOrderCommand.class)))
+        given(orderApplicationService.create(any(CreateOrderCommand.class), eq(OrderRequestSource.SYNC_API)))
                 .willThrow(new BizException(CommonErrorCode.CONFLICT, "Sold out"));
 
         mockMvc.perform(post("/api/orders")

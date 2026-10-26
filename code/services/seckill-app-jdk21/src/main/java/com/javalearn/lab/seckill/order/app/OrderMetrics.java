@@ -13,11 +13,13 @@ import java.util.Objects;
  *   <li>{@code orders_created_total} counts only transactions that really
  *       inserted an order row and committed.</li>
  *   <li>{@code idempotent_reject} counts a repeated {@code Idempotency-Key}
- *       that resolved to an existing order. Prometheus exports it as
- *       {@code idempotent_reject_total}. The seckill admission replay keeps its
- *       own {@code seckill_attempts{result="replay"}} series; this counter is
- *       the durable-order replay signal shared by the synchronous order path
- *       and duplicate MQ deliveries.</li>
+ *       that resolved to an existing order on the synchronous
+ *       {@code POST /api/orders} path only (Task 18 brief). Prometheus
+ *       exports it as {@code idempotent_reject_total}. The seckill admission
+ *       replay keeps its own {@code seckill_attempts{result="replay"}} series
+ *       and duplicate MQ deliveries are counted by
+ *       {@code order_consumer_processed{result="duplicate"}}; neither
+ *       increments this counter.</li>
  * </ul>
  *
  * <p>Both counters are registered eagerly so their series exist at zero before
@@ -44,7 +46,7 @@ public final class OrderMetrics {
         ordersCreated.increment();
     }
 
-    /** Records one repeated idempotency key that returned an existing order. */
+    /** Records one synchronous-path replay that returned an existing order. */
     public void idempotentReject() {
         idempotentReject.increment();
     }

@@ -4,6 +4,7 @@ import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,7 +41,8 @@ public class OrderController {
                 request.userId(),
                 request.productId(),
                 request.quantity(),
-                idempotencyKey));
+                idempotencyKey),
+                OrderRequestSource.SYNC_API);
         return Result.success(OrderResponse.from(order));
     }
 

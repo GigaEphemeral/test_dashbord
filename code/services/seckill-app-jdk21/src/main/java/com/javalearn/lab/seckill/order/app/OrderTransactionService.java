@@ -17,11 +17,15 @@ import java.util.Objects;
  *
  * <p>{@code orders_created_total} is incremented only after a transaction that
  * really inserted a row commits; an idempotent replay (detected by the
- * pre-check) records {@code idempotent_reject} instead. A losing duplicate-key
+ * pre-check) records {@code idempotent_reject} instead, but only for the
+ * synchronous {@link OrderRequestSource#SYNC_API} path (Task 18 brief): the
+ * seckill admission fallback and the MQ consumer replay through this same code
+ * and stay counted by {@code seckill_attempts{result="replay"}} and
+ * {@code order_consumer_processed{result="duplicate"}}. A losing duplicate-key
  * race (which throws before returning) is counted by
- * {@link OrderApplicationService} once it has resolved to the winning order.
- * The pre-check is only a metrics hint; correctness still comes from the
- * database unique key.</p>
+ * {@link OrderApplicationService} once it has resolved to the winning order,
+ * under the same source scope. The pre-check is only a metrics hint;
+ * correctness still comes from the database unique key.</p>
  *
  * <p>OpenMetrics reserves the {@code _created} suffix, so the Prometheus Java
  * client exports the orders family as {@code orders_total} in the raw Actuator
@@ -48,14 +52,30 @@ public class OrderTransactionService {
     }
 
     @Transactional
-    public Order create(CreateOrderCommand command) {
+    public Order create(CreateOrderCommand command, OrderRequestSource source) {
         Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(source, "source");
         boolean replay = command.getIdempotencyKey() != null
                 && orderRepository.findByIdempotencyKey(command.getIdempotencyKey()).isPresent();
 
         Order order = orderService.create(command);
-        recordAfterCommit(replay ? orderMetrics::idempotentReject : orderMetrics::orderCreated);
+        Runnable recorder = recorderFor(source, replay);
+        if (recorder != null) {
+            recordAfterCommit(recorder);
+        }
         return order;
+    }
+
+    /**
+     * A real insert is always counted; a replay counts
+     * {@code idempotent_reject} only for the synchronous HTTP path. Seckill
+     * replays of an existing order intentionally record nothing here.
+     */
+    private Runnable recorderFor(OrderRequestSource source, boolean replay) {
+        if (replay) {
+            return source == OrderRequestSource.SYNC_API ? orderMetrics::idempotentReject : null;
+        }
+        return orderMetrics::orderCreated;
     }
 
     private static void recordAfterCommit(Runnable recorder) {

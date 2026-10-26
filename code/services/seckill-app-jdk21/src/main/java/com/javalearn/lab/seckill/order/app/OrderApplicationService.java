@@ -21,10 +21,13 @@ import java.util.Optional;
  * committed row in a fresh read transaction. Up to ten ~50&nbsp;ms attempts
  * cover the short window between duplicate detection and commit visibility.</p>
  *
- * <p>A resolved duplicate records {@code idempotent_reject} exactly once; the
- * sequential pre-check replay is counted inside
- * {@link OrderTransactionService}, so both replay shapes increment the same
- * counter without double counting.</p>
+ * <p>A resolved duplicate records {@code idempotent_reject} exactly once, but
+ * only for the synchronous {@link OrderRequestSource#SYNC_API} path (Task 18
+ * brief); the sequential pre-check replay is counted inside
+ * {@link OrderTransactionService} under the same scope. Seckill admission
+ * fallbacks and duplicate MQ deliveries ({@link OrderRequestSource#SECKILL})
+ * keep their own {@code seckill_attempts}/{@code order_consumer_processed}
+ * series and never touch this counter.</p>
  */
 public class OrderApplicationService {
 
@@ -46,10 +49,11 @@ public class OrderApplicationService {
         this.orderMetrics = Objects.requireNonNull(orderMetrics, "orderMetrics");
     }
 
-    public Order create(CreateOrderCommand command) {
+    public Order create(CreateOrderCommand command, OrderRequestSource source) {
         Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(source, "source");
         try {
-            return orderTransactionService.create(command);
+            return orderTransactionService.create(command, source);
         } catch (DuplicateOrderKeyException duplicate) {
             log.info("Duplicate idempotency key '{}' detected; returning the winning order",
                     command.getIdempotencyKey());
@@ -57,7 +61,9 @@ public class OrderApplicationService {
                 Optional<Order> existing = orderQueryService.findByIdempotencyKey(
                         command.getIdempotencyKey());
                 if (existing.isPresent()) {
-                    orderMetrics.idempotentReject();
+                    if (source == OrderRequestSource.SYNC_API) {
+                        orderMetrics.idempotentReject();
+                    }
                     return existing.get();
                 }
                 sleepBeforeRetry();

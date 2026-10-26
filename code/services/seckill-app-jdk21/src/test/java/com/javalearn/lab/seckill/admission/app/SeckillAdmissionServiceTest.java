@@ -9,6 +9,7 @@ import com.javalearn.lab.seckill.admission.domain.SeckillRequest;
 import com.javalearn.lab.seckill.lab.config.LabToggleProperties;
 import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -278,7 +279,7 @@ class SeckillAdmissionServiceTest {
         assertThat(service.isAsyncEnabled()).isFalse();
         Order order = new Order(7L, "order-no-7", "u1", PRODUCT_ID, 1,
                 OrderStatus.CREATED, "key-1", Instant.parse("2026-10-26T08:00:00Z"));
-        given(orderApplicationService.create(any())).willReturn(order);
+        given(orderApplicationService.create(any(), any(OrderRequestSource.class))).willReturn(order);
 
         SeckillResponse response = service.admit("key-1", request(1));
 
@@ -353,7 +354,7 @@ class SeckillAdmissionServiceTest {
                 new SeckillResilienceGuard(circuitToggles, limiter, openBreaker, metrics));
         Order order = new Order(7L, "order-no-7", "u1", PRODUCT_ID, 1,
                 OrderStatus.CREATED, "key-1", Instant.parse("2026-10-26T08:00:00Z"));
-        given(orderApplicationService.create(any())).willReturn(order);
+        given(orderApplicationService.create(any(), any(OrderRequestSource.class))).willReturn(order);
 
         SeckillResponse response = degradedService.admit("key-1", request(1));
 
@@ -380,7 +381,7 @@ class SeckillAdmissionServiceTest {
         SeckillResponse response = service.admit("key-1", request(1));
 
         assertThat(response.status()).isEqualTo("ACCEPTED");
-        verify(orderApplicationService, never()).create(any());
+        verify(orderApplicationService, never()).create(any(), any(OrderRequestSource.class));
     }
 
     private static CreateSeckillOrderRequest request(int quantity) {

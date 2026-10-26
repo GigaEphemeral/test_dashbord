@@ -6,6 +6,7 @@ import com.javalearn.lab.seckill.admission.config.SeckillProperties;
 import com.javalearn.lab.seckill.admission.domain.SeckillOrderMessage;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
 import com.javalearn.lab.seckill.order.app.OrderQueryService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
 import io.micrometer.core.instrument.Counter;
@@ -24,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
@@ -73,7 +75,7 @@ class SeckillOrderConsumerTest {
     @Test
     void createsOrderThroughTheDurableServiceAndMarksRequestCreated() {
         given(orderQueryService.findByIdempotencyKey("key-1")).willReturn(Optional.empty());
-        given(orderApplicationService.create(any())).willReturn(ORDER);
+        given(orderApplicationService.create(any(), any(OrderRequestSource.class))).willReturn(ORDER);
 
         assertThat(consumer.process(MESSAGE)).isTrue();
 
@@ -86,11 +88,11 @@ class SeckillOrderConsumerTest {
     void duplicateDeliveryReturnsExistingOrderAndCountsDuplicate() {
         given(orderQueryService.findByIdempotencyKey("key-1"))
                 .willReturn(Optional.of(ORDER));
-        given(orderApplicationService.create(any())).willReturn(ORDER);
+        given(orderApplicationService.create(any(), any(OrderRequestSource.class))).willReturn(ORDER);
 
         assertThat(consumer.process(MESSAGE)).isTrue();
 
-        verify(orderApplicationService).create(any());
+        verify(orderApplicationService).create(any(), eq(OrderRequestSource.SECKILL));
         verify(requestStore).markCreated("request-1", 7L);
         assertThat(consumerCounter("duplicate")).isEqualTo(1.0d);
         assertThat(consumerCounter("created")).isZero();
@@ -100,7 +102,7 @@ class SeckillOrderConsumerTest {
     void failureMarksRequestFailedAndRestoresStockBestEffort() {
         given(orderQueryService.findByIdempotencyKey("key-1")).willReturn(Optional.empty());
         willThrow(new BizException(CommonErrorCode.CONFLICT, "Sold out"))
-                .given(orderApplicationService).create(any());
+                .given(orderApplicationService).create(any(), any(OrderRequestSource.class));
         given(stockStore.restore(20L, 1)).willReturn(true);
 
         assertThat(consumer.process(MESSAGE)).isFalse();
@@ -114,7 +116,7 @@ class SeckillOrderConsumerTest {
     @Test
     void stateUpdateFailureAfterDurableInsertNeverRestoresStock() {
         given(orderQueryService.findByIdempotencyKey("key-1")).willReturn(Optional.empty());
-        given(orderApplicationService.create(any())).willReturn(ORDER);
+        given(orderApplicationService.create(any(), any(OrderRequestSource.class))).willReturn(ORDER);
         willThrow(new IllegalStateException("redis down"))
                 .given(requestStore).markCreated("request-1", 7L);
 
@@ -128,7 +130,7 @@ class SeckillOrderConsumerTest {
     void existingOrderPlusFailedRedeliveryNeverRestoresStock() {
         given(orderQueryService.findByIdempotencyKey("key-1")).willReturn(Optional.of(ORDER));
         willThrow(new IllegalStateException("database unavailable"))
-                .given(orderApplicationService).create(any());
+                .given(orderApplicationService).create(any(), any(OrderRequestSource.class));
 
         assertThat(consumer.process(MESSAGE)).isTrue();
 

@@ -12,6 +12,7 @@ import com.javalearn.lab.seckill.lab.toggle.LabToggle;
 import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 import com.javalearn.lab.seckill.order.api.CreateOrderCommand;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,11 +124,14 @@ public class SeckillAdmissionService {
 
     private SeckillResponse createSynchronously(String idempotencyKey,
                                                 CreateSeckillOrderRequest request) {
+        // SECKILL scope: the durable replay must not inflate idempotent_reject,
+        // which the Task 18 brief reserves for the synchronous /api/orders path.
         Order order = orderApplicationService.create(new CreateOrderCommand(
                 request.userId(),
                 request.productId(),
                 request.quantity(),
-                idempotencyKey));
+                idempotencyKey),
+                OrderRequestSource.SECKILL);
         return new SeckillResponse(null, order.getStatus().name(), order.getId());
     }
 

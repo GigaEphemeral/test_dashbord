@@ -5,6 +5,7 @@ import com.javalearn.lab.seckill.admission.domain.SeckillOrderMessage;
 import com.javalearn.lab.seckill.order.api.CreateOrderCommand;
 import com.javalearn.lab.seckill.order.app.OrderApplicationService;
 import com.javalearn.lab.seckill.order.app.OrderQueryService;
+import com.javalearn.lab.seckill.order.app.OrderRequestSource;
 import com.javalearn.lab.seckill.order.domain.Order;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,7 +77,11 @@ public class SeckillOrderConsumer {
                     message.userId(),
                     message.productId(),
                     message.quantity(),
-                    message.idempotencyKey()));
+                    message.idempotencyKey()),
+                    // SECKILL scope: duplicate MQ deliveries are counted by
+                    // order_consumer_processed{result="duplicate"}, never by
+                    // idempotent_reject (Task 18 brief: sync /api/orders only).
+                    OrderRequestSource.SECKILL);
             recordCreated(message, order);
             metrics.consumerProcessed(existing.isPresent()
                     ? SeckillMetrics.CONSUMER_DUPLICATE
