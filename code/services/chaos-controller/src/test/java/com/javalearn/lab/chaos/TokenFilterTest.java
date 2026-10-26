@@ -1,5 +1,7 @@
 package com.javalearn.lab.chaos;
 
+import com.javalearn.lab.chaos.action.ChaosActionService;
+import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +21,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -44,10 +47,14 @@ class TokenFilterTest {
     @MockitoBean
     private ContainerGateway containerGateway;
 
+    @MockitoBean
+    private ChaosActionService chaosActionService;
+
     @BeforeEach
     void setUp() {
         when(containerGateway.listLabContainers())
                 .thenReturn(List.of(new ContainerView("jl-app-1", "running", "healthy")));
+        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(0, 0));
     }
 
     @Test
@@ -98,5 +105,22 @@ class TokenFilterTest {
                         .header("Origin", "http://127.0.0.1:8080")
                         .header("Access-Control-Request-Method", "GET"))
                 .andExpect(status().is(not(401)));
+    }
+
+    @Test
+    void chaosActionsWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(post("/chaos/instances/jl-app-1/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":5}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("40101"));
+    }
+
+    @Test
+    void chaosStopAllWithTokenReturns200() throws Exception {
+        mockMvc.perform(post("/chaos/stop-all").header(TOKEN_HEADER, "test-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.reverted").value(0));
     }
 }

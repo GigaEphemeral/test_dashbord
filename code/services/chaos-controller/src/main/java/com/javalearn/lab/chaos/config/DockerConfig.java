@@ -8,6 +8,7 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.transport.DockerHttpClient;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.gateway.DockerContainerGateway;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,14 +28,17 @@ public class DockerConfig {
 
     @Bean(destroyMethod = "close")
     @ConditionalOnProperty(name = "lab.docker.enabled", havingValue = "true", matchIfMissing = true)
-    public DockerClient dockerClient() {
+    public DockerClient dockerClient(
+            @Value("${lab.docker.max-connections:16}") int maxConnections,
+            @Value("${lab.docker.connection-timeout-seconds:5}") int connectionTimeoutSeconds,
+            @Value("${lab.docker.response-timeout-seconds:30}") int responseTimeoutSeconds) {
         DockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
         DockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()
                 .dockerHost(config.getDockerHost())
                 .sslConfig(config.getSSLConfig())
-                .maxConnections(16)
-                .connectionTimeout(Duration.ofSeconds(5))
-                .responseTimeout(Duration.ofSeconds(30))
+                .maxConnections(maxConnections)
+                .connectionTimeout(Duration.ofSeconds(connectionTimeoutSeconds))
+                .responseTimeout(Duration.ofSeconds(responseTimeoutSeconds))
                 .build();
         return DockerClientImpl.getInstance(config, httpClient);
     }

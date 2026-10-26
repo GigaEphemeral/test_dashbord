@@ -3,13 +3,16 @@ package com.javalearn.lab.chaos.gateway;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.HealthState;
+import com.github.dockerjava.api.exception.ConflictException;
 import com.github.dockerjava.api.exception.DockerException;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
+import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.model.ContainerView;
 import org.slf4j.Logger;
@@ -22,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,6 +44,7 @@ public class DockerContainerGateway implements ContainerGateway {
 
     private static final Logger log = LoggerFactory.getLogger(DockerContainerGateway.class);
     private static final long LOG_WAIT_SECONDS = 15L;
+    private static final Set<String> ALLOWED_SIGNALS = Set.of(SIGSTOP, SIGCONT);
 
     private final DockerClient dockerClient;
 
@@ -110,6 +115,107 @@ public class DockerContainerGateway implements ContainerGateway {
             throw new DockerUnavailableException("Failed to read logs for " + containerName, e);
         }
         return buffer.toString(StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public ContainerView inspectLabContainer(String containerName) {
+        requireLabContainer(containerName);
+        try {
+            var inspected = dockerClient.inspectContainerCmd(containerName).exec();
+            String state = "unknown";
+            String health = "none";
+            if (inspected.getState() != null) {
+                if (inspected.getState().getStatus() != null) {
+                    state = inspected.getState().getStatus();
+                }
+                HealthState inspectedHealth = inspected.getState().getHealth();
+                if (inspectedHealth != null && inspectedHealth.getStatus() != null) {
+                    health = inspectedHealth.getStatus();
+                }
+            }
+            return new ContainerView(containerName, state, health);
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Docker daemon unavailable while inspecting " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Docker daemon unavailable while inspecting " + containerName, e);
+        }
+    }
+
+    @Override
+    public void stop(String containerName, int graceSeconds) {
+        requireLabContainer(containerName);
+        try {
+            dockerClient.stopContainerCmd(containerName)
+                    .withTimeout(graceSeconds)
+                    .exec();
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (NotModifiedException e) {
+            // Docker returns 304 when the container is already stopped; treat as done.
+            log.debug("Container {} was already stopped", containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to stop " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to stop " + containerName, e);
+        }
+    }
+
+    @Override
+    public void start(String containerName) {
+        requireLabContainer(containerName);
+        try {
+            dockerClient.startContainerCmd(containerName).exec();
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (NotModifiedException e) {
+            // Docker returns 304 when the container is already running; treat as done.
+            log.debug("Container {} was already running", containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to start " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to start " + containerName, e);
+        }
+    }
+
+    @Override
+    public void restart(String containerName, int graceSeconds) {
+        requireLabContainer(containerName);
+        try {
+            dockerClient.restartContainerCmd(containerName)
+                    .withTimeout(graceSeconds)
+                    .exec();
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to restart " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to restart " + containerName, e);
+        }
+    }
+
+    @Override
+    public void signal(String containerName, String signal) {
+        if (!ALLOWED_SIGNALS.contains(signal)) {
+            throw new InvalidChaosActionException("Unsupported signal: " + signal
+                    + " (allowed: " + ALLOWED_SIGNALS + ")");
+        }
+        requireLabContainer(containerName);
+        try {
+            dockerClient.killContainerCmd(containerName)
+                    .withSignal(signal)
+                    .exec();
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (ConflictException e) {
+            // The container is not running (Docker returns 409); nothing to signal.
+            throw new InvalidChaosActionException("Container is not running: " + containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to signal " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to signal " + containerName, e);
+        }
     }
 
     private void requireLabContainer(String containerName) {

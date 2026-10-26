@@ -232,6 +232,21 @@ services:
       TZ: ${TZ}
       LAB_TOKEN: ${LAB_TOKEN:-lab-token}
       DOCKER_HOST: unix:///var/run/docker.sock
+      # Grafana annotation credentials (Task 21), interpolated from .env.
+      # Annotations are best-effort: a missing/broken Grafana never fails an action.
+      GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Chaos TTL/watchdog defaults; override per run in .env without a rebuild.
+      CHAOS_DEFAULT_TTL_SECONDS: ${CHAOS_DEFAULT_TTL_SECONDS:-120}
+      CHAOS_MAX_TTL_SECONDS: ${CHAOS_MAX_TTL_SECONDS:-600}
+      CHAOS_ACTION_TIMEOUT_SECONDS: ${CHAOS_ACTION_TIMEOUT_SECONDS:-30}
+      CHAOS_WATCHDOG_INTERVAL_SECONDS: ${CHAOS_WATCHDOG_INTERVAL_SECONDS:-5}
+      CHAOS_STOP_GRACE_SECONDS: ${CHAOS_STOP_GRACE_SECONDS:-10}
+      CHAOS_MAX_REVERT_ATTEMPTS: ${CHAOS_MAX_REVERT_ATTEMPTS:-3}
+      CHAOS_ANNOTATION_ENABLED: ${CHAOS_ANNOTATION_ENABLED:-true}
+      CHAOS_ANNOTATION_GRAFANA_URL: ${CHAOS_ANNOTATION_GRAFANA_URL:-http://grafana:3000}
+      CHAOS_ANNOTATION_TIMEOUT_SECONDS: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:-3}
+      CHAOS_ANNOTATION_TAGS: ${CHAOS_ANNOTATION_TAGS:-}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.

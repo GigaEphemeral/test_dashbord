@@ -1,8 +1,10 @@
 package com.javalearn.lab.chaos.web;
 
+import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
+import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.error.LabErrorCode;
 import com.javalearn.lab.common.CommonErrorCode;
@@ -11,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -36,6 +39,24 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleInvalidTail(InvalidTailException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidChaosActionException.class)
+    public ResponseEntity<Result<Void>> handleInvalidAction(InvalidChaosActionException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(ChaosConflictException.class)
+    public ResponseEntity<Result<Void>> handleChaosConflict(ChaosConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(CommonErrorCode.CONFLICT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Result<Void>> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, "Invalid request body"));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

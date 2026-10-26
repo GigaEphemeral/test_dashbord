@@ -23,3 +23,33 @@ lab:
   token: ${LAB_TOKEN:lab-token}
   docker:
     enabled: true
+    # Docker Java transport limits; externalized so the lab can widen them
+    # without a rebuild.
+    max-connections: ${LAB_DOCKER_MAX_CONNECTIONS:16}
+    connection-timeout-seconds: ${LAB_DOCKER_CONNECTION_TIMEOUT_SECONDS:5}
+    response-timeout-seconds: ${LAB_DOCKER_RESPONSE_TIMEOUT_SECONDS:30}
+
+# Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
+# compose passes the same keys with the same defaults.
+chaos:
+  # TTL used when kill/freeze omits ttlSeconds.
+  default-ttl-seconds: ${CHAOS_DEFAULT_TTL_SECONDS:120}
+  # Upper bound accepted from callers.
+  max-ttl-seconds: ${CHAOS_MAX_TTL_SECONDS:600}
+  # Deadline for the post-start/post-resume readiness probe (async, non-blocking).
+  action-timeout-seconds: ${CHAOS_ACTION_TIMEOUT_SECONDS:30}
+  # Watchdog sweep interval: second safety net for lost TTL reverts.
+  watchdog-interval-seconds: ${CHAOS_WATCHDOG_INTERVAL_SECONDS:5}
+  # Docker stop grace period (manual stop so unless-stopped does not restart).
+  stop-grace-seconds: ${CHAOS_STOP_GRACE_SECONDS:10}
+  # Revert retries before an action stays FAILED until stop-all.
+  max-revert-attempts: ${CHAOS_MAX_REVERT_ATTEMPTS:3}
+  annotation:
+    # Best-effort Grafana annotations; failures are logged, never fatal.
+    enabled: ${CHAOS_ANNOTATION_ENABLED:true}
+    grafana-url: ${CHAOS_ANNOTATION_GRAFANA_URL:http://grafana:3000}
+    user: ${GRAFANA_ADMIN_USER:}
+    password: ${GRAFANA_ADMIN_PASSWORD:}
+    timeout-seconds: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:3}
+    # Optional extra comma-separated tags; mandatory tags are added in code.
+    tags: ${CHAOS_ANNOTATION_TAGS:}
