@@ -54,7 +54,7 @@
 - **未验证：故障转移与重加入**（`db-failover` 动作、被踢节点 `clone` 重加入）。Router 切主依赖同一套元数据缓存，预期成立，但本步没有做停机演练。
 - **未验证：prometheus 抓取**（`mysql-ha-scrape.yml` 仍未接进 `prometheus.yml`，属主会话接线项）。
 - 状态脚本的 6447 探测只做一轮，若想让"RO 不是回落主库"更醒目，可在输出里带上路由名（当前靠 `read_only=1` + 轮询到不同 `server_id` 判断，本步实测已足够）。
-- `db-ha-up.sh` 的提示文案仍写 `RESULT: healthy`；实际脚本已输出 `RESULT: ok`（文案在脚本内，未改，避免扩大本步范围）。
+- `step-25a` 附录 A 的期望输出仍写 `RESULT: healthy ...`，与本步改后的 `RESULT: ok ...` 不一致；按本任务边界未改 `doc/` 下其它文件，留作后续措辞同步（脚本本身与 `db-ha-up.sh` 都只依赖退出码）。
 
 # 待定事项和注意事项
 
