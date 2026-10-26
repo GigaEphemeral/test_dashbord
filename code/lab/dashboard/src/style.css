@@ -419,6 +419,246 @@ h2 {
   font-size: 0.78rem;
 }
 
+.status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+  padding: 14px 18px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.status-label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.status-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.fault-tag {
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: rgba(245, 181, 68, 0.14);
+  color: var(--amber);
+  font-size: 0.76rem;
+}
+
+.auto-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.pill.running {
+  color: var(--accent);
+  border-color: rgba(56, 211, 159, 0.35);
+}
+
+.pill.paused,
+.pill.warn {
+  color: var(--amber);
+  border-color: rgba(245, 181, 68, 0.4);
+}
+
+.pill.completed,
+.pill.idle,
+.pill.unknown {
+  color: var(--text-muted);
+}
+
+.pill.failed {
+  color: var(--red);
+  border-color: rgba(239, 107, 107, 0.4);
+}
+
+.wizard-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wizard-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wizard-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pick-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.scenario-desc {
+  margin: 0;
+  flex: 1;
+  min-width: 240px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.wizard-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: #0a1119;
+  border: 1px solid var(--panel-border);
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transition: width 0.25s ease;
+}
+
+.progress-label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.step {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: #0a1119;
+}
+
+.step.current {
+  border-color: rgba(56, 211, 159, 0.5);
+  box-shadow: 0 0 0 3px rgba(56, 211, 159, 0.08);
+}
+
+.step.done {
+  opacity: 0.62;
+}
+
+.step-marker {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.step.current .step-marker {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step.done .step-marker {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-title code {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.step-text {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.step-explain {
+  margin: 4px 0 0;
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 6px 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(20, 184, 166, 0.07);
+  border: 1px solid rgba(20, 184, 166, 0.2);
+}
+
+.step-explain dt {
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
+
+.step-explain dd {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #cfe4dd;
+}
+
+.wizard-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn.danger {
+  border-color: rgba(239, 107, 107, 0.5);
+  background: transparent;
+  color: #ffb4b4;
+}
+
 @media (max-width: 920px) {
   .grid {
     grid-template-columns: 1fr;
@@ -426,5 +666,14 @@ h2 {
 
   .logs-card {
     min-height: 360px;
+  }
+
+  .wizard-progress,
+  .step-explain {
+    flex-wrap: wrap;
+  }
+
+  .step-explain {
+    grid-template-columns: 1fr;
   }
 }

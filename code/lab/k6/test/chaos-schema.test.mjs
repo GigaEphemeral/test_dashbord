@@ -218,6 +218,29 @@ test('returns frozen normalized events and fills optional fields', () => {
   assert.equal(only.ttlSeconds, null);
   assert.equal(only.title, '停止 app-1');
   assert.equal(only.text, null);
+  assert.equal(only.explain, null);
+});
+
+test('explain trims its fields, keeps absent ones null and an empty block is null', () => {
+  const [withBlock] = validateScenario(
+    scenario([event({ explain: { symptom: '  app-1 指标消失  ', fix: null } })]),
+  ).events;
+  assert.equal(withBlock.explain.symptom, 'app-1 指标消失');
+  assert.equal(withBlock.explain.rootCause, null);
+  assert.equal(withBlock.explain.fix, null);
+  assert.equal(withBlock.explain.expectation, null);
+  assert.ok(Object.isFrozen(withBlock.explain));
+
+  const [empty] = validateScenario(scenario([event({ explain: {} })])).events;
+  assert.equal(empty.explain, null);
+});
+
+test('a malformed explain block is rejected', () => {
+  expectRejected(scenario([event({ explain: '现象' })]), /explain must be an object/);
+  expectRejected(
+    scenario([event({ explain: { rootCause: '   ' } })]),
+    /explain\.rootCause must be a non-empty string/,
+  );
 });
 
 test('sortEvents is a stable ascending sort', () => {

@@ -47,12 +47,19 @@ chaos:
   # Core threads of the scheduler that runs TTL reverts, the watchdog and the
   # readiness probes; raise it if many probes could starve TTL reverts.
   scheduler-threads: ${CHAOS_SCHEDULER_THREADS:4}
+  # manual (lab default): keep injected faults after the guide finishes so the
+  # operator can read logs/traces; auto: revert everything at the terminal state.
+  reset-mode: ${LAB_RESET_MODE:manual}
   # Interactive guide (Task 22b). Scenarios are shared with k6 (schema v1).
   guide:
     # Read-only scenario directory; compose mounts code/lab/scenarios here.
     scenario-dir: ${CHAOS_GUIDE_SCENARIO_DIR:/app/scenarios}
     # Only application instances may be targeted; datastores are always rejected.
     target-pattern: "${CHAOS_GUIDE_TARGET_PATTERN:^jl-app-[0-9]+$}"
+  # Background traffic (Task 23): the compose "traffic" profile container.
+  traffic:
+    container-name: ${CHAOS_TRAFFIC_CONTAINER:jl-traffic}
+    stop-grace-seconds: ${CHAOS_TRAFFIC_STOP_GRACE_SECONDS:5}
   annotation:
     # Best-effort Grafana annotations; failures are logged, never fatal.
     enabled: ${CHAOS_ANNOTATION_ENABLED:true}

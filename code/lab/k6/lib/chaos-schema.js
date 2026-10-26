@@ -11,6 +11,8 @@ export const ALLOWED_ACTIONS = ['kill', 'start', 'restart', 'freeze', 'resume'];
 export const TTL_ACTIONS = ['kill', 'freeze'];
 export const DEFAULT_TARGET_PATTERN = '^jl-app-[0-9]+$';
 export const DATASTORE_TARGET_PATTERN = /(mysql|redis|rabbit|mongo|postgres)/i;
+/** Optional per-step teaching block shown by the lab console (现象/根因/处方/预期曲线). */
+export const EXPLAIN_FIELDS = ['symptom', 'rootCause', 'fix', 'expectation'];
 
 function fail(source, message) {
   throw new Error(`[k6/chaos] ${source}: ${message}`);
@@ -39,6 +41,24 @@ function requirePositiveNumber(source, field, value) {
     fail(source, `${field} must be a positive number, got ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+/** Optional 现象/根因/处方/预期曲线 block; normalizes an empty block to null. */
+function optionalExplain(source, label, value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value)) {
+    fail(source, `${label}.explain must be an object when present`);
+  }
+  const block = {};
+  let filled = false;
+  for (const field of EXPLAIN_FIELDS) {
+    const text = optionalString(source, `${label}.explain.${field}`, value[field]);
+    block[field] = text;
+    filled = filled || text !== null;
+  }
+  return filled ? Object.freeze(block) : null;
 }
 
 /**
@@ -148,6 +168,7 @@ export function validateScenario(input, options) {
       ttlSeconds,
       title: optionalString(source, `${label}.title`, raw.title),
       text: optionalString(source, `${label}.text`, raw.text),
+      explain: optionalExplain(source, label, raw.explain),
     });
   });
 

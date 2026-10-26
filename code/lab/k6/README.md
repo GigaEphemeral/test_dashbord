@@ -1,4 +1,4 @@
-# k6 base scenarios (M2-1), bench/compare/D9 (M2-2) and chaos timeline (M2-4a)
+# k6 base scenarios (M2-1), bench/compare/D9 (M2-2), chaos timeline (M2-4a) and background traffic (M2-5)
 
 This directory is the load-testing foundation for the HA lab: one shared
 config/HTTP/flow library, five base scenarios, a dockerized single-scenario
@@ -6,7 +6,9 @@ runner and Prometheus remote write. Task 20a adds the lab reset, the
 `bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Task 20b
 adds run comparison (`compare.sh`) and the D9 bench dashboard. Task 22a adds
 the data-driven chaos timeline (`ha-failover.js` + `lib/chaos*.js`) that
-replays `code/lab/scenarios/*.json` against the chaos-controller.
+replays `code/lab/scenarios/*.json` against the chaos-controller. Task 23 adds
+the console-driven background load (`traffic.js` + the profile-gated
+`jl-traffic` compose service).
 
 ## Layout
 
@@ -20,6 +22,7 @@ code/lab/
 │   ├── lib/chaos.js           # controller client, chaos_events counter, loader
 │   ├── scenarios/{smoke,load,stress,spike,soak}.js
 │   ├── scenarios/ha-failover.js  # product load + chaos timeline + teardown
+│   ├── scenarios/traffic.js      # console-driven background read load (M2-5)
 │   ├── test/chaos-schema.test.mjs  # node --test schema regression suite
 │   ├── run.sh                 # dockerized scenario runner (+ summary export)
 │   ├── reports/<run_id>/      # generated archives (gitignored)
@@ -155,6 +158,50 @@ The controller also exposes `chaos_actions_total{action,target,result}` and
 `http_req_duration{flow:chaos}` covers controller latency and does not affect
 the product thresholds.
 
+## Interactive background traffic (M2-5)
+
+`scenarios/traffic.js` is the load the experiment console keeps running while
+you walk through a scenario: constant VUs doing `login → product read` with a
+think time, so the dashboards show real traffic while you pause, read logs and
+compare before/after a fault. It only reads the catalog, so it never consumes
+seckill stock and does not need a `reset-lab.sh` between wizard steps.
+
+The container is defined in compose (`code/lab/docker/compose.base.yml`,
+service `traffic`, container `jl-traffic`) under the `traffic` profile. Profile
+gating keeps the default `docker compose config --services` count at 16, so
+`verify.sh`, `bench.sh` and `up.sh` are unaffected; `up.sh` creates the
+container stopped, and `down.sh` removes it.
+
+Start and stop it from the console, or with curl:
+
+```bash
+# created but stopped after up.sh
+curl -X POST -H "X-Lab-Token: $LAB_TOKEN" http://localhost:8080/lab-api/lab/traffic/start
+curl -H "X-Lab-Token: $LAB_TOKEN" http://localhost:8080/lab-api/lab/traffic/state
+curl -X POST -H "X-Lab-Token: $LAB_TOKEN" http://localhost:8080/lab-api/lab/traffic/stop
+# or without the controller: docker start jl-traffic / docker stop jl-traffic
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TRAFFIC_VUS` | `50` | Constant VUs (`< 1` is rejected at init). |
+| `TRAFFIC_DURATION` | `30m` | How long the run keeps generating load. |
+| `TRAFFIC_BASE_URL` | `http://nginx` | Entry point inside `jl-net`. |
+| `TRAFFIC_PRODUCT_ID` | `1` | Product read each iteration. |
+| `TRAFFIC_USER_PREFIX` | `traffic` | Login user prefix, keeps traffic users out of the way of `k6-*` bench users. |
+| `TRAFFIC_THINK_TIME` | `1s` | Sleep per iteration. |
+| `TRAFFIC_RUN_ID` | `console` | `run_id` tag on the emitted metrics. |
+| `CHAOS_TRAFFIC_CONTAINER` | `jl-traffic` | Name the controller starts/stops. |
+| `CHAOS_TRAFFIC_STOP_GRACE_SECONDS` | `5` | Graceful stop window handed to the Docker API. |
+
+Traffic is deliberately **not** a chaos action: it has no TTL to revert, and
+pausing the guide neither freezes the load nor keeps generating it behind your
+back. `TRAFFIC_DURATION` is a ceiling, not a hard stop — if the wizard ends
+first, stop the traffic from the console (or `docker stop jl-traffic`).
+`bench.sh` refuses to archive a run while the traffic service is generating
+load, so baselines stay comparable; `BENCH_ALLOW_TRAFFIC=1` is the escape hatch
+for a deliberately loaded bench.
+
 ## Bench runner and lab reset (M2-2a)
 
 `bench.sh` is the repeatable entry point: it checks the stack (16 compose
@@ -283,6 +330,7 @@ run manifest are deferred to Task 21/22 (chaos).
 | `spike.js` | 50 baseline → 800 VU for 60s, then down | seckill product `SECKILL_PRODUCT_ID` | 5xx/error < 1%; 409/429 are expected and counted |
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
 | `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
+| `traffic.js` | `TRAFFIC_VUS=50` constant for `TRAFFIC_DURATION=30m` | login → product read only (no stock consumed) | errors < 1%, product P95/P99 from Task 19; started/stopped from the console |
 
 Smoke uses `per-vu-iterations` with `SMOKE_ITERATIONS=1` so one run creates
 exactly one order and one seckill attempt. It does not loop for the full 30s;

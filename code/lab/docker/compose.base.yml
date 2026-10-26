@@ -251,6 +251,11 @@ services:
       # Task 22b: interactive guide reads the same scenario JSON as k6.
       CHAOS_GUIDE_SCENARIO_DIR: ${CHAOS_GUIDE_SCENARIO_DIR:-/app/scenarios}
       CHAOS_GUIDE_TARGET_PATTERN: ${CHAOS_GUIDE_TARGET_PATTERN:-^jl-app-[0-9]+$}
+      # Task 23: manual (lab default) leaves injected faults in place when the
+      # guide finishes so the operator can inspect them; auto reverts at once.
+      LAB_RESET_MODE: ${LAB_RESET_MODE:-manual}
+      CHAOS_TRAFFIC_CONTAINER: ${CHAOS_TRAFFIC_CONTAINER:-jl-traffic}
+      CHAOS_TRAFFIC_STOP_GRACE_SECONDS: ${CHAOS_TRAFFIC_STOP_GRACE_SECONDS:-5}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
@@ -271,6 +276,35 @@ services:
       timeout: 3s
       retries: 20
       start_period: 20s
+
+  # Interactive background traffic (Task 23). Profile-gated so the default stack
+  # never pays for it: up.sh only creates the container and the lab console
+  # starts/stops it through chaos-controller (/lab/traffic/**). Reads only, so it
+  # never consumes seckill stock; formal load runs still go through bench.sh.
+  traffic:
+    image: ${K6_IMAGE:-grafana/k6:1.3.0}
+    container_name: jl-traffic
+    restart: "no"
+    profiles: ["traffic"]
+    mem_limit: 256m
+    # The k6 image's entrypoint is `k6`, so the command carries only its args.
+    command: ["run", "--quiet", "/k6/scenarios/traffic.js"]
+    environment:
+      TZ: ${TZ}
+      BASE_URL: ${TRAFFIC_BASE_URL:-http://nginx}
+      PRODUCT_ID: ${TRAFFIC_PRODUCT_ID:-1}
+      USER_PREFIX: ${TRAFFIC_USER_PREFIX:-traffic}
+      TRAFFIC_VUS: ${TRAFFIC_VUS:-50}
+      TRAFFIC_DURATION: ${TRAFFIC_DURATION:-30m}
+      THINK_TIME: ${TRAFFIC_THINK_TIME:-1s}
+      RUN_ID: ${TRAFFIC_RUN_ID:-console}
+    volumes:
+      - ../k6:/k6:ro
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "traffic"
 
   redis-exporter:
     image: ${REDIS_EXPORTER_IMAGE}

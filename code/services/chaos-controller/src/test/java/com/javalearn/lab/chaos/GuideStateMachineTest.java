@@ -6,12 +6,14 @@ import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionView;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.config.ResetMode;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.GuideConflictException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.guide.GuideScenarioLoader;
 import com.javalearn.lab.chaos.guide.GuideService;
 import com.javalearn.lab.chaos.guide.GuideStateView;
+import com.javalearn.lab.chaos.guide.GuideStepView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -41,7 +43,9 @@ class GuideStateMachineTest {
               "durationHintSeconds": 30,
               "events": [
                 {"atSeconds": 5, "action": "kill", "target": "jl-app-3", "ttlSeconds": 15,
-                 "title": "Stop app-3", "text": "step one"},
+                 "title": "Stop app-3", "text": "step one",
+                 "explain": {"symptom": "app-3 系列全部消失", "rootCause": "实例被 kill",
+                              "fix": "Nginx 被动健康摘除", "expectation": "P95 短暂抬升后回落"}},
                 {"atSeconds": 20, "action": "start", "target": "jl-app-3",
                  "title": "Start app-3", "text": "step two"}
               ]
@@ -52,18 +56,19 @@ class GuideStateMachineTest {
     Path tempDir;
 
     private ChaosActionService chaos;
+    private ChaosProperties properties;
     private GuideService guide;
 
     @BeforeEach
     void setUp() throws IOException {
         Files.writeString(tempDir.resolve("quick-failover.json"), SCENARIO);
-        ChaosProperties properties = new ChaosProperties();
+        properties = new ChaosProperties();
         properties.getGuide().setScenarioDir(tempDir.toString());
         GuideScenarioLoader loader = new GuideScenarioLoader(new ObjectMapper(), properties);
         chaos = mock(ChaosActionService.class);
         when(chaos.activeActions()).thenReturn(List.of());
         when(chaos.stopAll()).thenReturn(new StopAllResult(0, 0, 0));
-        guide = new GuideService(loader, chaos);
+        guide = new GuideService(loader, chaos, properties);
     }
 
     @Test
@@ -74,20 +79,23 @@ class GuideStateMachineTest {
         assertThat(started.scenarioId()).isEqualTo("quick-failover");
         assertThat(started.currentStep()).isZero();
         assertThat(started.totalSteps()).isEqualTo(2);
-        assertThat(started.currentStepTitle()).isEqualTo("Stop app-3");
-        assertThat(started.steps()).containsExactly("step one", "step two");
+        assertThat(started.steps()).extracting(GuideStepView::title)
+                .containsExactly("Stop app-3", "Start app-3");
+        assertThat(started.steps().get(0).explain().symptom()).isEqualTo("app-3 系列全部消失");
+        assertThat(started.steps().get(0).ttlSeconds()).isEqualTo(15);
+        assertThat(started.steps().get(1).explain()).isNull();
         verify(chaos, never()).execute(any(), any());
 
         GuideStateView first = guide.step();
         assertThat(first.status()).isEqualTo("running");
         assertThat(first.currentStep()).isEqualTo(1);
-        assertThat(first.currentStepTitle()).isEqualTo("Start app-3");
+        assertThat(first.steps().get(1).title()).isEqualTo("Start app-3");
         verify(chaos).execute(eq("jl-app-3"), eq(new ChaosActionRequest("kill", 15)));
 
         GuideStateView second = guide.step();
         assertThat(second.status()).isEqualTo("completed");
         assertThat(second.currentStep()).isEqualTo(2);
-        assertThat(second.currentStepTitle()).isNull();
+        assertThat(second.steps()).hasSize(2);
         verify(chaos).execute(eq("jl-app-3"), eq(new ChaosActionRequest("start", null)));
     }
 
@@ -183,6 +191,66 @@ class GuideStateMachineTest {
         verify(chaos).stopAll();
         verify(chaos).resume();
         assertThat(guide.state().status()).isEqualTo("idle");
+    }
+
+    @Test
+    void skipMovesPastAnEventWithoutExecutingIt() {
+        guide.start("quick-failover");
+
+        GuideStateView skipped = guide.skip();
+
+        assertThat(skipped.status()).isEqualTo("running");
+        assertThat(skipped.currentStep()).isEqualTo(1);
+        assertThat(skipped.steps().get(1).title()).isEqualTo("Start app-3");
+        verify(chaos, never()).execute(any(), any());
+
+        GuideStateView afterLast = guide.skip();
+        assertThat(afterLast.status()).isEqualTo("completed");
+        assertThat(afterLast.currentStep()).isEqualTo(2);
+        verify(chaos, never()).execute(any(), any());
+    }
+
+    @Test
+    void skipIsOnlyAllowedWhileRunning() {
+        assertThatThrownBy(guide::skip).isInstanceOf(GuideConflictException.class);
+
+        guide.start("quick-failover");
+        guide.pause();
+        assertThatThrownBy(guide::skip)
+                .isInstanceOf(GuideConflictException.class)
+                .hasMessageContaining("paused");
+    }
+
+    @Test
+    void autoResetModeRevertsFaultsWhenTheRunEnds() {
+        properties.setResetMode(ResetMode.AUTO);
+        guide.start("quick-failover");
+        guide.step();
+        verify(chaos, never()).stopAll();
+
+        guide.step();
+
+        verify(chaos).stopAll();
+        assertThat(guide.state().status()).isEqualTo("completed");
+        assertThat(guide.state().resetMode()).isEqualTo("auto");
+    }
+
+    @Test
+    void autoResetModeRevertsFaultsAfterAFailedStep() {
+        properties.setResetMode(ResetMode.AUTO);
+        guide.start("quick-failover");
+        when(chaos.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
+                .thenThrow(new IllegalStateException("docker down"));
+
+        assertThatThrownBy(() -> guide.step()).isInstanceOf(IllegalStateException.class);
+
+        verify(chaos).stopAll();
+        assertThat(guide.state().status()).isEqualTo("failed");
+    }
+
+    @Test
+    void stateReportsTheConfiguredResetMode() {
+        assertThat(guide.state().resetMode()).isEqualTo("manual");
     }
 
     @Test

@@ -281,6 +281,12 @@ export const config = {
     vus: integer('SOAK_VUS', 100, 1),
     duration: duration('SOAK_DURATION', '30m'),
   },
+  // Interactive background load (Task 23): started/stopped from the console,
+  // product reads only so it never consumes seckill stock.
+  traffic: {
+    vus: integer('TRAFFIC_VUS', 50, 1),
+    duration: duration('TRAFFIC_DURATION', '30m'),
+  },
   thresholds: {
     p95Ms,
     p99Ms,

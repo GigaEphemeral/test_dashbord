@@ -211,6 +211,42 @@ class GuideScenarioLoaderTest {
     }
 
     @Test
+    void parsesOptionalExplainBlockAndTreatsAnEmptyOneAsAbsent() throws IOException {
+        write("quick-failover.json", VALID_QUICK.replace(
+                "\"title\": \"Stop app-3\", \"text\": \"TTL start\"",
+                "\"title\": \"Stop app-3\", \"text\": \"TTL start\","
+                        + " \"explain\": {\"symptom\": \"app-3 指标消失\", \"rootCause\": \"实例被停止\"}"));
+
+        var event = loader.load("quick-failover").events().get(0);
+
+        assertThat(event.explain().symptom()).isEqualTo("app-3 指标消失");
+        assertThat(event.explain().rootCause()).isEqualTo("实例被停止");
+        assertThat(event.explain().fix()).isNull();
+        assertThat(event.explain().expectation()).isNull();
+
+        write("quick-failover.json", VALID_QUICK.replace(
+                "\"title\": \"Stop app-3\", \"text\": \"TTL start\"", "\"explain\": {}"));
+        assertThat(loader.load("quick-failover").events().get(0).explain()).isNull();
+    }
+
+    @Test
+    void rejectsMalformedExplainBlocks() throws IOException {
+        write("quick-failover.json", VALID_QUICK.replace(
+                "\"title\": \"Stop app-3\", \"text\": \"TTL start\"",
+                "\"title\": \"Stop app-3\", \"explain\": \"app-3 指标消失\""));
+        assertThatThrownBy(() -> loader.load("quick-failover"))
+                .isInstanceOf(InvalidScenarioException.class)
+                .hasMessageContaining("explain must be an object");
+
+        write("quick-failover.json", VALID_QUICK.replace(
+                "\"title\": \"Stop app-3\", \"text\": \"TTL start\"",
+                "\"title\": \"Stop app-3\", \"explain\": {\"fix\": \"  \"}"));
+        assertThatThrownBy(() -> loader.load("quick-failover"))
+                .isInstanceOf(InvalidScenarioException.class)
+                .hasMessageContaining("explain.fix must be a non-empty string");
+    }
+
+    @Test
     void acceptsIntegerValuedDecimalsLikeK6() throws IOException {
         // JS JSON parses 1.0 / 15.0 as the integers 1 / 15 and k6 accepts them;
         // the controller must not reject the same file the k6 driver validates.

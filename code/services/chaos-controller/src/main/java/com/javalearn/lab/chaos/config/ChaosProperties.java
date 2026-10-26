@@ -34,9 +34,14 @@ public class ChaosProperties {
     /** Core threads of the chaos scheduler (TTL reverts + watchdog + readiness probes). */
     private int schedulerThreads = 4;
 
+    /** Fault cleanup when the interactive guide reaches a terminal state. */
+    private ResetMode resetMode = ResetMode.MANUAL;
+
     private final Annotation annotation = new Annotation();
 
     private final Guide guide = new Guide();
+
+    private final Traffic traffic = new Traffic();
 
     public int getDefaultTtlSeconds() {
         return defaultTtlSeconds;
@@ -94,6 +99,14 @@ public class ChaosProperties {
         this.schedulerThreads = schedulerThreads;
     }
 
+    public ResetMode getResetMode() {
+        return resetMode;
+    }
+
+    public void setResetMode(ResetMode resetMode) {
+        this.resetMode = resetMode;
+    }
+
     public Annotation getAnnotation() {
         return annotation;
     }
@@ -102,9 +115,12 @@ public class ChaosProperties {
         return guide;
     }
 
+    public Traffic getTraffic() {
+        return traffic;
+    }
+
     /** Interactive guide (Task 22b): scenario directory + target allow-list. */
     public static class Guide {
-
         /** Directory holding shared scenario JSON; compose mounts it read-only. */
         private String scenarioDir = "/app/scenarios";
 
@@ -125,6 +141,37 @@ public class ChaosProperties {
 
         public void setTargetPattern(String targetPattern) {
             this.targetPattern = targetPattern;
+        }
+    }
+
+    /**
+     * Background traffic (Task 23): the console starts/stops one fixed
+     * compose-managed k6 container. It is deliberately not a chaos action - a
+     * traffic container has no TTL revert, and a paused guide must not leave
+     * load running or revert it early.
+     */
+    public static class Traffic {
+
+        /** Container name created by compose under the {@code traffic} profile. */
+        private String containerName = "jl-traffic";
+
+        /** Docker stop grace for k6; SIGTERM makes k6 shut down gracefully. */
+        private int stopGraceSeconds = 5;
+
+        public String getContainerName() {
+            return containerName;
+        }
+
+        public void setContainerName(String containerName) {
+            this.containerName = containerName;
+        }
+
+        public int getStopGraceSeconds() {
+            return stopGraceSeconds;
+        }
+
+        public void setStopGraceSeconds(int stopGraceSeconds) {
+            this.stopGraceSeconds = stopGraceSeconds;
         }
     }
 

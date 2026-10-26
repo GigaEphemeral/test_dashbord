@@ -44,6 +44,12 @@ public class GuideController {
         return Result.success(guideService.step());
     }
 
+    /** Advances past the current event without executing it. */
+    @PostMapping("/skip")
+    public Result<GuideStateView> skip() {
+        return Result.success(guideService.skip());
+    }
+
     @PostMapping("/pause")
     public Result<GuideStateView> pause() {
         return Result.success(guideService.pause());

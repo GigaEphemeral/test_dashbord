@@ -3,6 +3,8 @@ package com.javalearn.lab.chaos.guide;
 import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.StopAllResult;
+import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.config.ResetMode;
 import com.javalearn.lab.chaos.error.GuideConflictException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import org.slf4j.Logger;
@@ -16,7 +18,7 @@ import java.util.List;
  *
  * <pre>
  * IDLE/COMPLETED/FAILED --start--&gt; RUNNING
- * RUNNING --step (last step)--&gt; COMPLETED
+ * RUNNING --step|skip (last step)--&gt; COMPLETED
  * RUNNING --step failure--&gt; FAILED
  * RUNNING --pause--&gt; PAUSED --resume--&gt; RUNNING
  * any --reset--&gt; IDLE (stop-all + unfreeze)
@@ -24,8 +26,15 @@ import java.util.List;
  *
  * <p>{@code step} executes exactly one scenario event through
  * {@link ChaosActionService}, so the existing whitelist, TTL, annotation and
- * metrics behavior is reused. A failed step leaves the run FAILED without an
- * automatic rollback; {@code reset} is the explicit stop-all.</p>
+ * metrics behavior is reused; {@code skip} advances the same cursor without
+ * executing, which is how the console walks a timeline it does not want to
+ * trigger. A failed step leaves the run FAILED without an automatic rollback;
+ * {@code reset} is the explicit stop-all.</p>
+ *
+ * <p>{@code chaos.reset-mode} decides what happens at a terminal state:
+ * {@code manual} (default) leaves every injected fault running so the operator
+ * can read logs and dashboards, {@code auto} reverts them through stop-all the
+ * moment the guide completes or fails.</p>
  *
  * <p>State is in memory and per chaos-controller instance. The lab runs a
  * single controller, so no replication is needed; a restart resets the guide to
@@ -38,12 +47,15 @@ public class GuideService {
 
     private final GuideScenarioLoader scenarioLoader;
     private final ChaosActionService chaosActionService;
+    private final ChaosProperties properties;
 
     private Run run = Run.idle();
 
-    public GuideService(GuideScenarioLoader scenarioLoader, ChaosActionService chaosActionService) {
+    public GuideService(GuideScenarioLoader scenarioLoader, ChaosActionService chaosActionService,
+                        ChaosProperties properties) {
         this.scenarioLoader = scenarioLoader;
         this.chaosActionService = chaosActionService;
+        this.properties = properties;
     }
 
     public List<GuideScenarioSummary> scenarios() {
@@ -73,13 +85,10 @@ public class GuideService {
 
     /** Executes the next scenario event; exactly one action per call. */
     public synchronized GuideStateView step() {
-        if (run.status != GuideStatus.RUNNING) {
-            throw new GuideConflictException("Guide is " + run.status.wireName()
-                    + "; step is only allowed while running");
-        }
+        requireRunning("step");
         GuideScenario scenario = run.scenario;
-        if (scenario == null || run.currentStep >= scenario.stepCount()) {
-            run.status = GuideStatus.COMPLETED;
+        if (run.currentStep >= scenario.stepCount()) {
+            complete();
             return view();
         }
         GuideEvent event = scenario.events().get(run.currentStep);
@@ -91,14 +100,57 @@ public class GuideService {
             run.lastError = e.getMessage();
             log.warn("Guide step {} ({} on {}) failed: {}", run.currentStep, event.action(),
                     event.target(), e.toString());
+            applyResetMode("failed");
             throw e;
         }
-        run.currentStep++;
-        if (run.currentStep >= scenario.stepCount()) {
-            run.status = GuideStatus.COMPLETED;
-            log.info("Guide completed: scenario={} steps={}", scenario.id(), scenario.stepCount());
-        }
+        advance();
         return view();
+    }
+
+    /**
+     * Moves past the current event without executing it. The console uses this
+     * to demonstrate a timeline it does not want to trigger in full.
+     */
+    public synchronized GuideStateView skip() {
+        requireRunning("skip");
+        GuideEvent event = run.scenario.events().get(run.currentStep);
+        log.info("Guide skipped step {}: {} on {}", run.currentStep, event.action(), event.target());
+        advance();
+        return view();
+    }
+
+    private void requireRunning(String action) {
+        if (run.status != GuideStatus.RUNNING) {
+            throw new GuideConflictException("Guide is " + run.status.wireName()
+                    + "; " + action + " is only allowed while running");
+        }
+    }
+
+    private void advance() {
+        run.currentStep++;
+        if (run.currentStep >= run.scenario.stepCount()) {
+            complete();
+        }
+    }
+
+    private void complete() {
+        run.status = GuideStatus.COMPLETED;
+        log.info("Guide completed: scenario={} steps={}", run.scenario.id(), run.scenario.stepCount());
+        applyResetMode("completed");
+    }
+
+    /**
+     * {@code chaos.reset-mode=auto} reverts every tracked fault once the run is
+     * over; {@code manual} (the lab default) deliberately leaves the fault in
+     * place so the operator can pause on it, read logs and compare dashboards.
+     */
+    private void applyResetMode(String reason) {
+        if (properties.getResetMode() != ResetMode.AUTO) {
+            return;
+        }
+        StopAllResult result = chaosActionService.stopAll();
+        log.info("Guide auto-revert after {} (reset-mode=auto): reverted={} failed={} pending={}",
+                reason, result.reverted(), result.failed(), result.pending());
     }
 
     /**
@@ -150,30 +202,19 @@ public class GuideService {
     private GuideStateView view() {
         GuideScenario scenario = run.scenario;
         int total = scenario == null ? 0 : scenario.stepCount();
-        String currentTitle = null;
-        String currentText = null;
-        if (scenario != null && run.currentStep < total) {
-            GuideEvent event = scenario.events().get(run.currentStep);
-            currentTitle = event.title();
-            currentText = event.text();
-        }
-        List<String> steps = scenario == null
+        List<GuideStepView> steps = scenario == null
                 ? List.of()
-                : scenario.events().stream()
-                        .map(event -> event.text() != null ? event.text()
-                                : event.title() != null ? event.title() : "")
-                        .toList();
+                : scenario.events().stream().map(GuideStepView::of).toList();
         return new GuideStateView(
                 scenario == null ? null : scenario.id(),
                 scenario == null ? null : scenario.name(),
                 run.status.wireName(),
                 run.currentStep,
                 total,
-                currentTitle,
-                currentText,
                 steps,
                 chaosActionService.activeActions().size(),
-                run.lastError);
+                run.lastError,
+                properties.getResetMode().wireName());
     }
 
     private static final class Run {

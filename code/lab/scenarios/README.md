@@ -1,9 +1,10 @@
 # Chaos scenario JSON (schema v1)
 
 Shared fault timeline consumed by the k6 driver
-(`code/lab/k6/scenarios/ha-failover.js`), the future operation console
-(Task 22b/23) and any other lab tooling. A scenario is **data**, not code: the
-same file drives the interactive guide and the automated k6 run.
+(`code/lab/k6/scenarios/ha-failover.js`) and the operation console
+(`GET /lab/guide/scenarios` → `POST /lab/guide/step`, Task 23) and any other lab
+tooling. A scenario is **data**, not code: the same file drives the interactive
+guide and the automated k6 run.
 
 ## Files
 
@@ -22,7 +23,8 @@ same file drives the interactive guide and the automated k6 run.
   "description": "Two-step application-tier drill...",
   "durationHintSeconds": 240,
   "events": [
-    {"atSeconds": 60, "action": "kill", "target": "jl-app-1", "ttlSeconds": 60, "title": "停止 app-1", "text": "..."},
+    {"atSeconds": 60, "action": "kill", "target": "jl-app-1", "ttlSeconds": 60, "title": "停止 app-1", "text": "...",
+     "explain": {"symptom": "...", "rootCause": "...", "fix": "...", "expectation": "..."}},
     {"atSeconds": 120, "action": "freeze", "target": "jl-app-2", "ttlSeconds": 30, "title": "冻结 app-2", "text": "..."},
     {"atSeconds": 150, "action": "resume", "target": "jl-app-2", "title": "恢复 app-2", "text": "..."}
   ]
@@ -50,6 +52,7 @@ same file drives the interactive guide and the automated k6 run.
 | `ttlSeconds` | kill/freeze only | integer > 0 | Auto-revert window. `kill` → `start`, `freeze` → `SIGCONT`. Must be absent for `start`/`restart`/`resume`. |
 | `title` | no | string | Short label shown in the console timeline. |
 | `text` | no | string | One-line explanation shown next to the event. |
+| `explain` | no | object | 现象/根因/处方/预期曲线 block printed under the pending step in the console. Keys `symptom`, `rootCause`, `fix`, `expectation`, each an optional non-empty string; an all-empty block reads as absent. |
 
 ### Action semantics
 
@@ -67,7 +70,8 @@ Enforced by `validateScenario()` in `code/lab/k6/lib/chaos-schema.js` (pure JS,
 no k6 imports, so it runs under Node and inside k6):
 
 1. `schemaVersion === 1`.
-2. `id`/`name` non-empty; `description`/`title`/`text` strings when present.
+2. `id`/`name` non-empty; `description`/`title`/`text` strings when present;
+   `explain` (when present) is an object whose four fields are non-empty strings.
 3. `durationHintSeconds` is a positive finite number when present.
 4. `events` is a non-empty array, sorted by `atSeconds` (non-decreasing).
 5. `atSeconds` is a positive finite number; two events may not share the same

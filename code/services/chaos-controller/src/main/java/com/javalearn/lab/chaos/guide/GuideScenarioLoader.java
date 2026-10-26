@@ -273,10 +273,29 @@ public class GuideScenarioLoader {
 
             events.add(new GuideEvent(atSeconds, action, target, ttlSeconds,
                     optionalText(source, label + ".title", event.get("title")),
-                    optionalText(source, label + ".text", event.get("text"))));
+                    optionalText(source, label + ".text", event.get("text")),
+                    optionalExplain(source, label, event.get("explain"))));
         }
 
         return new GuideScenario(schemaVersion, id, name, description, durationHintSeconds, events);
+    }
+
+    /** Optional 现象/根因/处方/预期曲线 block; an all-empty block reads as absent. */
+    private static GuideStepExplain optionalExplain(String source, String label, JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!node.isObject()) {
+            throw invalid(source, label + ".explain must be an object when present");
+        }
+        String symptom = optionalText(source, label + ".explain.symptom", node.get("symptom"));
+        String rootCause = optionalText(source, label + ".explain.rootCause", node.get("rootCause"));
+        String fix = optionalText(source, label + ".explain.fix", node.get("fix"));
+        String expectation = optionalText(source, label + ".explain.expectation", node.get("expectation"));
+        if (symptom == null && rootCause == null && fix == null && expectation == null) {
+            return null;
+        }
+        return new GuideStepExplain(symptom, rootCause, fix, expectation);
     }
 
     private static String requireText(String source, String field, JsonNode node) {

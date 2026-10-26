@@ -11,7 +11,13 @@
       "target": "jl-app-3",
       "ttlSeconds": 15,
       "title": "停止 app-3",
-      "text": "jl-app-3 停止 15s，由 app-1 / app-2 继续服务；TTL 到点自动 start。"
+      "text": "jl-app-3 停止 15s，由 app-1 / app-2 继续服务；TTL 到点自动 start。",
+      "explain": {
+        "symptom": "jl-app-3 的指标序列在停止点后消失，Nginx access log 出现 upstream refused/502，D2 的请求量集中到 app-1 / app-2。",
+        "rootCause": "实例被停止后 Nginx 仍按静态 upstream 轮询，命中已下线端口的第一个请求必然失败。",
+        "fix": "被动健康检查（max_fails / fail_timeout）把故障节点摘除，TTL 到点自动 start 重新纳管；对使用者只有一次首个请求的抖动。",
+        "expectation": "product P95 在 15s 窗口内小幅抬升后回落到基线，错误率峰值不超过 k6 的 1% 阈值。"
+      }
     }
   ]
 }

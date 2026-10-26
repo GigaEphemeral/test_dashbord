@@ -11,7 +11,13 @@
       "target": "jl-app-1",
       "ttlSeconds": 60,
       "title": "停止 app-1",
-      "text": "jl-app-1 停止 60s，Nginx 将流量切到 app-2 / app-3；TTL 到点自动 start。"
+      "text": "jl-app-1 停止 60s，Nginx 将流量切到 app-2 / app-3；TTL 到点自动 start。",
+      "explain": {
+        "symptom": "app-1 的线程/内存/QPS 序列在停止点断裂，Nginx 出现一段 upstream refused，app-2 / app-3 的请求量各上升约一半。",
+        "rootCause": "负载均衡只认静态 upstream 列表，节点宕机后仍会被轮询到；没有主动健康检查就必然有请求落到死节点。",
+        "fix": "被动健康检查在 fail_timeout 内摘除 app-1，TTL 到点自动 start 完成故障转移与回切；演示的是「摘除 + 保底恢复」而不是人工重启。",
+        "expectation": "错误率瞬时尖峰后回落，product P95 在 60s 窗口内略高于基线，恢复后三实例 QPS 重新均分。"
+      }
     },
     {
       "atSeconds": 120,
@@ -19,14 +25,26 @@
       "target": "jl-app-2",
       "ttlSeconds": 30,
       "title": "冻结 app-2",
-      "text": "jl-app-2 被 SIGSTOP 冻结 30s，读写请求由 app-1 / app-3 承担；TTL 是恢复保底。"
+      "text": "jl-app-2 被 SIGSTOP 冻结 30s，读写请求由 app-1 / app-3 承担；TTL 是恢复保底。",
+      "explain": {
+        "symptom": "app-2 容器仍是 running、指标继续上报，但打到它的请求全部超时；cAdvisor 显示 CPU 掉到 0，D2 活跃线程数冻结不变。",
+        "rootCause": "SIGSTOP 只暂停进程调度，TCP 连接与监听仍在，Nginx 认为节点健康，于是把请求交给一个不会响应的实例——比宕机更隐蔽。",
+        "fix": "靠请求超时 + 熔断（Resilience4j）在应用层识别挂死；操作上用显式 resume 或 TTL 保底恢复，绝不靠重启。",
+        "expectation": "冻结窗口内出现 504/超时限流尖峰，app-1 / app-3 QPS 抬升，resume 后错误率与 P95 立即回落到基线。"
+      }
     },
     {
       "atSeconds": 150,
       "action": "resume",
       "target": "jl-app-2",
       "title": "恢复 app-2",
-      "text": "对 jl-app-2 发送 SIGCONT；即使 TTL 已先触发，resume 仍然幂等。"
+      "text": "对 jl-app-2 发送 SIGCONT；即使 TTL 已先触发，resume 仍然幂等。",
+      "explain": {
+        "symptom": "app-2 的 CPU 与线程指标恢复摆动，请求量重新回到三实例均分。",
+        "rootCause": "SIGCONT 恢复进程调度，被冻结的线程继续处理已排队的连接。",
+        "fix": "resume 幂等：即使 TTL 已经先自动恢复，重复 resume 也不会再注入新故障，控制台可以放心重试。",
+        "expectation": "P95 与错误率回到基线，D2/D3 曲线在恢复点出现一次短暂上冲后平稳。"
+      }
     }
   ]
 }

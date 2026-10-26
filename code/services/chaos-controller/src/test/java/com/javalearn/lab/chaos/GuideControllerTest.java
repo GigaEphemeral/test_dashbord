@@ -7,6 +7,8 @@ import com.javalearn.lab.chaos.guide.GuideController;
 import com.javalearn.lab.chaos.guide.GuideScenarioSummary;
 import com.javalearn.lab.chaos.guide.GuideService;
 import com.javalearn.lab.chaos.guide.GuideStateView;
+import com.javalearn.lab.chaos.guide.GuideStepExplain;
+import com.javalearn.lab.chaos.guide.GuideStepView;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,6 +21,7 @@ import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -74,9 +77,14 @@ class GuideControllerTest {
                 .andExpect(jsonPath("$.data.status").value("running"))
                 .andExpect(jsonPath("$.data.currentStep").value(0))
                 .andExpect(jsonPath("$.data.totalSteps").value(2))
-                .andExpect(jsonPath("$.data.currentStepTitle").value("Stop app-3"))
                 .andExpect(jsonPath("$.data.steps.length()").value(2))
-                .andExpect(jsonPath("$.data.activeActions").value(1));
+                .andExpect(jsonPath("$.data.steps[0].title").value("Stop app-3"))
+                .andExpect(jsonPath("$.data.steps[0].explain.symptom").value("app-3 指标消失"))
+                // A boolean getter on the record would leak as an "empty" property.
+                .andExpect(jsonPath("$.data.steps[0].explain.empty").doesNotExist())
+                .andExpect(jsonPath("$.data.steps[1].explain").value(nullValue()))
+                .andExpect(jsonPath("$.data.activeActions").value(1))
+                .andExpect(jsonPath("$.data.resetMode").value("manual"));
     }
 
     @Test
@@ -96,6 +104,7 @@ class GuideControllerTest {
     @Test
     void stepPauseResumeAndResetReturnTheNewState() throws Exception {
         when(guideService.step()).thenReturn(view("completed", 2));
+        when(guideService.skip()).thenReturn(view("running", 1));
         when(guideService.pause()).thenReturn(view("paused", 0));
         when(guideService.resume()).thenReturn(view("running", 0));
         when(guideService.reset()).thenReturn(idle());
@@ -103,6 +112,10 @@ class GuideControllerTest {
         mockMvc.perform(post("/lab/guide/step").header(TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("completed"));
+        mockMvc.perform(post("/lab/guide/skip").header(TOKEN_HEADER, TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("running"))
+                .andExpect(jsonPath("$.data.currentStep").value(1));
         mockMvc.perform(post("/lab/guide/pause").header(TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("paused"));
@@ -185,14 +198,17 @@ class GuideControllerTest {
         verify(guideService, never()).start(any());
     }
 
+    private static final List<GuideStepView> STEPS = List.of(
+            new GuideStepView(5, "kill", "jl-app-3", 15, "Stop app-3", "step one",
+                    new GuideStepExplain("app-3 指标消失", "实例被停止", "Nginx 摘除", "P95 回落后恢复")),
+            new GuideStepView(20, "start", "jl-app-3", null, "Start app-3", "step two", null));
+
     private static GuideStateView view(String status, int currentStep) {
         return new GuideStateView("quick-failover", "Quick failover", status, currentStep, 2,
-                currentStep < 2 ? "Stop app-3" : null,
-                currentStep < 2 ? "step one" : null,
-                List.of("step one", "step two"), 1, null);
+                STEPS, 1, null, "manual");
     }
 
     private static GuideStateView idle() {
-        return new GuideStateView(null, null, "idle", 0, 0, null, null, List.of(), 0, null);
+        return new GuideStateView(null, null, "idle", 0, 0, List.of(), 0, null, "manual");
     }
 }

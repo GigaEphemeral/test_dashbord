@@ -222,6 +222,17 @@ if ! docker exec jl-prometheus wget -qO- --post-data='' \
   exit 1
 fi
 
+# Background traffic (Task 23) is a profile-gated k6 container: create it without
+# starting it, so the console can start/stop it via /lab/traffic/** while the
+# default stack pays nothing for it. Non-fatal: without it the console just
+# reports the traffic container as missing, and verify/bench never enumerate it
+# because it stays outside the default profile.
+if ! traffic_output="$(compose --profile traffic create traffic 2>&1)"; then
+  echo "WARN: could not create the jl-traffic background container; the console's" \
+       "background traffic will report it as missing." >&2
+  printf '%s\n' "$traffic_output" >&2
+fi
+
 echo
 echo "java-learn-lab dev stack is up:"
 echo "  Nginx health  : http://127.0.0.1:8080/health"
@@ -230,6 +241,7 @@ echo "  RabbitMQ mgmt : http://127.0.0.1:15672 (user: ${RABBITMQ_DEFAULT_USER:-l
 echo "  MySQL (dev)   : 127.0.0.1:3306 (db: ${MYSQL_DATABASE:-seckill}, user: ${MYSQL_USER:-seckill})"
 echo "  Redis (dev)   : 127.0.0.1:6379"
 echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-labadmin})"
+echo "  Traffic       : jl-traffic is created but stopped; start it from the console or with 'docker start jl-traffic'"
 echo
 echo "Prometheus, Tempo, OTel Collector, cAdvisor and chaos-controller are internal to jl-net."
 echo "Verify with: bash $SCRIPT_DIR/verify.sh"

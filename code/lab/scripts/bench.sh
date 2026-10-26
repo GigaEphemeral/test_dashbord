@@ -45,6 +45,7 @@ READY_TIMEOUT_SECONDS="${BENCH_READY_TIMEOUT_SECONDS:-60}"
 READY_INTERVAL_SECONDS="${BENCH_READY_INTERVAL_SECONDS:-3}"
 HTTP_TIMEOUT="${BENCH_HTTP_TIMEOUT_SECONDS:-5}"
 RESET_BASELINE_STOCK="${RESET_BASELINE_STOCK:-100}"
+TRAFFIC_SERVICE="${BENCH_TRAFFIC_SERVICE:-traffic}"
 
 usage() {
   cat <<'EOF'
@@ -77,6 +78,9 @@ Environment (defaults):
   K6_IMAGE=grafana/k6:1.3.0        K6_NETWORK=jl-net
   PROM_URL=http://127.0.0.1:8080/prom
   RESET_BASELINE_STOCK=100
+  BENCH_TRAFFIC_SERVICE=traffic    BENCH_ALLOW_TRAFFIC=0 (1 = bench with the
+                                   console background traffic still generating
+                                   load)
 EOF
 }
 
@@ -278,6 +282,21 @@ prom_ready="$(compose exec -T "$NGINX_SERVICE" wget -qO- -T "$HTTP_TIMEOUT" \
   "$PROMETHEUS_READY_URL" 2>/dev/null | tr -d '\r\n' || true)"
 if [[ "$prom_ready" != *"Ready"* ]]; then
   printf 'ERROR: Prometheus %s is not ready ("%s").\n' "$PROMETHEUS_READY_URL" "$prom_ready" >&2
+  exit 1
+fi
+
+# Console background traffic (M2-5) keeps generating load, which would make an
+# archived run incomparable with the Task 19/20 baselines. Resolved through the
+# compose project (profile-gated), never a raw container name.
+traffic_id="$(compose --profile traffic ps -q "$TRAFFIC_SERVICE" 2>/dev/null | head -n 1 || true)"
+traffic_state=""
+if [[ -n "$traffic_id" ]]; then
+  traffic_state="$(docker inspect -f '{{.State.Status}}' "$traffic_id" 2>/dev/null || true)"
+fi
+if [[ "$traffic_state" == "running" && "${BENCH_ALLOW_TRAFFIC:-0}" != "1" ]]; then
+  echo "ERROR: the console background traffic ($TRAFFIC_SERVICE) is generating load." >&2
+  echo "Stop it first (console traffic button, POST /lab-api/lab/traffic/stop," >&2
+  echo "or 'docker stop $traffic_id') or set BENCH_ALLOW_TRAFFIC=1 to bench with it on." >&2
   exit 1
 fi
 

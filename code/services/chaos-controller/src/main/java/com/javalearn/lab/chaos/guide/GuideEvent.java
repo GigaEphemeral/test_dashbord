@@ -9,11 +9,13 @@ package com.javalearn.lab.chaos.guide;
  * @param ttlSeconds required for kill/freeze, {@code null} for one-shot actions
  * @param title     optional short label for the console
  * @param text      optional one-line explanation
+ * @param explain   optional 现象/根因/处方/预期曲线 block, {@code null} when absent
  */
 public record GuideEvent(double atSeconds,
                          String action,
                          String target,
                          Integer ttlSeconds,
                          String title,
-                         String text) {
+                         String text,
+                         GuideStepExplain explain) {
 }
