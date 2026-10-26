@@ -3,6 +3,8 @@ package com.javalearn.lab.seckill.admission.config;
 import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.List;
+
 /**
  * Externalized configuration for the async seckill path.
  *
@@ -56,6 +58,36 @@ public class SeckillProperties {
         if (redisson.connectionMinimumIdleSize > redisson.connectionPoolSize) {
             throw new IllegalStateException("app.seckill.redisson.connection-minimum-idle-size"
                     + " must not exceed app.seckill.redisson.connection-pool-size");
+        }
+        // Sentinel-mode knobs (Task M3-1b). The YAML wires their defaults to the
+        // generic keys above, so standalone behaviour is unchanged unless the
+        // dedicated env vars are set.
+        requirePositive(redisson.idleConnectionTimeoutMs,
+                "app.seckill.redisson.idle-connection-timeout-ms");
+        requirePositive(redisson.scanIntervalMs, "app.seckill.redisson.scan-interval-ms");
+        requirePositive(redisson.masterConnectionMinimumIdleSize,
+                "app.seckill.redisson.master-connection-minimum-idle-size");
+        requirePositive(redisson.masterConnectionPoolSize,
+                "app.seckill.redisson.master-connection-pool-size");
+        if (redisson.masterConnectionMinimumIdleSize > redisson.masterConnectionPoolSize) {
+            throw new IllegalStateException("app.seckill.redisson"
+                    + ".master-connection-minimum-idle-size must not exceed"
+                    + " app.seckill.redisson.master-connection-pool-size");
+        }
+        requirePositive(redisson.slaveConnectionMinimumIdleSize,
+                "app.seckill.redisson.slave-connection-minimum-idle-size");
+        requirePositive(redisson.slaveConnectionPoolSize,
+                "app.seckill.redisson.slave-connection-pool-size");
+        if (redisson.slaveConnectionMinimumIdleSize > redisson.slaveConnectionPoolSize) {
+            throw new IllegalStateException("app.seckill.redisson"
+                    + ".slave-connection-minimum-idle-size must not exceed"
+                    + " app.seckill.redisson.slave-connection-pool-size");
+        }
+        requirePositive(redisson.subscriptionConnectionPoolSize,
+                "app.seckill.redisson.subscription-connection-pool-size");
+        if (!List.of("MASTER", "MASTER_SLAVE", "SLAVE").contains(redisson.readMode)) {
+            throw new IllegalStateException("app.seckill.redisson.read-mode must be one of"
+                    + " MASTER, MASTER_SLAVE, SLAVE but was: " + redisson.readMode);
         }
     }
 
@@ -272,6 +304,16 @@ public class SeckillProperties {
         private int connectionMinimumIdleSize;
         private int connectionPoolSize;
         private boolean lazyInitialization;
+        // --- Sentinel-mode knobs (Task M3-1b). The YAML defaults route them to
+        // the generic keys above, so the existing env vars keep working. ---
+        private int idleConnectionTimeoutMs;
+        private int scanIntervalMs;
+        private String readMode;
+        private int masterConnectionMinimumIdleSize;
+        private int masterConnectionPoolSize;
+        private int slaveConnectionMinimumIdleSize;
+        private int slaveConnectionPoolSize;
+        private int subscriptionConnectionPoolSize;
 
         public int getConnectTimeoutMs() {
             return connectTimeoutMs;
@@ -327,6 +369,70 @@ public class SeckillProperties {
 
         public void setLazyInitialization(boolean lazyInitialization) {
             this.lazyInitialization = lazyInitialization;
+        }
+
+        public int getIdleConnectionTimeoutMs() {
+            return idleConnectionTimeoutMs;
+        }
+
+        public void setIdleConnectionTimeoutMs(int idleConnectionTimeoutMs) {
+            this.idleConnectionTimeoutMs = idleConnectionTimeoutMs;
+        }
+
+        public int getScanIntervalMs() {
+            return scanIntervalMs;
+        }
+
+        public void setScanIntervalMs(int scanIntervalMs) {
+            this.scanIntervalMs = scanIntervalMs;
+        }
+
+        public String getReadMode() {
+            return readMode;
+        }
+
+        public void setReadMode(String readMode) {
+            this.readMode = readMode;
+        }
+
+        public int getMasterConnectionMinimumIdleSize() {
+            return masterConnectionMinimumIdleSize;
+        }
+
+        public void setMasterConnectionMinimumIdleSize(int masterConnectionMinimumIdleSize) {
+            this.masterConnectionMinimumIdleSize = masterConnectionMinimumIdleSize;
+        }
+
+        public int getMasterConnectionPoolSize() {
+            return masterConnectionPoolSize;
+        }
+
+        public void setMasterConnectionPoolSize(int masterConnectionPoolSize) {
+            this.masterConnectionPoolSize = masterConnectionPoolSize;
+        }
+
+        public int getSlaveConnectionMinimumIdleSize() {
+            return slaveConnectionMinimumIdleSize;
+        }
+
+        public void setSlaveConnectionMinimumIdleSize(int slaveConnectionMinimumIdleSize) {
+            this.slaveConnectionMinimumIdleSize = slaveConnectionMinimumIdleSize;
+        }
+
+        public int getSlaveConnectionPoolSize() {
+            return slaveConnectionPoolSize;
+        }
+
+        public void setSlaveConnectionPoolSize(int slaveConnectionPoolSize) {
+            this.slaveConnectionPoolSize = slaveConnectionPoolSize;
+        }
+
+        public int getSubscriptionConnectionPoolSize() {
+            return subscriptionConnectionPoolSize;
+        }
+
+        public void setSubscriptionConnectionPoolSize(int subscriptionConnectionPoolSize) {
+            this.subscriptionConnectionPoolSize = subscriptionConnectionPoolSize;
         }
     }
 }

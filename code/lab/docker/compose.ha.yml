@@ -132,7 +132,76 @@ x-redis-ha-exporter: &redis-ha-exporter
   expose:
     - "9121"
 
+# App-tier Redis overlay (Task M3-1b). This map is UNION-merged into each app
+# service's environment when compose.ha.yml is rendered, switching BOTH Redis
+# clients to Sentinel mode via one env var. The master is discovered BY NAME;
+# no address is hardcoded (the inline defaults below are Sentinel SERVICE NAMES
+# on jl-net, resolvable only inside this project, per .env.example).
+# REDIS_PASSWORD authenticates the app against the DATA nodes (their requirepass
+# is REDIS_HA_PASSWORD); the Sentinel ports themselves are unauthenticated in
+# this topology (step-24a), so the Sentinel password stays empty.
+#
+# The three SPRING_DATA_REDIS_SENTINEL_* entries are the ONLY way the Sentinel
+# endpoints reach the app: application.yml must not carry sentinel.* keys with
+# empty defaults, because Boot's RedisConnectionConfiguration constructor
+# evaluates them eagerly and an empty master name fails every startup (dev
+# included) with "Sentinel Master Id must not be null or empty". Keys that this
+# file does not inject therefore stay absent in the dev rendering - which is
+# exactly what keeps the dev stack behaviourally byte-identical.
+x-app-redis-ha-env: &app-redis-ha-env
+  REDIS_MODE: sentinel
+  SPRING_DATA_REDIS_SENTINEL_MASTER: ${REDIS_HA_MASTER_NAME:-mymaster}
+  # Compose cannot interpolate .env into .env, so the default list is built from
+  # REDIS_HA_SENTINEL_PORT here (nested substitution works, verified with
+  # `docker compose config`): change the Sentinel port once, not twice.
+  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT},sentinel-2:${REDIS_HA_SENTINEL_PORT},sentinel-3:${REDIS_HA_SENTINEL_PORT}}
+  SPRING_DATA_REDIS_SENTINEL_PASSWORD: ${REDIS_HA_SENTINEL_PASSWORD:-}
+  REDIS_PASSWORD: ${REDIS_HA_PASSWORD:-}
+  REDIS_DATABASE: "${REDIS_DATABASE:-0}"
+
 services:
+  # --- App tier in Sentinel mode (Task M3-1b) ----------------------------------
+  # These are MERGE overlays on the always-on app services: compose unions the
+  # environment map and the networks map, so base/dev definitions stay intact
+  # and the default (no -f compose.ha.yml) rendering is untouched - exactly 16
+  # services, same env, same single-network app containers.
+  #
+  # REDIS_MODE is the single switch both Redis clients branch on
+  # (spring.data.redis.sentinel.* for Lettuce, sentinelServersConfig for
+  # Redisson). The master is discovered BY NAME (REDIS_HA_MASTER_NAME); the
+  # standalone REDIS_HOST/REDIS_PORT keys stay injected but are ignored while
+  # the mode is sentinel (the app fails startup instead of silently falling
+  # back to them).
+  #
+  # ⚠️ Why the app joins jl-sentinel-net: the data nodes announce their PINNED
+  # jl-sentinel-net IP (REDIS_HA_ANNOUNCE_IP per node), and that announced IP
+  # is exactly what Sentinel hands back to clients via
+  # get-master-addr-by-name. A jl-net-only container cannot route to
+  # 172.28.190.0/24 (measured in the M3-1a handoff, contract point 4). The two
+  # alternatives were rejected:
+  #   - announcing jl-net addresses instead would require pinning the data
+  #     nodes' jl-net IPs, which means editing base's jl-net ipam - forbidden
+  #     by M3-1a because it recreates the whole dev stack;
+  #   - announce-hostnames would drag Sentinel back into #tilt on `docker stop`
+  #     (the DNS name vanishes while the container is down).
+  # Attaching the app under the ha profile is the only change that keeps dev
+  # byte-identical AND reachable; it recreates only the three app containers,
+  # which the mode switch does anyway.
+  app-1:
+    networks:
+      jl-sentinel-net: {}
+    environment: *app-redis-ha-env
+
+  app-2:
+    networks:
+      jl-sentinel-net: {}
+    environment: *app-redis-ha-env
+
+  app-3:
+    networks:
+      jl-sentinel-net: {}
+    environment: *app-redis-ha-env
+
   # --- 1 master (no REDIS_HA_REPLICAOF_HOST) + 2 replicas -----------------------
   # Every data node owns a pinned IP on jl-sentinel-net (below) besides its jl-net
   # address, because Sentinel must monitor an IP that survives `docker stop`.

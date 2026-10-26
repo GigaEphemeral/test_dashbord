@@ -13,9 +13,27 @@ spring:
   data:
     # Redis is the product cache L2. Connections are lazy, so a Redis outage
     # degrades reads to the database instead of preventing startup.
+    # Task M3-1b: app.redis.mode (env REDIS_MODE) selects the client style for
+    # BOTH stacks (Lettuce here, Redisson below). standalone uses host/port;
+    # sentinel discovers the master BY NAME through spring.data.redis.sentinel.*
+    # and never consults host/port — nothing is hardcoded in either mode.
+    #
+    # Why the sentinel.* subtree is NOT declared here with empty defaults:
+    # Boot's RedisConnectionConfiguration constructor calls determineMode() as
+    # soon as ANY spring.data.redis.sentinel key exists, and building a
+    # RedisSentinelConfiguration from an empty master name aborts EVERY startup
+    # with "Sentinel Master Id must not be null or empty" — the dev stack and
+    # every @SpringBootTest included (measured in M3-1b). So the keys arrive only
+    # when the topology exists: compose.ha.yml maps the lab-friendly
+    # REDIS_HA_MASTER_NAME / REDIS_SENTINEL_NODES / REDIS_HA_SENTINEL_PASSWORD
+    # onto the standard SPRING_DATA_REDIS_SENTINEL_MASTER / _NODES / _PASSWORD
+    # properties. Running the jar outside compose: set REDIS_MODE=sentinel plus
+    # those three properties (System env, -D args or application-<profile>.yml).
     redis:
       host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
 
   # Async seckill order queue (Task 16). The listener starts with the context,
   # so every full-context test needs a broker
@@ -40,6 +58,22 @@ spring:
 # proxy over the routing datasource, so JPA, Flyway and health checks all use
 # the write pool unless a read-only transaction is active.
 app:
+  # Redis client mode switch (Task M3-1b, design §3.3): standalone = dev
+  # single-node jl-redis, sentinel = the ha-profile Sentinel group. ONE env var
+  # moves both the Lettuce (cache L2) and the Redisson (lock/idempotency/Lua/
+  # bloom) stack; any other value fails startup. The sentinel.* keys here only
+  # size the best-effort discovery log — endpoints live in spring.data.redis.*.
+  redis:
+    mode: ${REDIS_MODE:standalone}
+    sentinel:
+      # Startup discovery window: this many SENTINEL masters probes, answered by
+      # the monitored master NAME, each logged whenever the reported address
+      # changes (daemon thread: the app boots and degrades even when the
+      # Sentinels are unreachable). Raise both knobs to widen the observation
+      # window for a failover drill without a code change.
+      discovery-report-attempts: ${REDIS_DISCOVERY_REPORT_ATTEMPTS:12}
+      discovery-report-interval-ms: ${REDIS_DISCOVERY_REPORT_INTERVAL_MS:5000}
+
   datasource:
     write:
       jdbc-url: ${DB_WRITE_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
@@ -162,6 +196,21 @@ app:
       # No Redis connection at startup: a Redis outage must not block boot
       # (Task 14 health/degradation contract) and RedisOutageCacheIT proves it.
       lazy-initialization: ${SECKILL_REDISSON_LAZY_INIT:true}
+      # --- Sentinel-mode knobs (Task M3-1b). Defaults fall back to the generic
+      # keys above, so standalone behaviour and the existing env overrides are
+      # unchanged; set the dedicated SECKILL_REDISSON_MASTER_*/SLAVE_* vars only
+      # to size the ha demo pools differently. ---
+      idle-connection-timeout-ms: ${SECKILL_REDISSON_IDLE_CONNECTION_TIMEOUT_MS:10000}
+      scan-interval-ms: ${SECKILL_REDISSON_SCAN_INTERVAL_MS:1000}
+      # MASTER = reads/ writes all go to the discovered master (strongly
+      # consistent demo semantics); switch to MASTER_SLAVE/SLAVE for the
+      # read-scaling variant without a code change.
+      read-mode: ${SECKILL_REDISSON_READ_MODE:MASTER}
+      master-connection-minimum-idle-size: ${SECKILL_REDISSON_MASTER_MIN_IDLE:${SECKILL_REDISSON_MIN_IDLE:2}}
+      master-connection-pool-size: ${SECKILL_REDISSON_MASTER_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
+      slave-connection-minimum-idle-size: ${SECKILL_REDISSON_SLAVE_MIN_IDLE:${SECKILL_REDISSON_MIN_IDLE:2}}
+      slave-connection-pool-size: ${SECKILL_REDISSON_SLAVE_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
+      subscription-connection-pool-size: ${SECKILL_REDISSON_SUBSCRIPTION_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
 
 # Resilience4j (Task 17). The Boot 3 starter binds these instances into the
 # registries; the admission service resolves them and executes them manually so
