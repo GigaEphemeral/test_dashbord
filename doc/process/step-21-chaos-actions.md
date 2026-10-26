@@ -30,7 +30,7 @@
 
 - `ConcurrentHashMap<String, ChaosAction>` 以容器名为 key：同一 target 同时只允许一个待回滚动作。
 - `ChaosAction` 用 CAS 状态机 `ACTIVE → REVERTING → REVERTED/FAILED`，TTL 任务、看门狗、stop-all 三方竞争不会重复回滚。
-- 每个 kill/freeze 在**执行 Docker 动作之前**先注册并提交 TTL 任务；Docker 动作失败则取消任务并移除记录，不会留下“无人回滚”的清单。
+- 每个 kill/freeze 在**执行 Docker 动作之前**先注册并提交 TTL 任务，但回滚在 `APPLYING`（stop/freeze 仍在进行）期间不可抢占；动作以确定失败（未生效）收尾则取消并移除记录，以不确定失败（503/传输错误）收尾则保留 FAILED 交由看门狗补发回滚，不会留下“无人回滚”的停机/冻结容器。
 - kill → 到时 `start`；freeze → 到时 `SIGCONT`；start/restart/resume 为一次性动作，不进入 active，`ttlSeconds` 被忽略。
 - 回滚成功后移除 active、计数并触发一次异步就绪探测；失败则标记 FAILED、`chaos_reverts_total{result="failed"}` 并保留在 `GET /chaos/actions`，看门狗按 `max-revert-attempts` 重试。
 - 看门狗 `scheduleAtFixedRate`：扫过期的 ACTIVE（TTL 任务丢失时的第二道保险）并重试 FAILED；`stop-all` 取消定时任务后立即 start/SIGCONT，成功项清除，失败项保留 FAILED。
@@ -76,6 +76,7 @@
 | `chaos.watchdog-interval-seconds` | `CHAOS_WATCHDOG_INTERVAL_SECONDS` | 5 | 看门狗周期（也是探测间隔） |
 | `chaos.stop-grace-seconds` | `CHAOS_STOP_GRACE_SECONDS` | 10 | Docker stop/restart 宽限 |
 | `chaos.max-revert-attempts` | `CHAOS_MAX_REVERT_ATTEMPTS` | 3 | 看门狗重试上限 |
+| `chaos.scheduler-threads` | `CHAOS_SCHEDULER_THREADS` | 4 | TTL/看门狗/就绪探测共享的调度池线程数 |
 | `chaos.annotation.enabled` | `CHAOS_ANNOTATION_ENABLED` | true | annotation 开关 |
 | `chaos.annotation.grafana-url` | `CHAOS_ANNOTATION_GRAFANA_URL` | `http://grafana:3000` | Grafana 基址（仅 YAML/compose） |
 | `chaos.annotation.user` | `GRAFANA_ADMIN_USER` | 来自 `.env` | basic auth 用户 |
@@ -92,8 +93,8 @@
 
 - **白名单优先**：所有动作都在网关 `requireLabContainer` 内二次校验 `lab=java-learn`，控制器无法触达 MySQL/Redis/RabbitMQ 或宿主上的非 lab 容器；`kill` 只做 Docker stop（带宽限），不做 `docker kill`/删卷。
 - **kill 用 stop 而不是 kill**：`restart: unless-stopped` 在手动 stop 后不会自动拉起，故障窗口完全由 TTL 控制；`docker kill` 会被策略立即重启，演示不可控。
-- **先调度后执行**：TTL 任务先提交再 stop/freeze；若 Docker 动作抛错则 cancel + 从 active 移除。反向顺序（先停再调度）在调度器拒绝时会留下永久停机容器。
-- **三方回滚竞争**：TTL 任务、看门狗、stop-all 都通过 `claimRevert()` CAS 抢占；重复调用直接返回，因此 `start`/`SIGCONT` 最多执行一次（单测断言 start 调用恰为 1 次）。
+- **先调度后执行 + APPLYING 门**：TTL 任务先提交再 stop/freeze；但 Docker 动作完成前状态是 `APPLYING`，`claimRevert()` 不放行，因此短 TTL/看门狗不会在 stop 仍在飞行时抢先 `start`（否则 304“已在运行”会被当成回滚成功，stop 完成后容器永久停机）。动作完成时若 TTL 已过期则立即补回滚。动作以 503/`DockerUnavailableException` 失败属于**结果不确定**（故障可能已生效）：保留为 FAILED、取消 TTL，由看门狗补发 start/SIGCONT；只有“确定未生效”的错误（404、容器未运行 409→400）才取消并移除记录。
+- **三方回滚竞争**：TTL 任务、看门狗、stop-all 都通过 `claimRevert()`（同一 action 监视器下的 ACTIVE/FAILED→REVERTING 抢占）竞争；重复调用直接返回，因此 `start`/`SIGCONT` 最多执行一次（单测断言 start 调用恰为 1 次）。FAILED 动作被新动作替换时，`register()` 在同一监视器内 `markSuperseded()`，旧动作此后永远无法再被回滚，不会误杀新故障。
 - **看门狗是第二保险**：常规定时任务负责按时回滚；看门狗额外扫描“已过期但仍是 ACTIVE”的动作（任务丢失/线程饿死），并重试 FAILED。FAILED 动作不会被静默移除，`GET /chaos/actions` 与 `chaos_reverts_total{result=failed}` 都能看到。
 - **404/403 先于 409**：先 inspect 再判冲突，避免把非 lab 容器的存在性通过 409 暴露；inspect 同时提供后续就绪探测的状态来源。
 - **annotation 是旁路**：动作与回滚都不依赖 Grafana；annotation 失败只 WARN。真实验收中 Grafana 正常，8 条 annotation 全部落库。
