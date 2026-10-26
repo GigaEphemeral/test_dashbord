@@ -52,8 +52,9 @@ flowchart TD
         S1 -- "monitor mymaster IP:port" --> R1
         S2 -- "monitor mymaster IP:port" --> R1
         S3 -- "monitor mymaster IP:port" --> R1
-        S1 <-. "quorum=2 互相发现" .-> S2
-        S2 <-. "quorum=2 互相发现" .-> S3
+        S1 -. "互相发现/仲裁" .-> S2
+        S2 -. "互相发现/仲裁" .-> S3
+        S3 -. "互相发现/仲裁" .-> S1
     end
 
     APP1 -- "发现主：SENTINEL masters 按名字" --> S1
@@ -74,17 +75,17 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    ENV["环境变量<br/>REDIS_MODE=standalone|sentinel"] --> PROP["RedisAccessProperties<br/>app.redis.mode"]
+    ENV["环境变量<br/>REDIS_MODE=standalone 或 sentinel"] --> PROP["RedisAccessProperties<br/>app.redis.mode"]
     PROP --> VAL{"validate()<br/>值合法？"}
     VAL -- "否" --> FAIL["启动失败<br/>IllegalStateException"]
     VAL -- "standalone" --> SA["spring.data.redis.host/port<br/>（dev 单机 jl-redis）"]
     VAL -- "sentinel" --> SE["spring.data.redis.sentinel.master/nodes/password<br/>由 compose.ha.yml 注入"]
 
-    SA --> LET["LettuceConnectionFactory<br/>RedisClientConfig#standaloneConfiguration"]
-    SA --> RED["Redisson Config<br/>SeckillRedissonConfig#applySingle<br/>useSingleServer()"]
+    SA --> LET["LettuceConnectionFactory<br/>RedisClientConfig.standaloneConfiguration"]
+    SA --> RED["Redisson Config<br/>SeckillRedissonConfig.applySingle<br/>useSingleServer()"]
 
-    SE --> LET2["LettuceConnectionFactory<br/>RedisClientConfig#sentinelConfiguration"]
-    SE --> RED2["Redisson Config<br/>SeckillRedissonConfig#applySentinel<br/>useSentinelServers()"]
+    SE --> LET2["LettuceConnectionFactory<br/>RedisClientConfig.sentinelConfiguration"]
+    SE --> RED2["Redisson Config<br/>SeckillRedissonConfig.applySentinel<br/>useSentinelServers()"]
 
     LET --> TPL["StringRedisTemplate<br/>L2 商品缓存 / 秒杀 request / 幂等 / 登录令牌 / 布隆"]
     LET2 --> TPL
@@ -200,6 +201,10 @@ sequenceDiagram
 | Lettuce 工厂 | `buildConnectionFactory` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:95` | 按模式选择类型化构造器 |
 | Lettuce 客户端参数 | `clientConfiguration` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:122` | 只接管 `timeout` 与 `shutdown-timeout` |
 | Sentinel 配置 | `sentinelConfiguration` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:148` | 主名/节点/密码，缺失即抛错 |
+| 命令超时接管 | `commandTimeout` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:126` | 仅配置时生效，否则保持框架默认 |
+| 连接超时未接管 | `connect-timeout` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:118` | 已知边界：Boot 在共享 ClientResources 注入 |
+| L1 缓存 TTL | `L1_EXPIRE_AFTER_WRITE` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/catalog/cache/TwoLevelCache.java:40` | 60s Java 常量，会掩盖切换 |
+| L2 缓存 TTL | `L2_TTL` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/catalog/cache/TwoLevelCache.java:41` | 5min Java 常量 |
 | 哨兵发现报告注册 | `app.redis.mode` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/RedisClientConfig.java:73` | `@ConditionalOnProperty` 只在 sentinel 生效 |
 | 发现线程 | `onApplicationEvent` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/SentinelMasterDiscoveryReporter.java:75` | 守护线程执行，不阻塞启动 |
 | 发现主循环 | `reportDiscovery` | `code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/redis/SentinelMasterDiscoveryReporter.java:84` | 地址变化才打日志 |
@@ -341,3 +346,4 @@ curl -sS http://127.0.0.1:8080/lab-api/chaos/actions -H "X-Lab-Token: $LAB_TOKEN
 - 步骤交接：`doc/process/step-24a-sentinel-compose.md`（拓扑与手工演练）、`doc/process/step-24b-sentinel-client.md`（双客户端与应用级演练）、`doc/process/step-24c-sentinel-targets.md`（数据存储允许名单与未做的活体验收）
 - 同目录：`05-MySQL高可用与读写路由.md`（数据层另一条 HA 链路）、`06-故障注入与实验向导.md`（TTL/看门狗/场景驱动）、`11-配置与安全边界.md`（键清单与安全边界）
 - 场景与压测：`code/lab/scenarios/README.md`、`code/lab/k6/README.md`
+- 汇总交接：`doc/process/阶段交接-2026-10-26.md`（缺陷/TODO 总表与历史硬编码清单）
