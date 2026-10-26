@@ -1,6 +1,7 @@
 package com.javalearn.lab.seckill.admission.app;
 
 import com.javalearn.lab.common.BizException;
+import com.javalearn.lab.common.BusinessException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.CreateSeckillOrderRequest;
 import com.javalearn.lab.seckill.admission.api.SeckillResponse;
@@ -140,7 +141,9 @@ class SeckillAdmissionServiceTest {
         given(lockGuard.tryLock(PRODUCT_ID)).willReturn(null);
 
         assertThatThrownBy(() -> service.admit("key-1", request(1)))
-                .isInstanceOfSatisfying(BizException.class, exception -> {
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    // Expected business outcome: BusinessException so the
+                    // circuit breaker ignores it instead of counting a failure.
                     assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.CONFLICT);
                     assertThat(exception.getMessage()).isEqualTo("Seckill lock timeout");
                 });
@@ -159,7 +162,8 @@ class SeckillAdmissionServiceTest {
                         SeckillStockStore.ReservationStatus.SOLD_OUT, 0L));
 
         assertThatThrownBy(() -> service.admit("key-1", request(1)))
-                .isInstanceOfSatisfying(BizException.class, exception -> {
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    // Expected business outcome, never a circuit breaker failure.
                     assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.CONFLICT);
                     assertThat(exception.getMessage()).isEqualTo("Sold out");
                 });
@@ -180,9 +184,13 @@ class SeckillAdmissionServiceTest {
                         SeckillStockStore.ReservationStatus.MISSING, 0L));
 
         assertThatThrownBy(() -> service.admit("key-1", request(1)))
-                .isInstanceOfSatisfying(BizException.class, exception ->
+                .isInstanceOfSatisfying(BizException.class, exception -> {
+                        // Plain BizException (not BusinessException): counted
+                        // by the circuit breaker so outages can open it.
+                        assertThat(exception).isNotInstanceOf(BusinessException.class);
                         assertThat(exception.getErrorCode())
-                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE));
+                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE);
+                });
 
         verify(idempotencyStore).release("key-1");
         verifyNoInteractions(publisher);
@@ -200,9 +208,13 @@ class SeckillAdmissionServiceTest {
                 .given(publisher).publish(any());
 
         assertThatThrownBy(() -> service.admit("key-1", request(1)))
-                .isInstanceOfSatisfying(BizException.class, exception ->
+                .isInstanceOfSatisfying(BizException.class, exception -> {
+                        // Plain BizException (not BusinessException): counted
+                        // by the circuit breaker so outages can open it.
+                        assertThat(exception).isNotInstanceOf(BusinessException.class);
                         assertThat(exception.getErrorCode())
-                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE));
+                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE);
+                });
 
         ArgumentCaptor<SeckillRequest> state = ArgumentCaptor.forClass(SeckillRequest.class);
         verify(requestStore).save(state.capture());
@@ -222,9 +234,13 @@ class SeckillAdmissionServiceTest {
                 .willThrow(new IllegalStateException("redis down"));
 
         assertThatThrownBy(() -> service.admit("key-1", request(1)))
-                .isInstanceOfSatisfying(BizException.class, exception ->
+                .isInstanceOfSatisfying(BizException.class, exception -> {
+                        // Plain BizException (not BusinessException): counted
+                        // by the circuit breaker so outages can open it.
+                        assertThat(exception).isNotInstanceOf(BusinessException.class);
                         assertThat(exception.getErrorCode())
-                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE));
+                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE);
+                });
 
         verify(idempotencyStore).release("key-1");
         verify(stockStore, never()).restore(anyLong(), anyInt());
@@ -390,7 +406,7 @@ class SeckillAdmissionServiceTest {
                         .failureRateThreshold(50)
                         .waitDurationInOpenState(Duration.ofMinutes(1))
                         .permittedNumberOfCallsInHalfOpenState(1)
-                        .ignoreExceptions(BizException.class)
+                        .ignoreExceptions(BusinessException.class)
                         .build());
         return new SeckillResilienceGuard(toggleService, rateLimiter, circuitBreaker, metrics);
     }

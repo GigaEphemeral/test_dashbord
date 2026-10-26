@@ -1,6 +1,7 @@
 package com.javalearn.lab.seckill.admission.app;
 
 import com.javalearn.lab.common.BizException;
+import com.javalearn.lab.common.BusinessException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.CreateSeckillOrderRequest;
 import com.javalearn.lab.seckill.admission.api.SeckillRequestView;
@@ -84,9 +85,15 @@ public class SeckillAdmissionService {
     /**
      * Accepts one seckill request according to the runtime mode.
      *
+     * <p>Expected business outcomes are thrown as {@link BusinessException}
+     * (ignored by the circuit breaker); every Redis/MQ/stock/publish/state
+     * fault stays a plain {@code BizException(50301)} so the circuit breaker
+     * counts it and real infrastructure outages can open the circuit.</p>
+     *
      * @throws BizException {@code 40001} invalid input, {@code 40901} sold out
-     *                      or lock timeout, {@code 42901} rate limited,
-     *                      {@code 50301} Redis/RabbitMQ failure
+     *                      or lock timeout (as {@code BusinessException}),
+     *                      {@code 42901} rate limited, {@code 50301} Redis/
+     *                      RabbitMQ failure (plain {@code BizException})
      */
     public SeckillResponse admit(String idempotencyKey, CreateSeckillOrderRequest request) {
         validate(idempotencyKey, request);
@@ -143,7 +150,10 @@ public class SeckillAdmissionService {
             }
             if (lock == null) {
                 metrics.attempt(SeckillMetrics.RESULT_LOCK_TIMEOUT);
-                throw new BizException(CommonErrorCode.CONFLICT, "Seckill lock timeout");
+                // Expected business outcome: a contention result, not a
+                // backend fault. BusinessException keeps it out of the
+                // circuit breaker's failure window.
+                throw new BusinessException(CommonErrorCode.CONFLICT, "Seckill lock timeout");
             }
         }
 
@@ -218,7 +228,8 @@ public class SeckillAdmissionService {
         if (reservation.status() == SeckillStockStore.ReservationStatus.SOLD_OUT) {
             releaseIdempotency(idempotencyKey);
             metrics.attempt(SeckillMetrics.RESULT_SOLD_OUT);
-            throw new BizException(CommonErrorCode.CONFLICT, "Sold out");
+            // Expected business outcome, never a circuit breaker failure.
+            throw new BusinessException(CommonErrorCode.CONFLICT, "Sold out");
         }
 
         SeckillRequest accepted = SeckillRequest.accepted(

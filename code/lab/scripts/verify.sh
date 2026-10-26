@@ -66,6 +66,12 @@ SECKILL_CURL_POLL_MAX_TIME="${SECKILL_CURL_POLL_MAX_TIME:-5}"
 LOGIN_TOKEN_KEY_PREFIX="${LOGIN_TOKEN_KEY_PREFIX:-login:token:}"
 LOGIN_CURL_MAX_TIME="${LOGIN_CURL_MAX_TIME:-5}"
 LAB_INTERNAL_BASE_URL="${LAB_INTERNAL_BASE_URL:-http://127.0.0.1:8080}"
+# Per-request curl budget for the Nginx lab-path probe and the polling budget
+# for the resilience4j metric series to appear in Prometheus (scrape interval
+# 5s, so a few scrape cycles are allowed by default).
+LAB_NGINX_CURL_MAX_TIME="${LAB_NGINX_CURL_MAX_TIME:-5}"
+RESILIENCE_POLL_RETRIES="${RESILIENCE_POLL_RETRIES:-30}"
+RESILIENCE_POLL_INTERVAL_SECONDS="${RESILIENCE_POLL_INTERVAL_SECONDS:-2}"
 LAB_TOGGLE_KEYS=(lock idempotency mq ratelimit circuitbreaker cache)
 
 # Task 18: Prometheus metric visibility window (scrape interval is 5s).
@@ -738,7 +744,8 @@ else
 fi
 
 # The lab API is internal only: Nginx must not proxy it (exact 404 rule).
-lab_nginx_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+lab_nginx_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  --max-time "$LAB_NGINX_CURL_MAX_TIME" \
   http://127.0.0.1:8080/lab/toggles 2>/dev/null || true)"
 if [[ "$lab_nginx_code" == "404" ]]; then
   pass "nginx does not proxy /lab/toggles (404)"
@@ -817,13 +824,13 @@ for resilience_metric in \
   resilience4j_ratelimiter_available_permissions \
   resilience4j_circuitbreaker_state; do
   resilience_body=""
-  for attempt in $(seq 1 30); do
+  for attempt in $(seq 1 "$RESILIENCE_POLL_RETRIES"); do
     resilience_body="$(prometheus_query "$resilience_metric")"
     if grep -q "\"__name__\":\"${resilience_metric}\"" <<<"$resilience_body"; then
       break
     fi
-    if (( attempt < 30 )); then
-      sleep 2
+    if (( attempt < RESILIENCE_POLL_RETRIES )); then
+      sleep "$RESILIENCE_POLL_INTERVAL_SECONDS"
     fi
   done
   if grep -q "\"__name__\":\"${resilience_metric}\"" <<<"$resilience_body"; then

@@ -1,6 +1,7 @@
 package com.javalearn.lab.seckill.admission.app;
 
 import com.javalearn.lab.common.BizException;
+import com.javalearn.lab.common.BusinessException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.SeckillResponse;
 import com.javalearn.lab.seckill.lab.config.LabToggleProperties;
@@ -86,7 +87,7 @@ class SeckillResilienceTest {
                         .failureRateThreshold(50)
                         .waitDurationInOpenState(Duration.ofMinutes(1))
                         .permittedNumberOfCallsInHalfOpenState(1)
-                        .ignoreExceptions(BizException.class)
+                        .ignoreExceptions(BusinessException.class)
                         .build());
         SeckillResilienceGuard guard = new SeckillResilienceGuard(
                 toggles, permissiveLimiter(), circuitBreaker, metrics);
@@ -106,7 +107,7 @@ class SeckillResilienceTest {
     }
 
     @Test
-    void bizExceptionIsIgnoredAndDoesNotOpenTheCircuit() {
+    void expectedBusinessExceptionIsIgnoredAndDoesNotOpenTheCircuit() {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         SeckillMetrics metrics = new SeckillMetrics(meterRegistry);
         LabToggleService toggles = toggles(true, true);
@@ -117,23 +118,68 @@ class SeckillResilienceTest {
                         .failureRateThreshold(50)
                         .waitDurationInOpenState(Duration.ofMinutes(1))
                         .permittedNumberOfCallsInHalfOpenState(1)
-                        .ignoreExceptions(BizException.class)
+                        .ignoreExceptions(BusinessException.class)
                         .build());
         SeckillResilienceGuard guard = new SeckillResilienceGuard(
                 toggles, permissiveLimiter(), circuitBreaker, metrics);
+        // The production admission path throws BusinessException for sold out.
         Supplier<SeckillResponse> soldOut = () -> {
-            throw new BizException(CommonErrorCode.CONFLICT, "Sold out");
+            throw new BusinessException(CommonErrorCode.CONFLICT, "Sold out");
         };
 
         for (int call = 0; call < 5; call++) {
             assertThatThrownBy(() -> guard.admitAsync(soldOut, () -> CREATED))
-                    .isInstanceOfSatisfying(BizException.class, exception ->
+                    .isInstanceOfSatisfying(BusinessException.class, exception ->
                             assertThat(exception.getErrorCode()).isEqualTo(CommonErrorCode.CONFLICT));
         }
 
         assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         assertThat(circuitBreaker.getMetrics().getNumberOfFailedCalls()).isZero();
+        assertThat(circuitBreaker.getMetrics().getNumberOfBufferedCalls()).isZero();
         assertThat(attempts(meterRegistry, "degraded")).isZero();
+    }
+
+    @Test
+    void infrastructureWrappedBizExceptionCountsAsFailureAndOpensTheCircuit() {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        SeckillMetrics metrics = new SeckillMetrics(meterRegistry);
+        LabToggleService toggles = toggles(true, true);
+        // Same shape as the production seckillBackend configuration.
+        CircuitBreaker circuitBreaker = CircuitBreaker.of("seckillBackend-test",
+                CircuitBreakerConfig.custom()
+                        .slidingWindowSize(10)
+                        .minimumNumberOfCalls(5)
+                        .failureRateThreshold(50)
+                        .waitDurationInOpenState(Duration.ofMinutes(1))
+                        .permittedNumberOfCallsInHalfOpenState(3)
+                        .ignoreExceptions(BusinessException.class)
+                        .build());
+        SeckillResilienceGuard guard = new SeckillResilienceGuard(
+                toggles, permissiveLimiter(), circuitBreaker, metrics);
+        // Task 16 wraps Redis/MQ/stock/publish faults as plain BizException 50301.
+        Supplier<SeckillResponse> redisDown = () -> {
+            throw new BizException(CommonErrorCode.SERVICE_UNAVAILABLE,
+                    "Seckill stock is unavailable");
+        };
+
+        // While CLOSED the 503 contract is preserved: the wrapped failure
+        // propagates to the caller but is recorded by the circuit breaker.
+        for (int call = 0; call < 5; call++) {
+            assertThatThrownBy(() -> guard.admitAsync(redisDown, () -> CREATED))
+                    .isInstanceOfSatisfying(BizException.class, exception -> {
+                        assertThat(exception).isNotInstanceOf(BusinessException.class);
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(CommonErrorCode.SERVICE_UNAVAILABLE);
+                    });
+        }
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        assertThat(circuitBreaker.getMetrics().getNumberOfFailedCalls()).isEqualTo(5L);
+        assertThat(attempts(meterRegistry, "degraded")).isZero();
+
+        // With the circuit open the next call degrades to the sync DB path.
+        assertThat(guard.admitAsync(redisDown, () -> CREATED)).isEqualTo(CREATED);
+        assertThat(attempts(meterRegistry, "degraded")).isEqualTo(1.0d);
     }
 
     @Test
@@ -237,7 +283,7 @@ class SeckillResilienceTest {
                         .failureRateThreshold(50)
                         .waitDurationInOpenState(Duration.ofMinutes(1))
                         .permittedNumberOfCallsInHalfOpenState(1)
-                        .ignoreExceptions(BizException.class)
+                        .ignoreExceptions(BusinessException.class)
                         .build());
     }
 

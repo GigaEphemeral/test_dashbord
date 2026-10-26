@@ -118,9 +118,13 @@ app:
 
 # Resilience4j (Task 17). The Boot 3 starter binds these instances into the
 # registries; the admission service resolves them and executes them manually so
-# the runtime toggles can skip protection. BizException (sold out, lock timeout,
-# invalid input, Redis/MQ 503) is ignored by the circuit breaker: expected
-# business outcomes must never open the circuit.
+# the runtime toggles can skip protection. Only BusinessException (sold out,
+# lock timeout) is ignored: the plain BizException 50301 that Task 16 uses to
+# wrap Redis/MQ/stock/publish faults IS counted, so a real infrastructure
+# outage accumulates the failure rate and opens the circuit (SeckillResilience-
+# ConfigIT proves this with the production config). The ignore check is
+# configuredClass.isAssignableFrom(thrownClass), so ignoring the subclass
+# BusinessException does not swallow its parent BizException.
 resilience4j:
   ratelimiter:
     instances:
@@ -140,7 +144,7 @@ resilience4j:
         # calculate an honest rate and keep the demo observable.
         minimum-number-of-calls: ${SECKILL_CB_MIN_CALLS:5}
         ignore-exceptions:
-          - com.javalearn.lab.common.BizException
+          - com.javalearn.lab.common.BusinessException
 
 server:
   port: 8080

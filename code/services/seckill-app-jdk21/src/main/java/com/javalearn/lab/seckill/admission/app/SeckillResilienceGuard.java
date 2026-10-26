@@ -1,6 +1,7 @@
 package com.javalearn.lab.seckill.admission.app;
 
 import com.javalearn.lab.common.BizException;
+import com.javalearn.lab.common.BusinessException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.admission.api.SeckillResponse;
 import com.javalearn.lab.seckill.lab.toggle.LabToggle;
@@ -24,11 +25,16 @@ import java.util.function.Supplier;
  * fallback is passed in as a plain supplier, so degradation can never re-enter
  * either protection (no recursion, exactly one permission check per request).</p>
  *
- * <p>{@link BizException} is ignored by the circuit breaker configuration and
- * rethrown untouched: sold out, lock timeout, invalid input and a Redis/MQ 503
- * are expected business outcomes and must not open the circuit. Any other
- * runtime failure (or an already-open circuit) degrades to the durable
- * synchronous database path and is counted as {@code degraded}.</p>
+ * <p>Exception taxonomy (Task 17 review fix): {@link BusinessException} is the
+ * circuit breaker's ignore list, so expected business outcomes (sold out, lock
+ * timeout) are rethrown untouched and never count as failures. A plain
+ * {@link BizException} with {@code 50301} is how the admission service wraps
+ * real Redis/MQ/stock/publish faults: it is rethrown as-is while the circuit
+ * is CLOSED (the HTTP 503 contract from Task 16 stays intact) but IS recorded
+ * by the circuit breaker, so a sustained infrastructure outage accumulates the
+ * failure rate, opens the circuit and the following calls degrade. Any other
+ * runtime failure (or an already-open circuit) degrades immediately to the
+ * durable synchronous database path and is counted as {@code degraded}.</p>
  */
 public final class SeckillResilienceGuard {
 
