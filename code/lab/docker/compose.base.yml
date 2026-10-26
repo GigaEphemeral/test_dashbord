@@ -249,8 +249,21 @@ services:
       CHAOS_ANNOTATION_TIMEOUT_SECONDS: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:-3}
       CHAOS_ANNOTATION_TAGS: ${CHAOS_ANNOTATION_TAGS:-}
       # Task 22b: interactive guide reads the same scenario JSON as k6.
+      # M3-1c widens the default just enough for the Sentinel drill: app
+      # instances plus jl-redis-<n>. Sentinel containers stay out on purpose
+      # (they are not datastore-shaped, so the allow-list below would not
+      # govern them); the datastore rule further restricts redis to 1-3.
       CHAOS_GUIDE_SCENARIO_DIR: ${CHAOS_GUIDE_SCENARIO_DIR:-/app/scenarios}
-      CHAOS_GUIDE_TARGET_PATTERN: ${CHAOS_GUIDE_TARGET_PATTERN:-^jl-app-[0-9]+$}
+      CHAOS_GUIDE_TARGET_PATTERN: ${CHAOS_GUIDE_TARGET_PATTERN:-^jl-(app|redis)-[0-9]$$}
+      # M3-1c closed-by-default datastore allow-list, opened in the lab compose
+      # ONLY as far as the HA drill needs: exactly jl-redis-1/2/3, whole-name
+      # matching. The code default (empty) stays refuse-all, so any deployment
+      # outside this file keeps the old safety level. `jl-redis` (dev single
+      # node), `jl-mysql`, `jl-rabbitmq`, jl-redis-1-exporter and jl-redis-10
+      # all fail this pattern: the keyword test still runs first, so none of
+      # them can slip through via a loose substring. The `$$` is Compose's
+      # literal dollar (the container sees `...$`), not part of the regex.
+      CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN: ${CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN:-^jl-redis-[1-3]$$}
       # Task 23: manual (lab default) leaves injected faults in place when the
       # guide finishes so the operator can inspect them; auto reverts at once.
       LAB_RESET_MODE: ${LAB_RESET_MODE:-manual}
