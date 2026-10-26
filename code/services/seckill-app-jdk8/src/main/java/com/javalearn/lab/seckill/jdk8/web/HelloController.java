@@ -5,8 +5,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Same path and body as the JDK 21 shell's HelloController; the instance tag is
- * what tells the two runtimes apart on one dashboard.
+ * Same path and body as the JDK 21 shell's HelloController. Note: in Prometheus
+ * the scraped {@code instance} label is the target address (the application's
+ * instance tag is overridden at scrape time unless honor_labels is set), so the
+ * common {@code app} tag — not {@code instance} — is what tells the two
+ * runtimes apart on one dashboard.
  */
 @RestController
 public class HelloController {
