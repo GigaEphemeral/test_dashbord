@@ -9,15 +9,18 @@ import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
+import com.github.dockerjava.api.model.StreamType;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.model.ContainerView;
+import com.javalearn.lab.chaos.model.ExecResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -41,6 +44,9 @@ public class DockerContainerGateway implements ContainerGateway {
     public static final String LAB_VALUE = "java-learn";
     public static final int MIN_TAIL = 1;
     public static final int MAX_TAIL = 1000;
+
+    /** Upper bound for one exec; the probe's own timeout is far smaller. */
+    public static final int MAX_EXEC_TIMEOUT_SECONDS = 300;
 
     private static final Logger log = LoggerFactory.getLogger(DockerContainerGateway.class);
     private static final long LOG_WAIT_SECONDS = 15L;
@@ -216,6 +222,99 @@ public class DockerContainerGateway implements ContainerGateway {
         } catch (RuntimeException e) {
             throw new DockerUnavailableException("Failed to signal " + containerName, e);
         }
+    }
+
+    @Override
+    public ExecResult execInContainer(String containerName,
+                                      List<String> command,
+                                      List<String> env,
+                                      String stdin,
+                                      int timeoutSeconds) {
+        if (command == null || command.isEmpty()) {
+            throw new InvalidChaosActionException("exec command must not be empty");
+        }
+        if (timeoutSeconds < 1 || timeoutSeconds > MAX_EXEC_TIMEOUT_SECONDS) {
+            throw new InvalidChaosActionException("exec timeout must be between 1 and "
+                    + MAX_EXEC_TIMEOUT_SECONDS + " seconds");
+        }
+        requireLabContainer(containerName);
+
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        boolean timedOut = false;
+        String execId;
+        try {
+            execId = dockerClient.execCreateCmd(containerName)
+                    .withAttachStdout(true)
+                    .withAttachStderr(true)
+                    .withAttachStdin(stdin != null)
+                    .withTty(false)
+                    .withCmd(command.toArray(String[]::new))
+                    .withEnv(env == null || env.isEmpty() ? List.of() : env)
+                    .exec()
+                    .getId();
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (ConflictException e) {
+            throw new InvalidChaosActionException("Container is not running: " + containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to create exec in " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to create exec in " + containerName, e);
+        }
+
+        try (ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
+            @Override
+            public void onNext(Frame frame) {
+                if (frame == null || frame.getPayload() == null) {
+                    return;
+                }
+                if (StreamType.STDERR.equals(frame.getStreamType())) {
+                    stderr.writeBytes(frame.getPayload());
+                } else {
+                    stdout.writeBytes(frame.getPayload());
+                }
+            }
+        }) {
+            dockerClient.execStartCmd(execId)
+                    .withDetach(false)
+                    .withTty(false)
+                    .withStdIn(stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)))
+                    .exec(callback);
+            timedOut = !callback.awaitCompletion(timeoutSeconds, TimeUnit.SECONDS);
+            if (timedOut) {
+                log.warn("Timed out after {}s while executing a command in {} (aborting the stream)",
+                        timeoutSeconds, containerName);
+            }
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DockerUnavailableException("Interrupted while executing a command in " + containerName, e);
+        } catch (IOException e) {
+            throw new DockerUnavailableException("Failed to close the exec stream for " + containerName, e);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException("Failed to execute a command in " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException("Failed to execute a command in " + containerName, e);
+        }
+
+        Integer exitCode = null;
+        if (!timedOut) {
+            // The stream closed, so the process is done; the inspect call is the
+            // only way Docker reports the exit status of a non-detached exec.
+            try {
+                exitCode = dockerClient.inspectExecCmd(execId).exec().getExitCode();
+            } catch (DockerException e) {
+                log.debug("Could not read the exit code of exec {} in {}: {}", execId, containerName, e.getMessage());
+            } catch (RuntimeException e) {
+                log.debug("Could not read the exit code of exec {} in {}: {}", execId, containerName, e.getMessage());
+            }
+        }
+        return new ExecResult(stdout.toString(StandardCharsets.UTF_8),
+                stderr.toString(StandardCharsets.UTF_8),
+                exitCode,
+                timedOut);
     }
 
     private void requireLabContainer(String containerName) {
