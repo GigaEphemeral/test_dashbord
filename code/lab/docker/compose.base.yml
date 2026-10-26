@@ -41,6 +41,12 @@ x-app-common: &app-common
 
 x-app-env: &app-env
   TZ: ${TZ}
+  # D7 (design 10.2): the JDK 21 instances here and the JDK 8 service below pin
+  # the same heap cap through JAVA_TOOL_OPTIONS, so throughput/P99/GC are
+  # compared under an equal -Xmx. Xmx overrides the Dockerfile's
+  # MaxRAMPercentage (which stays for standalone runs of the image); override
+  # without a rebuild to re-run a tuning sample.
+  JAVA_TOOL_OPTIONS: "${APP_JAVA_TOOL_OPTIONS:--Xmx512m}"
   # Catalog datasource (lab-only credentials; never logged by the app or scripts).
   MYSQL_HOST: mysql
   MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -227,6 +233,66 @@ services:
     environment:
       <<: *app-env
       INSTANCE_ID: app-3
+
+  # --- D7 dual-JDK comparison (design section 10): opt-in Java 8 runtime ---
+  # Profile-gated on purpose: the default render stays at 16 services and
+  # `up.sh --profile dual-jdk` renders 17 (16 + this one). No host port: it is
+  # reachable on jl-net as seckill-app-jdk8:8080, which is also the Prometheus
+  # target. It reads the same MySQL seed data as the JDK 21 instances
+  # (APP_PROFILE=mysql) so throughput/P99 are not flattered by an H2 in-memory
+  # database; set JDK8_APP_PROFILE=demo for a zero-dependency startup sample.
+  seckill-app-jdk8:
+    image: java-learn-lab/seckill-app:jdk8
+    build:
+      context: ../..
+      dockerfile: services/seckill-app-jdk8/Dockerfile
+      args:
+        OTEL_AGENT_VERSION: ${OTEL_AGENT_VERSION:-2.10.0}
+    container_name: jl-seckill-app-jdk8
+    restart: unless-stopped
+    profiles: ["dual-jdk"]
+    mem_limit: ${JDK8_MEM_LIMIT:-768m}
+    environment:
+      TZ: ${TZ}
+      APP_NAME: seckill-app-jdk8
+      APP_PROFILE: ${JDK8_APP_PROFILE:-mysql}
+      SERVER_PORT: "8080"
+      INSTANCE_ID: ${JDK8_INSTANCE_ID:-app-jdk8}
+      # The shared lab database (same rows the JDK 21 shell's Flyway created).
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # Same heap cap as the JDK 21 instances (design 10.2).
+      JAVA_TOOL_OPTIONS: "${JDK8_JAVA_TOOL_OPTIONS:--Xmx512m}"
+      # Same agent/endpoint wiring as the JDK 21 tier: startup is measured with
+      # identical instrumentation, spans land in Tempo, metrics stay on the
+      # Actuator scrape path.
+      OTEL_SERVICE_NAME: seckill-app-jdk8
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dev
+    expose:
+      - "8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "app"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 40s
 
   # --- Lab controller (Task 11): token-protected container list + log tail ---
 

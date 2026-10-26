@@ -11,7 +11,7 @@ DASHBOARD_DIST_INDEX="$DASHBOARD_DIR/dist/index.html"
 
 usage() {
   cat <<'EOF'
-Usage: up.sh [--profile dev|ha|chaos-proxy]
+Usage: up.sh [--profile dev|ha|chaos-proxy|dual-jdk]
 
 Start the java-learn-lab infrastructure stack.
 
@@ -27,6 +27,12 @@ Profiles:
         jl-net only). The three app containers are recreated against the
         proxies, so use it as demo preparation, not as a runtime toggle.
         It is a dev-stack overlay and does NOT combine with ha / db-ha.
+  dual-jdk
+        the dev stack (16 services) plus the JDK 8 shell
+        jl-seckill-app-jdk8, gated behind the "dual-jdk" compose profile,
+        jl-net only, no host port. D7 dashboard (uid ha-d7) and Prometheus
+        job seckill-app-jdk8. Total 17 services; the JDK 8 container is
+        stopped by down.sh and is not part of the default render.
 
 MySQL InnoDB Cluster (design §8.3) is started by db-ha-up.sh, not here.
 EOF
@@ -37,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --profile requires a value (dev, ha or chaos-proxy)." >&2
+        echo "ERROR: --profile requires a value (dev, ha, chaos-proxy or dual-jdk)." >&2
         exit 2
       fi
       PROFILE="$2"
@@ -86,6 +92,12 @@ case "$PROFILE" in
     COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.toxiproxy.yml")
     ACTIVE_PROFILES=(--profile chaos-proxy)
     ;;
+  dual-jdk)
+    # The JDK 8 shell is defined in compose.base.yml behind its own profile, so
+    # no overlay file is needed: the default render stays at 16 services and
+    # this profile renders 17.
+    ACTIVE_PROFILES=(--profile dual-jdk)
+    ;;
   db-ha)
     echo "ERROR: --profile db-ha is not an up.sh profile: the MySQL InnoDB Cluster is" >&2
     echo "       started by db-ha-up.sh, and chaos-proxy is a dev-stack overlay only." >&2
@@ -93,12 +105,12 @@ case "$PROFILE" in
     ;;
   *,*|*+*)
     echo "ERROR: '$PROFILE' looks like a profile combination. up.sh takes exactly one" >&2
-    echo "       profile: dev, ha or chaos-proxy; chaos-proxy does not combine with" >&2
-    echo "       ha / db-ha." >&2
+    echo "       profile: dev, ha, chaos-proxy or dual-jdk; chaos-proxy does not combine" >&2
+    echo "       with ha / db-ha, and dual-jdk already includes the whole dev stack." >&2
     exit 2
     ;;
   *)
-    echo "ERROR: unknown profile '$PROFILE'. Available: dev, ha, chaos-proxy." >&2
+    echo "ERROR: unknown profile '$PROFILE'. Available: dev, ha, chaos-proxy, dual-jdk." >&2
     exit 2
     ;;
 esac
@@ -250,12 +262,13 @@ if [[ -n "$not_running" ]]; then
 fi
 echo "Post-wait state check passed: all ${#services[@]} containers are running."
 
-# Profile-gated services (the "ha" Redis Sentinel topology) are deliberately absent
-# from the enumeration above, so the dev count and the dev-path output stay exactly
-# as before. Enumerate them explicitly with the profile selected, minus the default
-# set, and check each container the same way.
-if [[ "$PROFILE" == "ha" ]]; then
-  ha_services=()
+# Profile-gated services (the "ha" Sentinel topology, the "dual-jdk" JDK 8
+# shell) are deliberately absent from the enumeration above, so the dev count
+# and the dev-path output stay exactly as before. Enumerate them explicitly
+# with the profile selected, minus the default set, and check each container
+# the same way.
+if [[ "$PROFILE" == "ha" || "$PROFILE" == "dual-jdk" ]]; then
+  profile_services=()
   while IFS= read -r service; do
     if [[ -z "$service" ]]; then
       continue
@@ -268,35 +281,35 @@ if [[ "$PROFILE" == "ha" ]]; then
       fi
     done
     if [[ "$is_default" == "false" ]]; then
-      ha_services+=("$service")
+      profile_services+=("$service")
     fi
-  done < <(compose --profile ha config --services)
+  done < <(compose --profile "$PROFILE" config --services)
 
-  if (( ${#ha_services[@]} == 0 )); then
-    echo "ERROR: 'docker compose --profile ha config --services' listed no extra services." >&2
+  if (( ${#profile_services[@]} == 0 )); then
+    echo "ERROR: 'docker compose --profile $PROFILE config --services' listed no extra services." >&2
     print_diagnostics
     exit 1
   fi
 
-  ha_not_running=""
-  for service in "${ha_services[@]}"; do
+  profile_not_running=""
+  for service in "${profile_services[@]}"; do
     container="jl-$service"
     state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
     health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
     if [[ "$state" != "running" ]]; then
       echo "ERROR: $container is not running (state=${state:-missing})." >&2
-      ha_not_running="$ha_not_running $container"
+      profile_not_running="$profile_not_running $container"
     elif [[ "$health" == "unhealthy" ]]; then
       echo "ERROR: $container is unhealthy after 'compose up --wait'." >&2
-      ha_not_running="$ha_not_running $container"
+      profile_not_running="$profile_not_running $container"
     fi
   done
-  if [[ -n "$ha_not_running" ]]; then
-    echo "ERROR: ha-profile containers not healthy after 'compose up --wait':$ha_not_running" >&2
+  if [[ -n "$profile_not_running" ]]; then
+    echo "ERROR: $PROFILE-profile containers not healthy after 'compose up --wait':$profile_not_running" >&2
     print_diagnostics
     exit 1
   fi
-  echo "Post-wait state check passed: all ${#ha_services[@]} ha-profile containers are running."
+  echo "Post-wait state check passed: all ${#profile_services[@]} $PROFILE-profile containers are running."
 fi
 
 # Bind-mounted configs are not part of the Compose service hash, so reused
@@ -374,4 +387,19 @@ if [[ "$PROFILE" == "chaos-proxy" ]]; then
   echo "Proxy names   : redis, mysql (the chaos-controller actions address them by name)"
   echo "Back to direct datastore access : bash $SCRIPT_DIR/up.sh --profile dev (recreates the app tier)"
   echo "After restarting jl-toxiproxy   : docker start jl-toxiproxy-init (recreates the two proxies)"
+fi
+
+# D7 dual-JDK summary (dual-jdk profile only). Nothing here is a dev-path output.
+if [[ "$PROFILE" == "dual-jdk" ]]; then
+  echo
+  echo "D7 dual-JDK comparison (compose profile dual-jdk, jl-net only, 17 services):"
+  echo "  jdk8 service  : jl-seckill-app-jdk8 (seckill-app-jdk8:8080, no host port)"
+  echo "  profile       : ${JDK8_APP_PROFILE:-mysql} (shared MySQL seed data; JDK8_APP_PROFILE=demo for H2)"
+  echo "  heap cap      : ${JDK8_JAVA_TOOL_OPTIONS:--Xmx512m} (JDK 21 instances: ${APP_JAVA_TOOL_OPTIONS:--Xmx512m})"
+  echo "  prometheus    : job seckill-app-jdk8, target seckill-app-jdk8:8080"
+  echo "  dashboard     : Grafana D7 (uid ha-d7)"
+  echo
+  echo "k6 dual target: bash $SCRIPT_DIR/../k6/run.sh d7                      # JDK 21 via Nginx"
+  echo "                BASE_URL=http://seckill-app-jdk8:8080 bash $SCRIPT_DIR/../k6/run.sh d7  # JDK 8"
+  echo "Stop the JDK 8 shell without touching the dev stack: docker stop jl-seckill-app-jdk8"
 fi

@@ -27,6 +27,17 @@ scrape_configs:
         target_label: __name__
         replacement: orders_created_total
 
+  # D7 dual-JDK comparison: the Java 8 shell (compose profile "dual-jdk").
+  # The job name is load-bearing twice over: it matches the seckill-app.* regex
+  # behind D1/D2/D4's $instance variable (so the instance also appears in those
+  # JVM panels), and D7 filters on this exact job + the app label. With the
+  # profile stopped the target is simply down, like the db-ha exporters.
+  - job_name: seckill-app-jdk8
+    metrics_path: /actuator/prometheus
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["seckill-app-jdk8:8080"]
+
   - job_name: nginx-exporter
     static_configs:
       - targets: ["nginx-exporter:9113"]

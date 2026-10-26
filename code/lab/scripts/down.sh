@@ -122,11 +122,13 @@ if $PURGE; then
   echo "WARNING: --purge removes the containers, the network AND the named volumes" >&2
   echo "         jl-mysql-data, jl-redis-data, jl-rabbitmq-data, jl-prometheus-data," >&2
   echo "         jl-grafana-data, jl-tempo-data (all local lab data)." >&2
-  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic down -v
+  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic --profile dual-jdk down -v
   echo "java-learn-lab stopped; containers, network and named volumes removed."
 else
   # The traffic profile is included so the created-but-stopped jl-traffic
   # container (Task 23 background traffic) never lingers after the stack is down.
-  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic down
+  # dual-jdk is included for the same reason: the D7 JDK 8 shell may be stopped
+  # between comparison runs, but its container must not survive a teardown.
+  compose "${HA_PROFILES[@]}" "${CHAOS_PROXY_PROFILES[@]}" --profile traffic --profile dual-jdk down
   echo "java-learn-lab stopped; named volumes preserved (use --purge to delete them)."
 fi

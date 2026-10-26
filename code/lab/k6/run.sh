@@ -38,10 +38,10 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$SCENARIO" in
-  smoke|load|stress|spike|soak) IS_CHAOS=0 ;;
+  smoke|load|stress|spike|soak|d7) IS_CHAOS=0 ;;
   ha-failover) IS_CHAOS=1 ;;
   *)
-    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|ha-failover).\n' "$SCENARIO" >&2
+    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|d7|ha-failover).\n' "$SCENARIO" >&2
     exit 2
     ;;
 esac
