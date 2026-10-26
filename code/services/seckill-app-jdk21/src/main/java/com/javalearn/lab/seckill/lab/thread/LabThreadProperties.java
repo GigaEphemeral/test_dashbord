@@ -32,6 +32,7 @@ public class LabThreadProperties {
     private final ThreadLeak threadLeak = new ThreadLeak();
     private final Starvation starvation = new Starvation();
     private final Lifecycle lifecycle = new Lifecycle();
+    private final Snapshot snapshot = new Snapshot();
 
     @PostConstruct
     void validate() {
@@ -93,6 +94,29 @@ public class LabThreadProperties {
         if (lifecycle.threadName.equals(lifecycle.monitorThreadName)) {
             throw new IllegalStateException("app.lab.thread.lifecycle.thread-name and "
                     + "app.lab.thread.lifecycle.monitor-thread-name must differ");
+        }
+
+        // Snapshot capture (design §9.3). The directory and the jcmd executable
+        // are runtime paths, so a blank value must fail startup rather than
+        // silently writing nowhere (or spawning an empty command).
+        requirePositive(snapshot.commandTimeoutMs, "app.lab.thread.snapshot.command-timeout-ms");
+        requireAtLeast(snapshot.maxCount, 1L, "app.lab.thread.snapshot.max-count");
+        requireNonNegative(snapshot.maxAgeSeconds, "app.lab.thread.snapshot.max-age-seconds");
+        if (snapshot.enabled) {
+            if (isBlank(snapshot.rootDir)) {
+                throw new IllegalStateException("app.lab.thread.snapshot.root-dir must not be blank");
+            }
+            if (isBlank(snapshot.jcmdPath)) {
+                throw new IllegalStateException("app.lab.thread.snapshot.jcmd-path must not be blank");
+            }
+        }
+        requirePositive(snapshot.annotation.timeoutSeconds,
+                "app.lab.thread.snapshot.annotation.timeout-seconds");
+        // An annotation without a URL is a supported OFF state (skip, count it),
+        // not a misconfiguration; only a supplied URL must be a valid base URL.
+        if (!isBlank(snapshot.annotation.grafanaUrl)) {
+            snapshot.annotation.buildAnnotationUri(
+                    "app.lab.thread.snapshot.annotation.grafana-url");
         }
     }
 
@@ -171,6 +195,10 @@ public class LabThreadProperties {
 
     public Lifecycle getLifecycle() {
         return lifecycle;
+    }
+
+    public Snapshot getSnapshot() {
+        return snapshot;
     }
 
     /** Gate + geometry of the true-OOM experiment. */
@@ -500,6 +528,171 @@ public class LabThreadProperties {
 
         public void setShutdownJoinTimeoutMs(long shutdownJoinTimeoutMs) {
             this.shutdownJoinTimeoutMs = shutdownJoinTimeoutMs;
+        }
+    }
+
+    /**
+     * Snapshot bundle capture (design §9.3): where the timestamped folders go, how
+     * many are retained, how long a jcmd invocation may take, and the best-effort
+     * Grafana annotation. The runtime image is a JDK (see the module Dockerfile),
+     * so the bundle is literal {@code jcmd Thread.print -l}, {@code GC.heap_info}
+     * and {@code GC.class_histogram} output.
+     */
+    public static class Snapshot {
+
+        /** Master switch; when false a freeze still succeeds and writes nothing. */
+        private boolean enabled;
+        /** Root directory of the timestamped snapshot folders (runtime path). */
+        private String rootDir;
+        /** Maximum number of snapshot folders kept (newest win). */
+        private long maxCount;
+        /** Folders older than this are pruned; 0 disables age-based pruning. */
+        private long maxAgeSeconds;
+        /** Per-command wall-clock budget for one jcmd invocation. */
+        private long commandTimeoutMs;
+        /** jcmd executable: "jcmd" (on PATH of the JDK image) or an absolute path. */
+        private String jcmdPath;
+
+        private final Annotation annotation = new Annotation();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getRootDir() {
+            return rootDir;
+        }
+
+        public void setRootDir(String rootDir) {
+            this.rootDir = rootDir;
+        }
+
+        public long getMaxCount() {
+            return maxCount;
+        }
+
+        public void setMaxCount(long maxCount) {
+            this.maxCount = maxCount;
+        }
+
+        public long getMaxAgeSeconds() {
+            return maxAgeSeconds;
+        }
+
+        public void setMaxAgeSeconds(long maxAgeSeconds) {
+            this.maxAgeSeconds = maxAgeSeconds;
+        }
+
+        public long getCommandTimeoutMs() {
+            return commandTimeoutMs;
+        }
+
+        public void setCommandTimeoutMs(long commandTimeoutMs) {
+            this.commandTimeoutMs = commandTimeoutMs;
+        }
+
+        public String getJcmdPath() {
+            return jcmdPath;
+        }
+
+        public void setJcmdPath(String jcmdPath) {
+            this.jcmdPath = jcmdPath;
+        }
+
+        public Annotation getAnnotation() {
+            return annotation;
+        }
+
+        /**
+         * Best-effort Grafana annotation of a successful snapshot (design §9.3).
+         * Empty {@code grafana-url} means OFF (the capture is still written); the
+         * credentials come from the environment and are never logged.
+         */
+        public static class Annotation {
+
+            /** Switch for the annotation call only; capture is governed by {@code snapshot.enabled}. */
+            private boolean enabled;
+            /** Grafana base URL; empty means "do not annotate". */
+            private String grafanaUrl;
+            private String user;
+            private String password;
+            /** HTTP connect/read budget; a timeout is a WARN, never a failed freeze. */
+            private long timeoutSeconds;
+            /** Extra tags appended to the mandatory snapshot/thread-lab/instance set. */
+            private String tags;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getGrafanaUrl() {
+                return grafanaUrl;
+            }
+
+            public void setGrafanaUrl(String grafanaUrl) {
+                this.grafanaUrl = grafanaUrl;
+            }
+
+            public String getUser() {
+                return user;
+            }
+
+            public void setUser(String user) {
+                this.user = user;
+            }
+
+            public String getPassword() {
+                return password;
+            }
+
+            public void setPassword(String password) {
+                this.password = password;
+            }
+
+            public long getTimeoutSeconds() {
+                return timeoutSeconds;
+            }
+
+            public void setTimeoutSeconds(long timeoutSeconds) {
+                this.timeoutSeconds = timeoutSeconds;
+            }
+
+            public String getTags() {
+                return tags;
+            }
+
+            public void setTags(String tags) {
+                this.tags = tags;
+            }
+
+            /**
+             * Builds {@code <base>/api/annotations}; returns {@code null} for a blank
+             * base URL (annotation OFF). Throws for a supplied but invalid URL so a
+             * broken configuration fails startup instead of silently never annotating.
+             */
+            public java.net.URI buildAnnotationUri(String key) {
+                if (grafanaUrl == null || grafanaUrl.trim().isEmpty()) {
+                    return null;
+                }
+                String trimmed = grafanaUrl.trim();
+                while (trimmed.endsWith("/")) {
+                    trimmed = trimmed.substring(0, trimmed.length() - 1);
+                }
+                try {
+                    return java.net.URI.create(trimmed + "/api/annotations");
+                } catch (IllegalArgumentException invalid) {
+                    throw new IllegalStateException(
+                            key + " is not a valid URL: " + invalid.getMessage(), invalid);
+                }
+            }
         }
     }
 }

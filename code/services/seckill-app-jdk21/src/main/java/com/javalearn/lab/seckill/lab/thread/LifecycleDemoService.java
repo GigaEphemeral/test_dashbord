@@ -197,24 +197,37 @@ public final class LifecycleDemoService {
             cancelAuto();
             frozen = true;
             metrics.onFreeze();
-            Thread thread = demoThread;
-            LifecycleSnapshot snapshot = new LifecycleSnapshot(
-                    thread == null ? 0L : thread.threadId(),
-                    thread == null ? "" : thread.getName(),
-                    observed.name(),
-                    observed.code(),
-                    step,
-                    clock.millis(),
-                    "freeze");
+            LifecycleSnapshot observation = snapshot("freeze");
             try {
-                snapshotSink.capture(snapshot);
+                snapshotSink.capture(observation);
             } catch (RuntimeException failure) {
                 // The seam is pluggable; a broken capture must not undo the freeze.
-                log.warn("Snapshot sink failed for {}", snapshot, failure);
+                log.warn("Snapshot sink failed for {}", observation, failure);
             }
             metrics.onSnapshot();
             return view();
         }
+    }
+
+    /**
+     * Builds one observation of the demo thread as it is right now (real state,
+     * completed step, wall-clock time) without changing the machine. Used by
+     * {@code freeze} and by the on-demand {@code POST /lab/thread/snapshot}, so
+     * both paths hand the sink the same shape of evidence.
+     *
+     * @param reason {@code freeze} or {@code manual}
+     */
+    public LifecycleSnapshot snapshot(String reason) {
+        Thread thread = demoThread;
+        DemoState observed = liveState();
+        return new LifecycleSnapshot(
+                thread == null ? 0L : thread.threadId(),
+                thread == null ? "" : thread.getName(),
+                observed.name(),
+                observed.code(),
+                step,
+                clock.millis(),
+                reason);
     }
 
     /**
