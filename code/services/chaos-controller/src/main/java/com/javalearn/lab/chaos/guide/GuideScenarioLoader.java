@@ -15,9 +15,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -30,8 +32,10 @@ import java.util.stream.Stream;
  * {@code chaos-schema.js} validator: version, id/name, ascending positive
  * offsets, allowed actions, TTL bounds from {@code chaos.max-ttl-seconds},
  * unique {@code (atSeconds,target)}, lab-app target pattern and a hard datastore
- * rejection. Invalid files are skipped for listing and rejected on start; a bad
- * file never takes the controller down.</p>
+ * rejection. Scenario ids are additionally unique across the whole directory:
+ * colliding files are skipped for listing and rejected with 400 on start; the
+ * lookup keys on the embedded id, not the file name. Invalid files never take
+ * the controller down.</p>
  */
 @Component
 public class GuideScenarioLoader {
@@ -63,25 +67,42 @@ public class GuideScenarioLoader {
         }
     }
 
-    /** Valid scenarios in the configured directory, sorted by id. */
+    /** Valid, uniquely-id'd scenarios in the configured directory, sorted by id. */
     public List<GuideScenarioSummary> list() {
-        List<GuideScenarioSummary> summaries = new ArrayList<>();
-        for (Path file : scenarioFiles()) {
-            try {
-                GuideScenario scenario = parse(file);
-                summaries.add(new GuideScenarioSummary(scenario.id(), scenario.name(),
-                        scenario.description(), scenario.stepCount(), scenario.durationHintSeconds()));
-            } catch (InvalidScenarioException e) {
-                log.warn("Skipping invalid guide scenario {}: {}", file.getFileName(), e.getMessage());
+        Map<String, List<Scanned>> byId = new HashMap<>();
+        List<Scanned> valid = new ArrayList<>();
+        for (Scanned scanned : scan()) {
+            if (scanned.error() != null) {
+                log.warn("Skipping invalid guide scenario {}: {}",
+                        scanned.file().getFileName(), scanned.error().getMessage());
+                continue;
             }
+            valid.add(scanned);
+            byId.computeIfAbsent(scanned.scenario().id(), key -> new ArrayList<>()).add(scanned);
+        }
+        List<GuideScenarioSummary> summaries = new ArrayList<>();
+        Set<String> duplicateIds = new HashSet<>();
+        for (Scanned scanned : valid) {
+            String id = scanned.scenario().id();
+            if (byId.get(id).size() > 1) {
+                if (duplicateIds.add(id)) {
+                    log.warn("Skipping guide scenarios with duplicate id \"{}\": {}", id,
+                            byId.get(id).stream().map(s -> s.file().getFileName().toString()).toList());
+                }
+                continue;
+            }
+            GuideScenario scenario = scanned.scenario();
+            summaries.add(new GuideScenarioSummary(scenario.id(), scenario.name(),
+                    scenario.description(), scenario.stepCount(), scenario.durationHintSeconds()));
         }
         summaries.sort(Comparator.comparing(GuideScenarioSummary::id));
         return summaries;
     }
 
     /**
-     * Loads one scenario by id. Ids are restricted to {@code [a-z0-9-]} so the
-     * lookup can never escape the scenario directory.
+     * Loads one scenario by its embedded id. Ids are restricted to
+     * {@code [a-z0-9-]} and must be unique across the directory; file names are
+     * only a convention (per README) and never decide the lookup.
      */
     public GuideScenario load(String scenarioId) {
         String id = scenarioId == null ? "" : scenarioId.trim();
@@ -93,23 +114,51 @@ public class GuideScenarioLoader {
             throw new ScenarioNotFoundException(
                     "Scenario directory is not available: " + dir);
         }
-        Path direct = dir.resolve(id + ".json");
-        if (Files.isRegularFile(direct)) {
-            return parse(direct);
-        }
-        // The README calls the file name a convention, not a hard requirement;
-        // fall back to matching the embedded id so renamed files still work.
-        for (Path file : scenarioFiles()) {
-            try {
-                GuideScenario scenario = parse(file);
-                if (scenario.id().equals(id)) {
-                    return scenario;
+        GuideScenario match = null;
+        List<String> matchFiles = new ArrayList<>();
+        InvalidScenarioException nameMatchError = null;
+        for (Scanned scanned : scan()) {
+            if (scanned.error() != null) {
+                // Keep the concrete reason when the file name matches the
+                // requested id, so start reports 400 instead of a bare 404.
+                if (scanned.file().getFileName().toString().equals(id + ".json")) {
+                    nameMatchError = scanned.error();
                 }
-            } catch (InvalidScenarioException e) {
-                log.debug("Ignoring invalid guide scenario {}: {}", file.getFileName(), e.getMessage());
+                continue;
+            }
+            if (scanned.scenario().id().equals(id)) {
+                match = scanned.scenario();
+                matchFiles.add(scanned.file().getFileName().toString());
             }
         }
+        if (matchFiles.size() > 1) {
+            throw new InvalidScenarioException("scenario id \"" + id
+                    + "\" is declared by multiple files: " + String.join(", ", matchFiles));
+        }
+        if (match != null) {
+            return match;
+        }
+        if (nameMatchError != null) {
+            throw nameMatchError;
+        }
         throw new ScenarioNotFoundException("Unknown scenario: " + id);
+    }
+
+    /** Parses every {@code *.json} once; invalid files carry their error. */
+    private List<Scanned> scan() {
+        List<Scanned> scanned = new ArrayList<>();
+        for (Path file : scenarioFiles()) {
+            try {
+                scanned.add(new Scanned(file, parse(file), null));
+            } catch (InvalidScenarioException e) {
+                scanned.add(new Scanned(file, null, e));
+            }
+        }
+        return scanned;
+    }
+
+    /** One directory entry: either a valid scenario or the validation error. */
+    private record Scanned(Path file, GuideScenario scenario, InvalidScenarioException error) {
     }
 
     private Path scenarioDir() {
@@ -148,7 +197,7 @@ public class GuideScenarioLoader {
             throw invalid(source, "root must be a JSON object");
         }
 
-        int schemaVersion = requireInt(source, "schemaVersion", root.get("schemaVersion"));
+        int schemaVersion = requireIntegerValue(source, "schemaVersion", root.get("schemaVersion"));
         if (schemaVersion != SCHEMA_VERSION) {
             throw invalid(source, "schemaVersion must be " + SCHEMA_VERSION + ", got " + schemaVersion);
         }
@@ -213,7 +262,7 @@ public class GuideScenarioLoader {
                 if (ttlNode == null || ttlNode.isNull()) {
                     throw invalid(source, label + ".ttlSeconds is required for " + action);
                 }
-                ttlSeconds = requireInt(source, label + ".ttlSeconds", ttlNode);
+                ttlSeconds = requireIntegerValue(source, label + ".ttlSeconds", ttlNode);
                 if (ttlSeconds <= 0 || ttlSeconds > maxTtl) {
                     throw invalid(source, label + ".ttlSeconds=" + ttlSeconds
                             + " must be between 1 and " + maxTtl + "s");
@@ -247,11 +296,21 @@ public class GuideScenarioLoader {
         return node.asText().trim();
     }
 
-    private static int requireInt(String source, String field, JsonNode node) {
-        if (node == null || !node.isIntegralNumber() || !node.canConvertToInt()) {
+    /**
+     * Integer check aligned with k6 {@code Number.isInteger}: JSON {@code 1.0}
+     * and {@code 15.0} are integers in JavaScript, so the controller must not
+     * reject a file the k6 driver accepts just because Jackson typed it double.
+     */
+    private static int requireIntegerValue(String source, String field, JsonNode node) {
+        if (node == null || !node.isNumber()) {
             throw invalid(source, field + " must be an integer");
         }
-        return node.asInt();
+        double value = node.doubleValue();
+        if (!Double.isFinite(value) || value != Math.rint(value)
+                || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            throw invalid(source, field + " must be an integer, got " + node);
+        }
+        return (int) value;
     }
 
     private static double requirePositiveNumber(String source, String field, JsonNode node) {
