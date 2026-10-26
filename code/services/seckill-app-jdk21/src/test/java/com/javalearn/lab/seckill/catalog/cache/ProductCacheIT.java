@@ -4,11 +4,14 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.javalearn.lab.seckill.MySqlRedisIntegrationTestSupport;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.api.ProductViewService;
+import com.zaxxer.hikari.HikariDataSource;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cache.CacheManager;
@@ -53,11 +56,29 @@ class ProductCacheIT extends MySqlRedisIntegrationTestSupport {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    @Qualifier("readDataSource")
+    private HikariDataSource readDataSource;
+
     @BeforeEach
     void clearCache() {
         cache().clear();
         assertThat(nativeCache().estimatedSize()).isZero();
         assertThat(redisTemplate.hasKey(REDIS_KEY)).isFalse();
+    }
+
+    @Test
+    void cacheMissReadIsRoutedToTheReadPool() {
+        double acquiresBefore = readPoolAcquireCount();
+
+        ProductResponse product = productViewService.get(PRODUCT_ID);
+
+        assertThat(product).isNotNull();
+        assertThat(product.id()).isEqualTo(PRODUCT_ID);
+        // The cache miss goes through ProductReadService, whose read-only
+        // transaction must have acquired its connection from read-pool.
+        assertThat(readDataSource.isRunning()).isTrue();
+        assertThat(readPoolAcquireCount()).isGreaterThan(acquiresBefore);
     }
 
     @Test
@@ -149,5 +170,12 @@ class ProductCacheIT extends MySqlRedisIntegrationTestSupport {
     private double counter(String name, String... tags) {
         Counter counter = meterRegistry.find(name).tags(tags).counter();
         return counter == null ? 0.0 : counter.count();
+    }
+
+    private double readPoolAcquireCount() {
+        Timer acquires = meterRegistry.find("hikaricp.connections.acquire")
+                .tag("pool", "read-pool")
+                .timer();
+        return acquires == null ? 0.0 : acquires.count();
     }
 }

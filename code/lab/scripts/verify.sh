@@ -224,6 +224,43 @@ else
     "unique instances: $(printf '%s' "$unique_instances" | tr '\n' ' ')"
 fi
 
+# 2b-bis. Read/write datasource routing (Task 15).
+# The write pool must be visible before any forced read (Flyway and the health
+# checks use it). Never fall back to accepting only the write pool: the read
+# pool has a different pool tag and is only initialized when a read-only
+# transaction acquires a connection, so a cache miss is forced through product
+# ids that no earlier check requested. Redis L2 keys are deleted first; the
+# 60s Caffeine L1 cannot contain these ids on a freshly restarted stack.
+check_prometheus_positive \
+  "prometheus has hikaricp_connections_max{job=\"seckill-app\",pool=\"write-pool\"} > 0" \
+  'hikaricp_connections_max%7Bjob%3D%22seckill-app%22%2Cpool%3D%22write-pool%22%7D'
+
+routing_reads_ok=true
+routing_read_code=""
+routing_read_body=""
+for routing_product_id in 2 3 4; do
+  docker exec jl-redis redis-cli del "cache:product:${routing_product_id}" >/dev/null 2>&1 || true
+  routing_read_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+    "http://127.0.0.1:8080/api/products/${routing_product_id}" 2>/dev/null || true)"
+  routing_read_code="${routing_read_response##*$'\n'}"
+  routing_read_body="${routing_read_response%$'\n'*}"
+  if [[ "$routing_read_code" != "200" ]] \
+    || ! grep -Eq "\"id\"[[:space:]]*:[[:space:]]*${routing_product_id}([^0-9]|$)" <<<"$routing_read_body"; then
+    routing_reads_ok=false
+    break
+  fi
+done
+if $routing_reads_ok; then
+  pass "cold product reads for ids 2,3,4 return 200 (each call bypasses cache and reads the database)"
+else
+  fail "cold product reads for ids 2,3,4 return 200 (each call bypasses cache and reads the database)" \
+    "HTTP ${routing_read_code:-000} body: ${routing_read_body:0:160}"
+fi
+
+check_prometheus_positive \
+  "prometheus has hikaricp_connections_max{job=\"seckill-app\",pool=\"read-pool\"} > 0 (read pool initialized by a read-only transaction)" \
+  'hikaricp_connections_max%7Bjob%3D%22seckill-app%22%2Cpool%3D%22read-pool%22%7D'
+
 # 2c. Catalog API through Nginx (Task 12: Flyway schema + JPA adapter + query use case).
 # Three calls also prove every app instance can reach MySQL, not just the first.
 product_body=""

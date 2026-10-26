@@ -15,6 +15,11 @@ import org.testcontainers.containers.MySQLContainer;
  * stale connection URL. Starting once per Surefire JVM keeps one fixed port and
  * one Flyway migration history for all IT classes. Ryuk removes the container
  * when the JVM exits.</p>
+ *
+ * <p>The app has an explicit write/read datasource pair (Task 15); both pools
+ * are pointed at the same container, exactly like the dev compose defaults
+ * (where {@code DB_WRITE_URL} and {@code DB_READ_URL} are unset and both
+ * defaults resolve to the single {@code mysql} host).</p>
  */
 public abstract class MySqlIntegrationTestSupport {
 
@@ -32,8 +37,13 @@ public abstract class MySqlIntegrationTestSupport {
 
     @DynamicPropertySource
     static void mysqlProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
+        registerDataSource(registry, "app.datasource.write");
+        registerDataSource(registry, "app.datasource.read");
+    }
+
+    private static void registerDataSource(DynamicPropertyRegistry registry, String prefix) {
+        registry.add(prefix + ".jdbc-url", MYSQL::getJdbcUrl);
+        registry.add(prefix + ".username", MYSQL::getUsername);
+        registry.add(prefix + ".password", MYSQL::getPassword);
     }
 }

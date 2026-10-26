@@ -1,13 +1,6 @@
 spring:
   application:
     name: seckill-app
-  datasource:
-    url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-    username: ${MYSQL_USER:seckill}
-    password: ${MYSQL_PASSWORD:seckill}
-    hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
   jpa:
     hibernate.ddl-auto: validate
     open-in-view: false
@@ -23,6 +16,28 @@ spring:
     redis:
       host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
+
+# Explicit write/read datasource pair (Task 15). In dev both URLs point at the
+# same MySQL; DB_WRITE_URL/DB_READ_URL are the M3 hooks for MySQL Router
+# 6446 (read-write) and 6447 (read-only). The primary DataSource is a lazy
+# proxy over the routing datasource, so JPA, Flyway and health checks all use
+# the write pool unless a read-only transaction is active.
+app:
+  datasource:
+    write:
+      jdbc-url: ${DB_WRITE_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+      username: ${MYSQL_USER:seckill}
+      password: ${MYSQL_PASSWORD:seckill}
+      maximum-pool-size: 10
+      minimum-idle: 2
+      pool-name: write-pool
+    read:
+      jdbc-url: ${DB_READ_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+      username: ${MYSQL_USER:seckill}
+      password: ${MYSQL_PASSWORD:seckill}
+      maximum-pool-size: 10
+      minimum-idle: 2
+      pool-name: read-pool
 
 server:
   port: 8080

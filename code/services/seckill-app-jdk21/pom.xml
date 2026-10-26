@@ -120,6 +120,13 @@
       <artifactId>testcontainers</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Two in-memory H2 databases prove the write/read routing without MySQL
+         (ReadWriteRoutingTest). Test scope only. -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
