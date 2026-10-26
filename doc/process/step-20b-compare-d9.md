@@ -65,3 +65,41 @@
 bash code/lab/scripts/compare.sh 20261026-145555-smoke neg-threshold --out doc/process/benchmark/compare-smoke-vs-neg.md
 bash code/lab/scripts/verify.sh
 ```
+
+# 审核修复（Task 20b 独立审核，追加）
+
+> 依据设计 §11.4（compare）与 §7.4（D9）对提交 `8744854` 的独立审核，只修
+> High/Medium，零新依赖、不改应用代码/compose。记录如下（保留上方原始五段式，不改写历史）。
+
+- **D9 延迟单位（High）**：k6 remote-write 把 `k6_http_req_duration_p95/_p99` 以
+  秒存储（load 实测 product 0.00835s=8.35ms、login 0.01837s），面板 3 却按 `ms`
+  标注且未换算，显示值小 1000 倍。修复：表达式 `* 1000`，单位保持 `ms`。
+- **D9 多 run/flow 压平（High）**：`run_id` 变量默认 All/多选，但 k6 面板用无
+  `by` 的 `max(...)`/`sum(...)`，会把多个 run 与多个 flow 合成一条“最差端点”线，
+  无法区分运行（load 的 login 18.4ms vs product 8.35ms 被压平）。修复：面板 2/5
+  按 `run_id` 聚合，面板 3 按 `run_id, flow` 聚合，面板 4 按 `run_id` 聚合，legend
+  带上 `{{run_id}}`（延迟再加 `{{flow}}`）。单 run 选择时仍返回一条，All 时逐 run 区分。
+- **compare 缺涨跌幅（Medium，§11.4）**：原表只有绝对 Δ（B-A）。新增 `Δ% (B vs A)`
+  列，按原始值计算涨跌幅（A=0 记 n/a），样例同步再生成。
+- **compare 缺 429 率（Medium，§11.4）**：原只有 409/429 计数。新增
+  `Expected 429 rate = expected429 / requests` 行（保留计数行），与 n/a 语义一致。
+- **compare 峰值窗口（Medium）**：旧窗口 `max(60, duration+30)` 从 `end` 回看，
+  对 6-7s smoke 会多含约 50s 运行前（reset 后启动）历史，实测把 load 的 GC 次数从
+  20.0 抬高到 23.6（虚增约 40%）。改为 `duration + grace`，`grace` 由
+  `BENCH_COMPARE_WINDOW_GRACE_SECONDS`（默认 15，>一个 5s scrape）控制并设下限，
+  去掉 60s 固定地板，兼顾覆盖一次抓取与不吞运行前活动。
+- **健壮性/口径（Minor，一并处理）**：`BENCH_COMPARE_TIMEOUT_MS` 非法值不再变成
+  NaN 即时 abort（回退 5000）；`reset.baselineStock` 缺失时显示 n/a 而非
+  “undefined”；`Peak heap (MB)` 改为准确的 `(MiB)`；删除 `compare.sh` 未用的
+  `ROOT_DIR`、`promMax` 未用的 `durationSeconds` 死参；`BENCH_COMPARE_SCRIPT`/新增
+  env 写入 `compare.sh` 与 `k6/README.md`；`k6/README.md` 去掉“Task 20b 尚无 compare”
+  过期说明并补 compare 用法/环境变量/退出码与 D9 指向。
+
+- 验证（只读，不触碰共享栈与 reports）：`node --check`、`bash -n`、`JSON.parse` 均通过；
+  对 `20261026-145555-smoke` vs `neg-threshold` 实跑 compare 退出 0，`PROM_URL` 指向
+  死端口时峰值行显示 n/a 且退出 0，缺参数/缺失 run 退出 2；D9 修复后的每条 k6 PromQL
+  用已知窗口 GET 复核（load t=1792998232 → login 18.37ms/product 8.35ms；spike
+  t=1792992851 → 429 sum by run_id=13391；neg t=1792998367 → 分 flow P95 ms）。
+- 仍 deferred（本次不实现）：D9 故障标注（Task 21/22 chaos）、运行 manifest 动态面板、
+  Grafana 视觉自动化回归。`Δ` 绝对列沿用原始浮点四舍五入，故 A(4)→B(6) 与 Δ(1) 的
+  表观不一致属已知 Minor（涨跌幅列以原始值给出更可读的 +27.3%）。

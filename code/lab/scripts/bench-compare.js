@@ -16,6 +16,7 @@
  *   BENCH_REPORTS_DIR (default <repo>/code/lab/k6/reports)
  *   PROM_URL          (default http://127.0.0.1:8080/prom)
  *   BENCH_COMPARE_TIMEOUT_MS (default 5000)
+ *   BENCH_COMPARE_WINDOW_GRACE_SECONDS (default 15, per-run peak window margin)
  *   BENCH_COMPARE_OUT  optional default output file
  */
 
@@ -25,7 +26,17 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const reportsDir = process.env.BENCH_REPORTS_DIR || path.join(ROOT, 'code', 'lab', 'k6', 'reports');
 const promUrl = (process.env.PROM_URL || 'http://127.0.0.1:8080/prom').replace(/\/+$/, '');
-const timeoutMs = Number(process.env.BENCH_COMPARE_TIMEOUT_MS || 5000);
+
+// Positive-number env override with a safe fallback: an empty, non-numeric or
+// non-positive value would otherwise turn setTimeout/Abort into an instant
+// abort (every Prometheus query silently becomes n/a).
+function numberFromEnv(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const timeoutMs = numberFromEnv(process.env.BENCH_COMPARE_TIMEOUT_MS, 5000);
+const windowGraceSeconds = numberFromEnv(process.env.BENCH_COMPARE_WINDOW_GRACE_SECONDS, 15);
 
 function usage() {
   console.error('Usage: compare.sh <runA> <runB> [--out <file>]');
@@ -108,7 +119,7 @@ function fmtCount(value) {
   return number === null ? 'n/a' : String(number);
 }
 
-async function promMax(expr, time, durationSeconds) {
+async function promMax(expr, time) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -136,7 +147,11 @@ async function peaks(run) {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
     return { heap: null, threads: null, gcPauses: null, hikariPending: null, error: 'manifest has no valid startEpoch/endEpoch' };
   }
-  const windowSeconds = Math.max(60, Math.ceil(end - start) + 30);
+  // Range queries evaluate at t=end and look backward, so the window must cover
+  // the run interval [start,end] plus a small margin (>= one scrape) instead of a
+  // fixed 60s floor; a fixed 60s floor pulled ~50s of pre-run (post-reset startup)
+  // GC into short smoke runs and inflated the reported GC-pause count.
+  const windowSeconds = Math.max(windowGraceSeconds, Math.ceil(end - start) + windowGraceSeconds);
   const at = end;
   const base = 'job="seckill-app"';
   const heap = await promMax(`max(max_over_time(jvm_memory_used_bytes{area="heap",${base}}[${windowSeconds}s]))`, at);
@@ -154,8 +169,33 @@ function delta(a, b, formatter) {
   return formatter ? formatter(right - left) : (right - left).toFixed(2);
 }
 
+// Design §11.4 requires 涨跌幅 (up/down percentage), computed on the raw values
+// so it stays consistent with the source numbers, not the rounded display.
+function pctChange(a, b) {
+  const left = numberOrNull(a);
+  const right = numberOrNull(b);
+  if (left === null || right === null) return 'n/a';
+  if (left === 0) return right === 0 ? 'n/a' : 'n/a (from 0)';
+  const pct = ((right - left) / Math.abs(left)) * 100;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+function resetBaseline(run) {
+  const reset = run.manifest.reset;
+  return reset ? numberOrNull(reset.baselineStock) : null;
+}
+
+// 429 rate: expected-429 rejections as a fraction of total requests. Both inputs
+// come from the manifest so the n/a path is identical to the count rows.
+function rejectionRate(run, countKey) {
+  const count = metric(run, countKey);
+  const requests = metric(run, 'requests');
+  if (count === null || requests === null || requests === 0) return null;
+  return count / requests;
+}
+
 function tableRow(label, a, b, formatter, deltaFormatter) {
-  return `| ${label} | ${formatter ? formatter(a) : a} | ${formatter ? formatter(b) : b} | ${delta(a, b, deltaFormatter)} |`;
+  return `| ${label} | ${formatter ? formatter(a) : a} | ${formatter ? formatter(b) : b} | ${delta(a, b, deltaFormatter)} | ${pctChange(a, b)} |`;
 }
 
 async function main() {
@@ -169,9 +209,7 @@ async function main() {
     tableRow('Run ID', runA.manifest.runId, runB.manifest.runId),
     tableRow('Verdict', runA.manifest.verdict, runB.manifest.verdict),
     tableRow('Git commit', String(runA.manifest.git && runA.manifest.git.commit || '').slice(0, 7), String(runB.manifest.git && runB.manifest.git.commit || '').slice(0, 7)),
-    tableRow('Reset baseline stock',
-      runA.manifest.reset ? String(runA.manifest.reset.baselineStock) : 'n/a',
-      runB.manifest.reset ? String(runB.manifest.reset.baselineStock) : 'n/a'),
+    tableRow('Reset baseline stock', resetBaseline(runA), resetBaseline(runB), (v) => fmtCount(v), (v) => v.toFixed(0)),
     tableRow('Duration (s)', runA.manifest.durationSeconds, runB.manifest.durationSeconds, (v) => fmtNumber(v, 0), (v) => v.toFixed(0)),
     tableRow('RPS (avg)', m(runA, 'rps'), m(runB, 'rps'), (v) => fmtNumber(v), (v) => v.toFixed(2)),
     tableRow('Requests', m(runA, 'requests'), m(runB, 'requests'), (v) => fmtCount(v), (v) => v.toFixed(0)),
@@ -185,8 +223,9 @@ async function main() {
     tableRow('Checks rate', m(runA, 'checksRate'), m(runB, 'checksRate'), (v) => fmtPercent(v), (v) => `${(v * 100).toFixed(2)}pp`),
     tableRow('Expected 409', m(runA, 'expected409'), m(runB, 'expected409'), (v) => fmtCount(v), (v) => v.toFixed(0)),
     tableRow('Expected 429', m(runA, 'expected429'), m(runB, 'expected429'), (v) => fmtCount(v), (v) => v.toFixed(0)),
+    tableRow('Expected 429 rate', rejectionRate(runA, 'expected429'), rejectionRate(runB, 'expected429'), (v) => fmtPercent(v), (v) => `${(v * 100).toFixed(2)}pp`),
     tableRow('VUs max', m(runA, 'vusMax'), m(runB, 'vusMax'), (v) => fmtCount(v), (v) => v.toFixed(0)),
-    tableRow('Peak heap (MB)', peaksA.heap, peaksB.heap, (v) => fmtBytes(v), (v) => fmtNumber(v / 1024 / 1024, 1)),
+    tableRow('Peak heap (MiB)', peaksA.heap, peaksB.heap, (v) => fmtBytes(v), (v) => fmtNumber(v / 1024 / 1024, 1)),
     tableRow('Peak threads', peaksA.threads, peaksB.threads, (v) => fmtNumber(v, 0), (v) => v.toFixed(0)),
     tableRow('GC pauses (count)', peaksA.gcPauses, peaksB.gcPauses, (v) => fmtNumber(v, 0), (v) => v.toFixed(0)),
     tableRow('Peak Hikari pending', peaksA.hikariPending, peaksB.hikariPending, (v) => fmtNumber(v, 0), (v) => v.toFixed(0)),
@@ -198,8 +237,8 @@ async function main() {
     `- A: \`${runA.manifest.runId}\` (${runA.dir})`,
     `- B: \`${runB.manifest.runId}\` (${runB.dir})`,
     '',
-    '| Metric | A | B | Δ (B-A) |',
-    '|---|---:|---:|---:|',
+    '| Metric | A | B | Δ (B-A) | Δ% (B vs A) |',
+    '|---|---:|---:|---:|---:|',
     ...rows,
   ];
   if (runA.manifest.scenario !== runB.manifest.scenario) {

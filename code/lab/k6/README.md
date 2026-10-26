@@ -1,10 +1,11 @@
-# k6 base scenarios (M2-1), bench runner (M2-2a) and chaos timeline (M2-4a)
+# k6 base scenarios (M2-1), bench/compare/D9 (M2-2) and chaos timeline (M2-4a)
 
 This directory is the load-testing foundation for the HA lab: one shared
 config/HTTP/flow library, five base scenarios, a dockerized single-scenario
 runner and Prometheus remote write. Task 20a adds the lab reset, the
-`bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Task 22a
-adds the data-driven chaos timeline (`ha-failover.js` + `lib/chaos*.js`) that
+`bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Task 20b
+adds run comparison (`compare.sh`) and the D9 bench dashboard. Task 22a adds
+the data-driven chaos timeline (`ha-failover.js` + `lib/chaos*.js`) that
 replays `code/lab/scenarios/*.json` against the chaos-controller.
 
 ## Layout
@@ -211,6 +212,50 @@ Bench-specific overrides: `BENCH_REPORTS_DIR`, `BENCH_DOC_DIR`,
 `BENCH_READY_INTERVAL_SECONDS`, `BENCH_REQUIRED_SERVICES` (default: every
 compose service). Credentials for the reset come from the lab `.env`; they are
 never passed on a command line, written to an archive or committed.
+
+## Compare runs and D9 (M2-2b)
+
+`compare.sh` compares two archived runs from their `manifest.json` (keyMetrics +
+run window) and queries Prometheus for JVM/resource peaks over each run's own
+window (`startEpoch..endEpoch` plus a one-scrape grace). It prints a Markdown
+table (also a `Δ (B-A)` and `Δ% (B vs A)` 涨跌幅 column) and can write it with
+`--out`. k6 metrics come from the manifest; only heap/threads/GC/Hikari peaks
+use Prometheus, so a Prometheus outage shows `n/a` for those rows but still
+exits 0.
+
+```bash
+# Run id resolves under BENCH_REPORTS_DIR; a directory containing manifest.json
+# also works. Both runs must exist for comparison to start.
+bash code/lab/scripts/compare.sh 20261026-145555-smoke neg-threshold
+bash code/lab/scripts/compare.sh <runA> <runB> --out doc/process/benchmark/compare.md
+
+# Point at another reports dir / Prometheus, or tune the query/peak window:
+BENCH_REPORTS_DIR=/path/to/reports PROM_URL=http://127.0.0.1:8080/prom \
+  bash code/lab/scripts/compare.sh <runA> <runB>
+```
+
+Compare env: `BENCH_REPORTS_DIR` (default `<repo>/code/lab/k6/reports`),
+`PROM_URL` (default `http://127.0.0.1:8080/prom`), `BENCH_COMPARE_TIMEOUT_MS`
+(default 5000, per Prometheus query), `BENCH_COMPARE_WINDOW_GRACE_SECONDS`
+(default 15, peak-window margin over the run — must cover at least one 5s
+scrape), `BENCH_COMPARE_OUT` (optional default output file),
+`BENCH_COMPARE_SCRIPT` (override the node script path). Exit codes: `0` on a
+rendered comparison (including Prometheus `n/a` rows), `2` on usage errors
+(wrong arg count, missing `--out` value), unreadable/absent `manifest.json`,
+unsupported `schemaVersion`, invalid timing, or write failure.
+
+409/429 are expected business rejections; the manifest records their counts and
+the table derives a `Expected 429 rate` (expected429 / total requests). They do
+not enter k6 failed/flow/server error rates.
+
+The **D9 压测** dashboard (`code/lab/docker/grafana/dashboards/ha-d9.json`,
+provisioned at UID `ha-d9`) visualizes the same k6 families live. Its `run_id`
+template variable (multi + All, sourced from `k6_http_reqs_total`) filters every
+k6 panel; each panel groups by `run_id` (latency also by `flow`) so multiple or
+"All" selections stay separate. k6 latency is stored in seconds by remote write
+and is multiplied by 1000 to render in ms. App RPS/P95 (`job="seckill-app"`) are
+overlay references and carry no `run_id` label. Fault annotations and a dynamic
+run manifest are deferred to Task 21/22 (chaos).
 
 ## Scenarios
 
@@ -518,6 +563,10 @@ The acceptance run used three ids (smoke, load, spike); see
 - Existing HTTP smoke: `code/lab/scripts/smoke.sh`
 - Task 19 handover: `doc/process/step-19-k6-base.md`
 - Task 20a handover (reset/bench/archive): `doc/process/step-20a-bench-reset.md`
+- Task 20b compare/D9: `code/lab/scripts/compare.sh`,
+  `code/lab/docker/grafana/dashboards/ha-d9.json` and the handover
+  `doc/process/step-20b-compare-d9.md`; sample:
+  `doc/process/benchmark/compare-smoke-vs-neg.md`.
 - Task 21 handover (chaos actions/TTL): `doc/process/step-21-chaos-actions.md`
 - Task 22a handover (scenario JSON + timeline): `doc/process/step-22a-scenario-timeline.md`
 - Scenario schema: `code/lab/scenarios/README.md`
