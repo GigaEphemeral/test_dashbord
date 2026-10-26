@@ -62,7 +62,7 @@ class GuideStateMachineTest {
         GuideScenarioLoader loader = new GuideScenarioLoader(new ObjectMapper(), properties);
         chaos = mock(ChaosActionService.class);
         when(chaos.activeActions()).thenReturn(List.of());
-        when(chaos.stopAll()).thenReturn(new StopAllResult(0, 0));
+        when(chaos.stopAll()).thenReturn(new StopAllResult(0, 0, 0));
         guide = new GuideService(loader, chaos);
     }
 

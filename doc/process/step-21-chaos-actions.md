@@ -33,7 +33,7 @@
 - 每个 kill/freeze 在**执行 Docker 动作之前**先注册并提交 TTL 任务，但回滚在 `APPLYING`（stop/freeze 仍在进行）期间不可抢占；动作以确定失败（未生效）收尾则取消并移除记录，以不确定失败（503/传输错误）收尾则保留 FAILED 交由看门狗补发回滚，不会留下“无人回滚”的停机/冻结容器。
 - kill → 到时 `start`；freeze → 到时 `SIGCONT`；start/restart/resume 为一次性动作，不进入 active，`ttlSeconds` 被忽略。
 - 回滚成功后移除 active、计数并触发一次异步就绪探测；失败则标记 FAILED、`chaos_reverts_total{result="failed"}` 并保留在 `GET /chaos/actions`，看门狗按 `max-revert-attempts` 重试。
-- 看门狗 `scheduleAtFixedRate`：扫过期的 ACTIVE（TTL 任务丢失时的第二道保险）并重试 FAILED；`stop-all` 取消定时任务后立即 start/SIGCONT，成功项清除，失败项保留 FAILED。
+- 看门狗 `scheduleAtFixedRate`：扫过期的 ACTIVE（TTL 任务丢失时的第二道保险）并重试 FAILED；`stop-all` 取消定时任务后立即 start/SIGCONT，成功项清除，失败项保留 FAILED；仍在 `APPLYING`（stop/SIGSTOP 未结束）的动作计入 `pending`：不打穿 APPLYING 门立即回滚，而是打上 stop 请求标记，apply 一完成就在检查点立即回滚（trigger=stop-all，不等 TTL 到期）。
 - 就绪探测在调度线程异步执行，最多等待 `chaos.action-timeout-seconds`，HTTP 线程不阻塞；超时记 `chaos_actions_total{result="unready"}`。
 
 ## 3. Grafana annotation（`annotation/`）
@@ -48,7 +48,7 @@
 |---|---|---|
 | `POST /chaos/instances/{name}/actions` | body `{"action":"kill|start|restart|freeze|resume","ttlSeconds":120}`，ttl 仅 kill/freeze 生效 | 202 `Result<ChaosActionView>` |
 | `GET /chaos/actions` | 仍在跟踪的动作（active/failed） | 200 |
-| `POST /chaos/stop-all` | 立即回滚全部，返回 `{reverted,failed}` | 200 |
+| `POST /chaos/stop-all` | 立即回滚全部，返回 `{reverted,failed,pending}`；`pending` 为仍 APPLYING、将在 apply 完成后立即回滚的动作（不计入 reverted） | 200 |
 | 参数/动作/JSON 非法 | `InvalidChaosActionException`、不可解析 body | 400 `40001` |
 | 非 lab 容器 | 网关白名单 | 403 `40301` |
 | 未知容器 | Docker inspect | 404 `40401` |

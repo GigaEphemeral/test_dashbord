@@ -594,6 +594,84 @@ class ChaosActionServiceTest {
     }
 
     @Test
+    void stopAllDuringApplyDefersRevertUntilStopFinishesThenRevertsImmediately() throws Exception {
+        // Finding: stop-all fired while the Docker stop was still running used
+        // to cancel the TTL task and then skip the APPLYING action, leaving the
+        // container stopped until TTL expiry (up to 600s). The APPLYING gate
+        // must stay (no start before the stop finished), but the stop-all
+        // intent now reverts at the apply-completion checkpoint.
+        gateway.stopGate = new CountDownLatch(1);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        try {
+            var future = caller.submit(() -> service.execute(APP, new ChaosActionRequest("kill", 5)));
+            assertThat(gateway.stopStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            StopAllResult result = service.stopAll();
+            // Honest counting: the APPLYING action is pending, not reverted.
+            assertThat(result.reverted()).isZero();
+            assertThat(result.failed()).isZero();
+            assertThat(result.pending()).isEqualTo(1);
+            assertThat(service.activeActions()).hasSize(1);
+
+            // APPLYING gate intact: no start may run while the stop is in flight.
+            Thread.sleep(300);
+            assertThat(gateway.calls).doesNotContain("start:" + APP);
+
+            gateway.stopGate = null;
+            gateway.stopRelease.countDown();
+            future.get(5, TimeUnit.SECONDS);
+
+            // Immediate revert: TTL was 5s and the watchdog only reverts after
+            // expiry, so a revert completing well before 5s can only come from
+            // the stop-request checkpoint.
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                    assertThat(service.activeActions()).isEmpty());
+            assertThat(gateway.calls).containsExactly("stop:" + APP, "start:" + APP);
+            assertThat(annotator.events).anySatisfy(event ->
+                    assertThat(event.text()).contains("reverted").contains("trigger=stop-all"));
+            assertThat(counter("chaos.reverts", "action", "kill", "result", "success")).isEqualTo(1.0);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    void stopAllMixesActiveRevertAndApplyingPending() throws Exception {
+        gateway.stopGate = new CountDownLatch(1);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        try {
+            service.execute(APP2, new ChaosActionRequest("freeze", 5));
+            var future = caller.submit(() -> service.execute(APP, new ChaosActionRequest("kill", 5)));
+            assertThat(gateway.stopStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            StopAllResult result = service.stopAll();
+            assertThat(result.reverted()).isEqualTo(1);  // the ACTIVE freeze
+            assertThat(result.failed()).isZero();
+            assertThat(result.pending()).isEqualTo(1);   // the APPLYING kill
+            assertThat(gateway.calls).contains("signal:" + APP2 + ":SIGCONT");
+            assertThat(gateway.calls).doesNotContain("start:" + APP);
+            // The pending action is still visible until its revert completes.
+            assertThat(service.activeActions()).hasSize(1);
+
+            gateway.stopGate = null;
+            gateway.stopRelease.countDown();
+            future.get(5, TimeUnit.SECONDS);
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                    assertThat(service.activeActions()).isEmpty());
+            // Relative order of stop:APP vs signal:APP2:SIGCONT is scheduling-dependent
+            // (the gated stop records itself on release); the load-bearing invariants
+            // are "all four calls happened" plus "start strictly after the stop".
+            assertThat(gateway.calls).containsExactlyInAnyOrder(
+                    "signal:" + APP2 + ":SIGSTOP", "stop:" + APP,
+                    "signal:" + APP2 + ":SIGCONT", "start:" + APP);
+            assertThat(gateway.calls.indexOf("start:" + APP))
+                    .isGreaterThan(gateway.calls.indexOf("stop:" + APP));
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     void indeterminateApplyFailureKeepsActionTrackedForWatchdog() {
         // A transport-level Docker failure on stop is indeterminate: the daemon
         // may have applied the stop even though the response was lost. The

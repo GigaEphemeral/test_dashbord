@@ -154,12 +154,13 @@ class ChaosControllerTest {
 
     @Test
     void stopAllReturnsRevertedCount() throws Exception {
-        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(2, 0));
+        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(2, 0, 1));
 
         mockMvc.perform(post("/chaos/stop-all"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.reverted").value(2))
-                .andExpect(jsonPath("$.data.failed").value(0));
+                .andExpect(jsonPath("$.data.failed").value(0))
+                .andExpect(jsonPath("$.data.pending").value(1));
     }
 }

@@ -37,11 +37,14 @@ import java.util.concurrent.TimeUnit;
  * revert task; a watchdog sweep is the second safety net if a task is lost.
  * A revert is only claimable after the faulting Docker call finished
  * ({@link ChaosActionStatus#APPLYING} gate), so a short TTL can never start a
- * container whose stop is still in flight. If the apply fails with an
- * indeterminate transport error the action stays tracked as FAILED and the
- * watchdog performs the revert. Revert failures stay visible as FAILED and are
- * retried up to {@code chaos.max-revert-attempts}. Every Docker call goes
- * through the gateway, which enforces the {@code lab=java-learn} label.</p>
+ * container whose stop is still in flight. Stop-all keeps that gate but never
+ * becomes a no-op: an APPLYING action gets a stop request whose revert fires
+ * at the apply-completion checkpoint instead of waiting for the TTL. If the
+ * apply fails with an indeterminate transport error the action stays tracked
+ * as FAILED and the watchdog performs the revert. Revert failures stay visible
+ * as FAILED and are retried up to {@code chaos.max-revert-attempts}. Every
+ * Docker call goes through the gateway, which enforces the
+ * {@code lab=java-learn} label.</p>
  *
  * <p>The guide can freeze the whole action set: while paused, scheduled reverts
  * and the watchdog do not fire, and every action keeps its remaining TTL.
@@ -54,9 +57,9 @@ import java.util.concurrent.TimeUnit;
  * complete shortly after {@code pause} returns; FAILED retries stay frozen
  * until resume (pausing is deliberately "freeze the whole lab"); a plain
  * {@code stop-all} while paused keeps the paused flag - use
- * {@code POST /lab/guide/reset} (or resume) to unfreeze the service. An action
- * paused while still {@code APPLYING} has no frozen remainder, so resume keeps
- * its original expiry and the watchdog reverts it once that expiry passes.</p>
+ * {@code POST /lab/guide/reset} (or resume) to unfreeze the service. A stop-all
+ * that only deferred an APPLYING action is also subject to the pause: its
+ * checkpoint revert waits for resume, where the watchdog then reverts it.</p>
  */
 @Service
 public class ChaosActionService {
@@ -188,10 +191,12 @@ public class ChaosActionService {
             throw e;
         }
         action.markApplied();
-        if (!action.expiresAt().isAfter(clock.instant())) {
-            // The apply itself outlived the TTL (slow stop + short TTL): revert
-            // now instead of waiting for the next watchdog sweep.
-            autoRevert(action, "ttl");
+        boolean stopRequested = action.isStopRequested();
+        if (stopRequested || !action.expiresAt().isAfter(clock.instant())) {
+            // Either the apply itself outlived the TTL (slow stop + short TTL),
+            // or stop-all fired while the fault was still applying: revert now
+            // instead of waiting for the next watchdog sweep.
+            autoRevert(action, stopRequested ? "stop-all" : "ttl");
         }
 
         countAction(type, target, "accepted");
@@ -301,14 +306,28 @@ public class ChaosActionService {
     /**
      * Reverts every tracked action immediately ({@code start}/{@code SIGCONT}),
      * cancelling scheduled reverts. Successfully reverted actions are cleared;
-     * failures stay visible as FAILED.
+     * failures stay visible as FAILED. Actions whose faulting Docker call is
+     * still running (APPLYING) cannot be reverted yet — reverting would race
+     * the in-flight stop/SIGSTOP — so they are flagged with a stop request,
+     * their TTL task is cancelled and the revert fires at the apply-completion
+     * checkpoint (or via the watchdog if the apply errors indeterminate). They
+     * are reported as {@code pending}, never as reverted.
      */
     public StopAllResult stopAll() {
         int reverted = 0;
         int failed = 0;
+        int pending = 0;
         for (ChaosAction action : List.copyOf(active.values())) {
             action.cancelSchedule();
+            if (action.requestStopWhileApplying()) {
+                pending++;
+                log.warn("stop-all: action {} ({} on {}) is still applying its fault; revert deferred to the "
+                        + "apply-completion checkpoint (TTL task cancelled; will NOT wait for expiry)",
+                        action.id(), action.type().wireName(), action.target());
+                continue;
+            }
             if (!action.claimRevert()) {
+                // A revert is already running concurrently; it fulfils the stop-all intent.
                 continue;
             }
             action.nextRevertAttempt();
@@ -327,8 +346,8 @@ public class ChaosActionService {
                                 + " id=" + action.id() + " failed: " + e.getMessage());
             }
         }
-        log.warn("Chaos stop-all finished: reverted={} failed={}", reverted, failed);
-        return new StopAllResult(reverted, failed);
+        log.warn("Chaos stop-all finished: reverted={} failed={} pending={}", reverted, failed, pending);
+        return new StopAllResult(reverted, failed, pending);
     }
 
     /** Watchdog second safety net; also retries FAILED reverts. */

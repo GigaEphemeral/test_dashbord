@@ -41,6 +41,42 @@ class ChaosActionStateMachineTest {
     }
 
     @Test
+    void stopRequestWhileApplyingIsVisibleAtTheAppliedCheckpoint() {
+        // stop-all may not revert mid-apply, but must not be a no-op either:
+        // the request is recorded and consumed by the apply-completion
+        // checkpoint so the revert runs immediately instead of waiting TTL.
+        ChaosAction action = newKill();
+        assertThat(action.claimRevert()).isFalse();              // APPLYING gate intact
+        assertThat(action.requestStopWhileApplying()).isTrue();  // stop-all defers
+        assertThat(action.isStopRequested()).isTrue();
+        assertThat(action.markApplied()).isTrue();
+        assertThat(action.isStopRequested()).isTrue();           // checkpoint sees the flag
+        assertThat(action.claimRevert()).isTrue();               // deferred revert runs once
+        assertThat(action.claimRevert()).isFalse();
+    }
+
+    @Test
+    void stopRequestIsRefusedOnceTheApplyFinishedSoStopAllRevertsDirectly() {
+        ChaosAction action = newKill();
+        action.markApplied();
+        assertThat(action.requestStopWhileApplying()).isFalse();
+        assertThat(action.isStopRequested()).isFalse();
+        assertThat(action.claimRevert()).isTrue(); // stop-all claims the revert itself
+    }
+
+    @Test
+    void stopRequestOnFailedActionIsRefusedForWatchdogRetryPath() {
+        // Indeterminate apply failure stays FAILED; stop-all must not pretend
+        // to revert it mid-flight. The watchdog retry keeps owning the revert.
+        ChaosAction action = newKill();
+        action.markApplied();
+        action.claimRevert();
+        action.recordFailure(new IllegalStateException("docker start failed"));
+        assertThat(action.requestStopWhileApplying()).isFalse();
+        assertThat(action.claimRevert()).isTrue();
+    }
+
+    @Test
     void failedActionRemainsClaimableForWatchdogRetry() {
         ChaosAction action = newKill();
         action.markApplied();

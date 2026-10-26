@@ -54,7 +54,7 @@ class TokenFilterTest {
     void setUp() {
         when(containerGateway.listLabContainers())
                 .thenReturn(List.of(new ContainerView("jl-app-1", "running", "healthy")));
-        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(0, 0));
+        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(0, 0, 0));
     }
 
     @Test

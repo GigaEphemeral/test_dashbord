@@ -26,6 +26,7 @@ final class ChaosAction {
     private final AtomicReference<ChaosActionStatus> status =
             new AtomicReference<>(ChaosActionStatus.APPLYING);
     private final AtomicInteger revertAttempts = new AtomicInteger();
+    private volatile boolean stopRequested;
     private volatile ScheduledFuture<?> scheduled;
     private volatile long remainingMillis = -1;
     private volatile String lastError;
@@ -88,9 +89,32 @@ final class ChaosAction {
      * Marks the faulting Docker call (stop/SIGSTOP) as finished. Only from now
      * on may a revert be claimed; reverting early would race the still-running
      * stop and could leave the container permanently down.
+     * Synchronized so it pairs atomically with {@link #requestStopWhileApplying()}
+     * under the action monitor: a stop-all flag can never be written in between
+     * the transition to ACTIVE and the checkpoint read in
+     * {@code ChaosActionService.execute()} and then be missed.
      */
-    boolean markApplied() {
+    synchronized boolean markApplied() {
         return status.compareAndSet(ChaosActionStatus.APPLYING, ChaosActionStatus.ACTIVE);
+    }
+
+    /**
+     * Stop-all intent for a fault that is still applying. Returns true only
+     * while APPLYING; the flag is then consumed at the apply-completion
+     * checkpoint so the revert (start/SIGCONT) runs immediately once the fault
+     * lands instead of waiting for the cancelled TTL task. Returns false for
+     * every other status, letting stop-all revert the action directly.
+     */
+    synchronized boolean requestStopWhileApplying() {
+        if (status.get() == ChaosActionStatus.APPLYING) {
+            stopRequested = true;
+            return true;
+        }
+        return false;
+    }
+
+    synchronized boolean isStopRequested() {
+        return stopRequested;
     }
 
     /**

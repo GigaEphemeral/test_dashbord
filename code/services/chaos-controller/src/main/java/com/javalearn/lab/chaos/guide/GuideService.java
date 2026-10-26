@@ -142,7 +142,8 @@ public class GuideService {
             chaosActionService.resume();
         }
         run = Run.idle();
-        log.warn("Guide reset: stop-all reverted={} failed={}", result.reverted(), result.failed());
+        log.warn("Guide reset: stop-all reverted={} failed={} pending={}",
+                result.reverted(), result.failed(), result.pending());
         return view();
     }
 
