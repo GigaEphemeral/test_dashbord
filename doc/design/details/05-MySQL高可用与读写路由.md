@@ -317,3 +317,4 @@ bash code/lab/scripts/db-ha-down.sh --dry-run
 - 方案对比：`doc/design/数据库高可用方案对比.md` §2（方案 A）
 - 步骤交接：`doc/process/step-25a-mysql-cluster-compose.md`（compose 与渲染设计）、`doc/process/step-25b-mysql-live-bootstrap.md`（首次实机引导、8.4 Router 修复、内存实测）
 - 同目录：`04-Redis高可用.md`、`06-故障注入与实验向导.md`、`11-配置与安全边界.md`
+- 汇总交接：`doc/process/阶段交接-2026-10-26.md`（缺陷/TODO 总表与历史硬编码清单）
