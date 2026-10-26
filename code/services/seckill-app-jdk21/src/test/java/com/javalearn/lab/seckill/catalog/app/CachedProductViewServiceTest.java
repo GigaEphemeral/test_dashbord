@@ -2,12 +2,15 @@ package com.javalearn.lab.seckill.catalog.app;
 
 import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
+import com.javalearn.lab.seckill.catalog.cache.AvalancheLimiter;
 import com.javalearn.lab.seckill.catalog.cache.LogicalStaleStore;
 import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
+import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductPenetrationDefense;
 import com.javalearn.lab.seckill.catalog.domain.Product;
+import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
 import com.javalearn.lab.seckill.lab.config.TestLabCacheProperties;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseModeService;
@@ -76,7 +79,36 @@ class CachedProductViewServiceTest {
                         Duration.ofSeconds(120), Duration.ofSeconds(30), System::nanoTime),
                 Runnable::run, id -> Optional.empty(), (id, value) -> Optional.empty(),
                 properties, System::currentTimeMillis, registry);
-        this.service = new CachedProductViewService(readService, breakdown);
+        // The avalanche stage dispatches first and, in off mode, delegates to the
+        // breakdown stage unchanged — so these cases still prove the M4-1/M4-2
+        // contracts of the complete read path.
+        LabCacheAvalancheProperties avalanche = avalancheProperties();
+        ProductAvalancheDefense avalancheDefense = new ProductAvalancheDefense(modeService,
+                breakdown,
+                new LogicalStaleStore(avalanche.getL1Cache().getMaxEntries(),
+                        Duration.ofSeconds(avalanche.getL1Cache().getStaleWindowSeconds()),
+                        Duration.ofSeconds(avalanche.getL1Cache().getRefreshIntervalSeconds()),
+                        System::nanoTime),
+                Runnable::run, (id, value) -> Optional.empty(),
+                new AvalancheLimiter(avalanche.getDbFallback().getPermits(),
+                        avalanche.getDbFallback().getPeriodMs(), System::currentTimeMillis),
+                avalanche, System::currentTimeMillis, registry);
+        this.service = new CachedProductViewService(readService, avalancheDefense);
+    }
+
+    private static LabCacheAvalancheProperties avalancheProperties() {
+        LabCacheAvalancheProperties config = new LabCacheAvalancheProperties();
+        config.getTtlJitter().setPercent(20D);
+        config.getL1Cache().setRefreshIntervalSeconds(10L);
+        config.getL1Cache().setStaleWindowSeconds(60L);
+        config.getL1Cache().setMaxEntries(10_000L);
+        config.getL1Cache().setRefreshPoolSize(2);
+        config.getL1Cache().setRefreshQueueCapacity(100);
+        config.getL1Cache().setKeepAliveSeconds(60L);
+        config.getL1Cache().setThreadNamePrefix("avalanche-l1-refresh");
+        config.getDbFallback().setPermits(50L);
+        config.getDbFallback().setPeriodMs(1_000L);
+        return config;
     }
 
     @BeforeEach

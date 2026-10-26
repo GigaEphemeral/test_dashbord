@@ -11,6 +11,7 @@ package com.javalearn.lab.seckill.lab.api;
  */
 public record CacheStateResponse(Defense defense,
                                  Breakdown breakdown,
+                                 Avalanche avalanche,
                                  Dataset dataset,
                                  Keys keys,
                                  Bloom bloom,
@@ -40,7 +41,33 @@ public record CacheStateResponse(Defense defense,
                             long refreshInFlight) {
     }
 
-    /** Configuration versus reality for the seeded dataset. */
+    /**
+     * What is protecting the product cache against an L2 avalanche right now:
+     * the current mode key ({@code ttl-jitter} / {@code l1-cache} /
+     * {@code db-fallback}, or whichever other defense is active) plus every
+     * parameter of the avalanche strategies and their live counters, so the
+     * console can show the active strategy without inferring it from metrics.
+     *
+     * <p>{@code l1StaleWindowSeconds} is the documented worst-case staleness of
+     * the {@code l1-cache} posture; {@code limiterPermits}/{@code limiterPeriodMs}
+     * are the DB-fallback budget and {@code limiterRejected} the fast-failed
+     * reads of this instance.</p>
+     */
+    public record Avalanche(String strategy,
+                            boolean ttlJitterActive,
+                            double ttlJitterPercent,
+                            boolean l1CacheActive,
+                            long l1RefreshIntervalSeconds,
+                            long l1StaleWindowSeconds,
+                            long l1StaleEntriesCached,
+                            long l1RefreshInFlight,
+                            boolean dbFallbackActive,
+                            long limiterPermits,
+                            long limiterPeriodMs,
+                            long limiterAcquired,
+                            long limiterRejected) {
+    }
+
     public record Dataset(long startId,
                           long endId,
                           long productCount,

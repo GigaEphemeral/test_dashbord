@@ -3,11 +3,14 @@ package com.javalearn.lab.seckill.lab.cache;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
+import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
+import com.javalearn.lab.seckill.catalog.cache.TtlJitter;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
+import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseMode;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseModeService;
@@ -80,6 +83,9 @@ public final class CacheExperimentDataService {
     private final NullValueMarkerStore markerStore;
     private final CacheDefenseModeService modeService;
     private final ProductBreakdownDefense breakdownDefense;
+    private final ProductAvalancheDefense avalancheDefense;
+    private final TtlJitter ttlJitter;
+    private final LabCacheAvalancheProperties avalancheProperties;
     private final LabToggleService toggleService;
     private final CacheManager cacheManager;
 
@@ -91,6 +97,9 @@ public final class CacheExperimentDataService {
                                       NullValueMarkerStore markerStore,
                                       CacheDefenseModeService modeService,
                                       ProductBreakdownDefense breakdownDefense,
+                                      ProductAvalancheDefense avalancheDefense,
+                                      TtlJitter ttlJitter,
+                                      LabCacheAvalancheProperties avalancheProperties,
                                       LabToggleService toggleService,
                                       CacheManager cacheManager) {
         this.properties = Objects.requireNonNull(properties, "properties");
@@ -101,6 +110,9 @@ public final class CacheExperimentDataService {
         this.markerStore = Objects.requireNonNull(markerStore, "markerStore");
         this.modeService = Objects.requireNonNull(modeService, "modeService");
         this.breakdownDefense = Objects.requireNonNull(breakdownDefense, "breakdownDefense");
+        this.avalancheDefense = Objects.requireNonNull(avalancheDefense, "avalancheDefense");
+        this.ttlJitter = Objects.requireNonNull(ttlJitter, "ttlJitter");
+        this.avalancheProperties = Objects.requireNonNull(avalancheProperties, "avalancheProperties");
         this.toggleService = Objects.requireNonNull(toggleService, "toggleService");
         this.cacheManager = Objects.requireNonNull(cacheManager, "cacheManager");
     }
@@ -147,8 +159,13 @@ public final class CacheExperimentDataService {
         }
 
         log.info("Cache experiment seed finished: range=[{},{}], inserted={}, present={},"
-                        + " avalancheKeys={}, hotKey={}, bloomIds={}",
-                startId, endId, inserted, rowsInRange, avalancheKeys, hotKeyId, bloomIdsAdded);
+                        + " avalancheKeys={}, avalancheTtlSeconds={}, ttlJitter={}, hotKey={}, bloomIds={}",
+                startId, endId, inserted, rowsInRange, avalancheKeys,
+                seed.getAvalancheTtlSeconds(),
+                modeService.current() == CacheDefenseMode.TTL_JITTER
+                        ? "±" + avalancheProperties.getTtlJitter().getPercent() + "%"
+                        : "off",
+                hotKeyId, bloomIdsAdded);
         return new CacheSeedResponse(startId, endId, seed.getProductCount(), inserted,
                 present.size(), rowsInRange, avalancheKeys, seed.getAvalancheTtlSeconds(),
                 hotKeyId, hotKeyWritten, bloomIdsAdded, bloomInitialised,
@@ -191,6 +208,7 @@ public final class CacheExperimentDataService {
                 new CacheStateResponse.Defense(modeService.current().key(),
                         toggleService.isEnabled(LabToggle.CACHE)),
                 breakdownView(),
+                avalancheView(),
                 new CacheStateResponse.Dataset(startId, endId, seed.getProductCount(), rowsInRange,
                         Math.max(0L, seed.getProductCount() - rowsInRange),
                         seed.getAvalancheKeyCount(), seed.getAvalancheTtlSeconds(), hotKeyId),
@@ -219,6 +237,26 @@ public final class CacheExperimentDataService {
                 logical.getLogicalTtlSeconds(), logical.getRetentionSeconds(),
                 logical.getRefreshPoolSize(), logical.getRefreshQueueCapacity(),
                 breakdownDefense.staleEntries(), breakdownDefense.refreshInFlight());
+    }
+
+    /**
+     * The active avalanche strategy plus its parameters and live guard gauges;
+     * the console reads this to show what is protecting the product cache
+     * against an L2 avalanche right now (design 8.4 雪崩 row).
+     */
+    private CacheStateResponse.Avalanche avalancheView() {
+        CacheDefenseMode mode = modeService.current();
+        LabCacheAvalancheProperties.TtlJitter jitter = avalancheProperties.getTtlJitter();
+        LabCacheAvalancheProperties.L1Cache l1 = avalancheProperties.getL1Cache();
+        LabCacheAvalancheProperties.DbFallback fallback = avalancheProperties.getDbFallback();
+        return new CacheStateResponse.Avalanche(mode.key(),
+                mode == CacheDefenseMode.TTL_JITTER, jitter.getPercent(),
+                mode == CacheDefenseMode.L1_CACHE, l1.getRefreshIntervalSeconds(),
+                l1.getStaleWindowSeconds(),
+                avalancheDefense.l1StaleEntries(), avalancheDefense.l1RefreshInFlight(),
+                mode == CacheDefenseMode.DB_FALLBACK, fallback.getPermits(),
+                fallback.getPeriodMs(),
+                avalancheDefense.limiterAcquired(), avalancheDefense.limiterRejected());
     }
 
     /**

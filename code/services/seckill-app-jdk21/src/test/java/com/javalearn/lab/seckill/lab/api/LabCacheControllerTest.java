@@ -158,6 +158,8 @@ class LabCacheControllerTest {
                 new CacheStateResponse.Defense("bloom", true),
                 new CacheStateResponse.Breakdown("bloom", false, false, 200L, 2_000L, "db",
                         30L, 120L, 2, 100, 0L, 0L),
+                new CacheStateResponse.Avalanche("bloom", false, 20.0D, false, 10L, 60L,
+                        0L, 0L, false, 50L, 1_000L, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 1_000L, 0L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(true, 12L, 201L, 200L, true),
                 new CacheStateResponse.Bloom("bloom:product-ids", true, 1_020L, 10_000L, 0.01D),
@@ -168,6 +170,7 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data", hasKey("defense")))
                 .andExpect(jsonPath("$.data", hasKey("breakdown")))
+                .andExpect(jsonPath("$.data", hasKey("avalanche")))
                 .andExpect(jsonPath("$.data", hasKey("dataset")))
                 .andExpect(jsonPath("$.data", hasKey("keys")))
                 .andExpect(jsonPath("$.data", hasKey("bloom")))
@@ -179,6 +182,11 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.data.breakdown.logicalExpireActive").value(false))
                 .andExpect(jsonPath("$.data.breakdown.mutexOnLockTimeout").value("db"))
                 .andExpect(jsonPath("$.data.breakdown.refreshPoolSize").value(2))
+                .andExpect(jsonPath("$.data.avalanche.strategy").value("bloom"))
+                .andExpect(jsonPath("$.data.avalanche.ttlJitterActive").value(false))
+                .andExpect(jsonPath("$.data.avalanche.ttlJitterPercent").value(20.0D))
+                .andExpect(jsonPath("$.data.avalanche.l1StaleWindowSeconds").value(60))
+                .andExpect(jsonPath("$.data.avalanche.limiterPermits").value(50))
                 .andExpect(jsonPath("$.data.dataset.rowsInRange").value(1_000))
                 .andExpect(jsonPath("$.data.dataset.missingRows").value(0))
                 .andExpect(jsonPath("$.data.keys.redisReachable").value(true))
@@ -197,6 +205,8 @@ class LabCacheControllerTest {
                 new CacheStateResponse.Defense("off", true),
                 new CacheStateResponse.Breakdown("off", false, false, 200L, 2_000L, "db",
                         30L, 120L, 2, 100, 0L, 0L),
+                new CacheStateResponse.Avalanche("off", false, 20.0D, false, 10L, 60L,
+                        0L, 0L, false, 50L, 1_000L, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 0L, 1_000L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(false, 0L, 0L, 0L, false),
                 new CacheStateResponse.Bloom("bloom:product-ids", false, 0L, 10_000L, 0.01D),

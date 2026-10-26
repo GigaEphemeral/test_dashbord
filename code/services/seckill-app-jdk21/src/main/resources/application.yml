@@ -205,6 +205,40 @@ app:
           keep-alive-seconds: ${LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60}
           thread-name-prefix: ${LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh}
 
+      # 雪崩 (cache avalanche) defense, design 8.4 row three. Three strategies on
+      # the same runtime switch: ttl-jitter spreads every product L2 write by
+      # ±percent; l1-cache is the L1-first posture (fresh for one refresh
+      # interval, then stale + one async refresh, never stale beyond the window);
+      # db-fallback bounds database reads with a fixed permits/period budget and
+      # fast fails with 42901 beyond it. Every number is externalized.
+      avalanche:
+        ttl-jitter:
+          # Uniform spread around the TTL the L2 write actually produced, so the
+          # 200 identical-TTL experiment keys stop expiring in the same second.
+          percent: ${LAB_CACHE_TTL_JITTER_PERCENT:20}
+        l1-cache:
+          # A value is fresh this long; after that it is served stale while ONE
+          # async refresh rebuilds it. Design 8.4: refresh interval 10s.
+          refresh-interval-seconds: ${LAB_CACHE_L1_REFRESH_INTERVAL_SECONDS:10}
+          # Worst-case staleness of the L1-first posture. Design 8.4 caps the
+          # multi-instance inconsistency window at the L1 TTL (60s default in
+          # app.lab.cache.preheat.l1.expire-after-write-seconds).
+          stale-window-seconds: ${LAB_CACHE_L1_STALE_WINDOW_SECONDS:60}
+          # Per-instance bounded mirror; a key storm cannot grow it.
+          max-entries: ${LAB_CACHE_L1_MAX_ENTRIES:10000}
+          # Bounded refresh pool; saturation is counted as
+          # cache_avalanche_l1_refresh{result="rejected"} and stale keeps serving.
+          refresh-pool-size: ${LAB_CACHE_L1_REFRESH_POOL_SIZE:2}
+          refresh-queue-capacity: ${LAB_CACHE_L1_REFRESH_QUEUE_CAPACITY:100}
+          keep-alive-seconds: ${LAB_CACHE_L1_KEEP_ALIVE_SECONDS:60}
+          thread-name-prefix: ${LAB_CACHE_L1_REFRESH_THREAD_PREFIX:avalanche-l1-refresh}
+        db-fallback:
+          # At most this many database reads per period across all avalanche
+          # traffic; the rest fail fast with the standard 42901 rate-limit error
+          # instead of joining the stampede. Both numbers are validated positive.
+          permits: ${LAB_CACHE_DB_FALLBACK_PERMITS:50}
+          period-ms: ${LAB_CACHE_DB_FALLBACK_PERIOD_MS:1000}
+
       # Caffeine 预热 (M4-3, design 8.4). The hot-key tracker is per instance and
       # capped; the Top-N is published to ONE shared Redis ZSet so every
       # instance preheats from the same list. Startup/periodic preheat warms L1

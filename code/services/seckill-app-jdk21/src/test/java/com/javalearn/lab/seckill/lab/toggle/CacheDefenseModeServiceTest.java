@@ -81,10 +81,41 @@ class CacheDefenseModeServiceTest {
         assertThat(CacheDefenseMode.fromKey("bloom")).isSameAs(CacheDefenseMode.BLOOM);
         assertThat(CacheDefenseMode.fromKey("mutex")).isSameAs(CacheDefenseMode.MUTEX);
         assertThat(CacheDefenseMode.fromKey("logical-expire")).isSameAs(CacheDefenseMode.LOGICAL_EXPIRE);
+        assertThat(CacheDefenseMode.fromKey("ttl-jitter")).isSameAs(CacheDefenseMode.TTL_JITTER);
+        assertThat(CacheDefenseMode.fromKey("l1-cache")).isSameAs(CacheDefenseMode.L1_CACHE);
+        assertThat(CacheDefenseMode.fromKey("db-fallback")).isSameAs(CacheDefenseMode.DB_FALLBACK);
         assertThat(CacheDefenseMode.fromKey("")).isNull();
         assertThat(CacheDefenseMode.fromKey(null)).isNull();
         assertThat(CacheDefenseMode.values())
                 .extracting(CacheDefenseMode::key)
-                .containsExactly("off", "null-cache", "bloom", "mutex", "logical-expire");
+                .containsExactly("off", "null-cache", "bloom", "mutex", "logical-expire",
+                        "ttl-jitter", "l1-cache", "db-fallback");
+    }
+
+    @Test
+    void theAvalancheModesAreAdditiveAndSeedable() {
+        LabCacheProperties properties = TestLabCacheProperties.defaults();
+        properties.getPenetration().setMode("db-fallback");
+        CacheDefenseModeService seeded = new CacheDefenseModeService(properties);
+
+        assertThat(seeded.current()).isSameAs(CacheDefenseMode.DB_FALLBACK);
+
+        seeded.update("ttl-jitter");
+        assertThat(seeded.current()).isSameAs(CacheDefenseMode.TTL_JITTER);
+        seeded.update("l1-cache");
+        assertThat(seeded.current()).isSameAs(CacheDefenseMode.L1_CACHE);
+        seeded.update("off");
+        assertThat(seeded.current()).isSameAs(CacheDefenseMode.OFF);
+    }
+
+    @Test
+    void anAvalancheModeWithTheWrongCasingIsStillRejected() {
+        CacheDefenseModeService service =
+                new CacheDefenseModeService(TestLabCacheProperties.defaults());
+
+        assertThatThrownBy(() -> service.update("TTL-Jitter"))
+                .isInstanceOf(BizException.class)
+                .hasMessage("Unknown mode: TTL-Jitter");
+        assertThat(service.current()).isSameAs(CacheDefenseMode.OFF);
     }
 }
