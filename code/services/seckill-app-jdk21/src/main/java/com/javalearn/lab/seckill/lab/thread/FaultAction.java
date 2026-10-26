@@ -310,7 +310,14 @@ final class FaultAction {
         // instance, enable app.lab.thread.deadlock.true-deadlock instead.
         for (int i = 0; i < total; i++) {
             final boolean firstOrder = (i % 2 == 0);
+            // Half-period stagger between the two orders. Without it the cycles run in
+            // lockstep: one worker holds A while the other holds B, so they never
+            // contend on the SAME monitor and BLOCKED appears only by scheduling luck.
+            final long phaseOffset = firstOrder ? 0L : Math.max(1L, hold / 2);
             register(run("worker", () -> {
+                if (phaseOffset > 0L) {
+                    sleep(phaseOffset);
+                }
                 Object first = firstOrder ? monitorA : monitorB;
                 Object second = firstOrder ? monitorB : monitorA;
                 while (!stopped && !Thread.currentThread().isInterrupted()) {

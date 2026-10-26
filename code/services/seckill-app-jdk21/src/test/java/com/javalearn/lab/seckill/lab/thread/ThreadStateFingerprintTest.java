@@ -31,7 +31,7 @@ class ThreadStateFingerprintTest {
     @Test
     void defaultDeadlockContentionReallyBlocksParticipants() {
         LabThreadProperties properties = TestLabThreadProperties.defaults();
-        properties.getDeadlock().setHoldMs(250L); // widen the contention window per cycle
+        properties.getDeadlock().setHoldMs(500L); // widen the contention window per cycle
         boolean blocked = false;
         for (int attempt = 0; attempt < 5 && !blocked; attempt++) {
             FaultAction action = newAction(FaultMode.DEADLOCK, properties);
