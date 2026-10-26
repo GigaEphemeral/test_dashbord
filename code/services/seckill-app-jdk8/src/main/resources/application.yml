@@ -1,0 +1,147 @@
+# =============================================================================
+# seckill-app-jdk8 — EOL teaching shell (design section 10, D7 JDK comparison).
+# Every runtime path, port, pool size and timeout is a ${ENV:default}
+# placeholder (工程规约 section 1); nothing here is fixed in Java code.
+# Profiles: demo (default, H2 in memory, boots with NO external services so
+# startup time is comparable) and mysql (the shared lab database).
+# =============================================================================
+spring:
+  application:
+    name: ${APP_NAME:seckill-app-jdk8}
+  profiles:
+    active: ${APP_PROFILE:demo}
+  lifecycle:
+    # pairs with server.shutdown=graceful below
+    timeout-per-shutdown-phase: ${SHUTDOWN_TIMEOUT_PER_PHASE:30s}
+
+  jpa:
+    open-in-view: ${JPA_OPEN_IN_VIEW:false}
+    properties:
+      hibernate.jdbc.time_zone: ${JPA_JDBC_TIME_ZONE:UTC}
+
+  # demo/mysql override these per profile below; the locations stay external so
+  # an operator can point at another seed script without a rebuild.
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:always}
+      encoding: ${SQL_INIT_ENCODING:UTF-8}
+      platform: ${SQL_INIT_PLATFORM:h2}
+      schema-locations: ${SQL_SCHEMA_LOCATIONS:classpath:schema.sql}
+      data-locations: ${SQL_DATA_LOCATIONS:classpath:data.sql}
+
+  datasource:
+    hikari:
+      pool-name: ${DB_POOL_NAME:seckill-jdk8-pool}
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+      idle-timeout: ${DB_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1800000}
+      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:5000}
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: ${SERVER_SHUTDOWN:graceful}
+  tomcat:
+    # D2/D7 read tomcat_threads_busy_threads; Boot 2 keeps the MBean registry on
+    # by default, the switch is here so both shells expose the same knob.
+    mbeanregistry:
+      enabled: ${TOMCAT_MBEAN_REGISTRY_ENABLED:true}
+    threads:
+      max: ${TOMCAT_THREADS_MAX:200}
+      min-spare: ${TOMCAT_THREADS_MIN_SPARE:10}
+    accept-count: ${TOMCAT_ACCEPT_COUNT:100}
+    max-connections: ${TOMCAT_MAX_CONNECTIONS:8192}
+    connection-timeout: ${TOMCAT_CONNECTION_TIMEOUT_MS:20000}
+
+observability:
+  env: ${OBSERVABILITY_ENV:dev}
+  instance: ${INSTANCE_ID:app-jdk8-local}
+
+info:
+  app:
+    name: ${spring.application.name}
+    runtime: ${INFO_RUNTIME:jre8}
+    shell: ${INFO_SHELL:seckill-app-jdk8}
+    purpose: ${INFO_PURPOSE:D7 dual-JDK comparison, EOL teaching-only}
+
+management:
+  # Boot 2.7 keeps the info.* -> /actuator/info contributor OFF by default
+  # (verified in the autoconfiguration report); turn it on so the endpoint
+  # carries the runtime identity the D7 panel needs.
+  info:
+    env:
+      enabled: ${INFO_ENV_CONTRIBUTOR_ENABLED:true}
+  endpoints:
+    web:
+      exposure:
+        include: ${MANAGEMENT_ENDPOINTS_INCLUDE:health,info,metrics,prometheus}
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:never}
+      probes:
+        enabled: ${HEALTH_PROBES_ENABLED:true}
+      group:
+        # Same group name the JDK 21 shell exposes for the container gate
+        # (/actuator/health/app), so a later compose service can reuse it
+        # unchanged. This shell has no Redis/L2 contributor, so the gate is the
+        # database plus the framework ping indicator.
+        app:
+          include: ${HEALTH_GROUP_APP_INCLUDE:db,ping}
+  metrics:
+    tags:
+      # Mirrors the common tags platform-observability adds to the JDK 21 shell
+      # (that module is Boot 3 / jakarta and cannot be reused here), so the D7
+      # queries hit identical label names on both runtimes.
+      app: ${spring.application.name}
+      env: ${observability.env}
+      instance: ${observability.instance}
+      "[jvm.version]": ${java.version}
+    distribution:
+      # P99 needs the histogram buckets (same settings the JDK 21 shell gets from
+      # platform-observability's EnvironmentPostProcessor; declared here instead).
+      percentiles-histogram:
+        http.server.requests: ${HTTP_METRIC_PERCENTILES_HISTOGRAM:true}
+      slo:
+        http.server.requests: ${HTTP_METRIC_SLO_BUCKETS:50ms,100ms,200ms,300ms,500ms,800ms,1s,2s}
+      minimum-expected-value:
+        http.server.requests: ${HTTP_METRIC_MIN_EXPECTED:50ms}
+      maximum-expected-value:
+        http.server.requests: ${HTTP_METRIC_MAX_EXPECTED:2s}
+
+---
+# demo profile: H2 in memory, schema.sql + data.sql seed, no external service.
+spring:
+  config:
+    activate:
+      on-profile: demo
+  datasource:
+    url: ${DEMO_DB_URL:jdbc:h2:mem:seckill-jdk8;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false}
+    username: ${DEMO_DB_USER:sa}
+    password: ${DEMO_DB_PASSWORD:}
+    driver-class-name: ${DEMO_DB_DRIVER:org.h2.Driver}
+  jpa:
+    database-platform: ${JPA_DATABASE_PLATFORM:org.hibernate.dialect.H2Dialect}
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:none}
+
+---
+# mysql profile: the shared lab database (same tables the JDK 21 shell's Flyway
+# migrations create, so the seed rows are identical by construction).
+# Schema is NOT created here: the lab MySQL is owned by Flyway in seckill-app-jdk21.
+spring:
+  config:
+    activate:
+      on-profile: mysql
+  datasource:
+    url: ${DB_URL:jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${MYSQL_USER:seckill}
+    password: ${MYSQL_PASSWORD:seckill}
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+  jpa:
+    database-platform: ${JPA_DATABASE_PLATFORM:org.hibernate.dialect.MySQL8Dialect}
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:never}

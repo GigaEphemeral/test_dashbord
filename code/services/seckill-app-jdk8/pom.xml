@@ -13,4 +13,115 @@
 
   <artifactId>seckill-app-jdk8</artifactId>
   <packaging>jar</packaging>
+
+  <!-- EOL teaching shell (design section 10): Spring Boot 2.7.18 on Java 8, the
+       JDK 8 half of the D7 dual-runtime comparison. The version property is the
+       reactor root's spring-boot-jdk8.version (2.7.18) so both shells keep one
+       source of truth; this module overrides the root's release 21 back to 8. -->
+  <properties>
+    <maven.compiler.release>8</maven.compiler.release>
+    <!-- Spring MVC needs parameter names for @PathVariable/@RequestParam binding. -->
+    <maven.compiler.parameters>true</maven.compiler.parameters>
+    <spring-boot.version>${spring-boot-jdk8.version}</spring-boot.version>
+    <start-class>com.javalearn.lab.seckill.jdk8.SeckillJdk8Application</start-class>
+    <!-- Pin: Boot 2.7.18's BOM only manages the NEW com.mysql:mysql-connector-j
+         coordinates, not the legacy mysql:mysql-connector-java this shell uses.
+         Same driver version the BOM selects (8.0.33, still Java 8 compatible). -->
+    <mysql-connector-java.version>8.0.33</mysql-connector-java.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Shared Java 8 bytecode (maven.compiler.release 8 in both modules), so the
+         EOL runtime can load them. platform-observability is Spring Boot 3/jakarta
+         and is deliberately NOT a dependency. -->
+    <dependency>
+      <groupId>com.javalearn.lab</groupId>
+      <artifactId>platform-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.javalearn.lab</groupId>
+      <artifactId>seckill-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- 1.9.17 (Boot 2.7.18 BOM) exports the same metric names the D7 panel reads. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+
+    <!-- Hot read path only: catalog product via JPA. No Flyway/Redis/Caffeine/AMQP
+         in this shell (see step-33 handover, deliberately-left-undone list). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <!-- Boot 2.7 artifact id (mysql-connector-j is the Boot 3 line); version pinned
+         above because the 2.7.18 BOM only manages the new coordinates. -->
+    <dependency>
+      <groupId>mysql</groupId>
+      <artifactId>mysql-connector-java</artifactId>
+      <version>${mysql-connector-java.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <!-- demo profile: boot with no external services so startup time is comparable. -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- repackage so the EOL JRE can run `java -jar target/seckill-app-jdk8-....jar`. -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring-boot.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <mainClass>${start-class}</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>
