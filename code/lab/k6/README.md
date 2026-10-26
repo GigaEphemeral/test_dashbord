@@ -403,6 +403,19 @@ Extra arguments before the script are passed to `k6 run`, for example
 `bash code/lab/k6/run.sh smoke --quiet`. The runner always adds
 `-o experimental-prometheus-rw`, so do not add a second output.
 
+### Stack-free checks (no running lab required)
+
+The seckill status/poll branches and config validation are covered by a
+zero-dependency node harness (k6 modules stubbed under `test/`):
+
+```bash
+node --test "code/lab/k6/test/*.test.mjs"
+
+# static script/option validation inside the pinned image, no network:
+docker run --rm --network none -v "$PWD/code/lab/k6:/scripts:ro" \
+  grafana/k6:1.3.0 inspect /scripts/scenarios/smoke.js
+```
+
 ### Local / host overrides
 
 - k6 binary on the host (stack published at loopback):
