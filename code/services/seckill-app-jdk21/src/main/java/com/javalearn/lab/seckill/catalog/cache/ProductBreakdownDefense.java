@@ -260,8 +260,10 @@ public final class ProductBreakdownDefense {
 
     private void refreshOne(long id, ProductPenetrationDefense.ProductFinder finder) {
         try {
-            Optional<ProductResponse> fresh = finder.find(id);
-            fresh.ifPresent(value -> staleStore.put(id, value, nowMillis.getAsLong()));
+            // Through querySource so the background DB read is counted in
+            // cache_db_fallbacks{reason="breakdown"} and its result refreshes
+            // the stale entry's logical deadline.
+            Optional<ProductResponse> fresh = querySource(id, finder);
             if (fresh.isPresent()) {
                 refreshSucceeded.increment();
             } else {

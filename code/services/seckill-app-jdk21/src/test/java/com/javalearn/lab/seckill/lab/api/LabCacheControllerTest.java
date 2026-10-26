@@ -84,7 +84,7 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.mode").value("off"));
 
-        for (String mode : List.of("null-cache", "bloom", "off")) {
+        for (String mode : List.of("null-cache", "bloom", "mutex", "logical-expire", "off")) {
             mockMvc.perform(post("/lab/cache/mode")
                             .header(LabTokenFilter.TOKEN_HEADER, TOKEN)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -174,6 +174,11 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.data", hasKey("nullCache")))
                 .andExpect(jsonPath("$.data.defense.mode").value("bloom"))
                 .andExpect(jsonPath("$.data.defense.cacheToggleEnabled").value(true))
+                .andExpect(jsonPath("$.data.breakdown.strategy").value("bloom"))
+                .andExpect(jsonPath("$.data.breakdown.mutexActive").value(false))
+                .andExpect(jsonPath("$.data.breakdown.logicalExpireActive").value(false))
+                .andExpect(jsonPath("$.data.breakdown.mutexOnLockTimeout").value("db"))
+                .andExpect(jsonPath("$.data.breakdown.refreshPoolSize").value(2))
                 .andExpect(jsonPath("$.data.dataset.rowsInRange").value(1_000))
                 .andExpect(jsonPath("$.data.dataset.missingRows").value(0))
                 .andExpect(jsonPath("$.data.keys.redisReachable").value(true))

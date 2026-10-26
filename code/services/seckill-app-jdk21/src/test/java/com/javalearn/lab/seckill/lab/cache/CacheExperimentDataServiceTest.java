@@ -304,6 +304,24 @@ class CacheExperimentDataServiceTest {
         // protection is backed by a usable filter, not just by the switch.
         assertThat(state.bloom().key()).isEqualTo("bloom:product-ids");
         assertThat(state.bloom().initialised()).isTrue();
+
+        // M4-2: the same view names the ACTIVE breakdown strategy, so the
+        // console can show what protects the hot key without inferring it.
+        modeService.update("mutex");
+        CacheStateResponse mutexState = service.state();
+        assertThat(mutexState.breakdown().strategy()).isEqualTo("mutex");
+        assertThat(mutexState.breakdown().mutexActive()).isTrue();
+        assertThat(mutexState.breakdown().logicalExpireActive()).isFalse();
+        assertThat(mutexState.breakdown().mutexWaitMs()).isEqualTo(200L);
+        assertThat(mutexState.breakdown().mutexOnLockTimeout()).isEqualTo("db");
+
+        modeService.update("logical-expire");
+        CacheStateResponse logicalState = service.state();
+        assertThat(logicalState.breakdown().strategy()).isEqualTo("logical-expire");
+        assertThat(logicalState.breakdown().logicalExpireActive()).isTrue();
+        assertThat(logicalState.breakdown().logicalTtlSeconds()).isEqualTo(30L);
+        assertThat(logicalState.breakdown().retentionSeconds()).isEqualTo(120L);
+        assertThat(logicalState.breakdown().refreshPoolSize()).isEqualTo(2);
     }
 
     private long totalRows() {
