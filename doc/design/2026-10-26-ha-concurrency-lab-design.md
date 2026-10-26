@@ -92,7 +92,7 @@ flowchart LR
 | Spring 应用实例 | 3 | 同一镜像，Nginx 后负载均衡 | 3 × 768MB |
 | Nginx | 1 | 负载均衡、被动健康检查、静态资源、反向代理 | 64MB |
 | Redis Sentinel | 6 | 1 主 + 2 从 + 3 哨兵，每节点 1 个 exporter | ≈ 800MB |
-| MySQL InnoDB Cluster | 3 + 1 | 3 个 MySQL 节点 + MySQL Router；每节点 exporter | ≈ 1.8GB |
+| MySQL InnoDB Cluster | 3 + 1 | 3 个 MySQL 节点 + MySQL Router；每节点 exporter | ≈ 2.1GB（实测 1.87GB，2026-10-27 首跑验收） |
 | RabbitMQ | 1 | 单节点 + 管理插件 + Prometheus 插件 | 384MB |
 | 观测栈组件 | 各 1 | Prometheus / Grafana / Tempo / OTel Collector / cAdvisor；另有 nginx、rabbitmq、mysqld、redis 各节点 exporter | ≈ 1.4GB |
 | Toxiproxy | 1（`chaos-proxy` profile） | 置于应用与 Redis/MySQL 之间，注入延迟/断网 | 64MB |
