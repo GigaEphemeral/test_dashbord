@@ -80,3 +80,33 @@ chaos:
     timeout-seconds: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:3}
     # Optional extra comma-separated tags; mandatory tags are added in code.
     tags: ${CHAOS_ANNOTATION_TAGS:}
+  # MySQL InnoDB Cluster membership metrics for panel D11 (design §8.3).
+  # Read-only: one SELECT every interval through `docker exec` into one node.
+  # Enabled by default so the db-ha stack exposes the metrics without extra
+  # wiring; a missing container only sets mysql_cluster_probe_up=0 (one WARN).
+  # No credential is configured here: the default command expands MYSQL_PWD
+  # inside the node from the container's own env (name in password-env-var).
+  mysql-cluster:
+    enabled: ${CHAOS_MYSQL_CLUSTER_ENABLED:true}
+    interval-seconds: ${CHAOS_MYSQL_CLUSTER_INTERVAL_SECONDS:10}
+    # Probe one node that is not the demo's kill target. A stopped probe
+    # container looks like a broken probe, not like a degraded cluster.
+    container: ${CHAOS_MYSQL_CLUSTER_CONTAINER:jl-mysql-1}
+    admin-user: ${CHAOS_MYSQL_CLUSTER_ADMIN_USER:root}
+    password-env-var: ${CHAOS_MYSQL_CLUSTER_PASSWORD_ENV_VAR:MYSQL_ROOT_PASSWORD}
+    query: >-
+      SELECT MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE
+      FROM performance_schema.replication_group_members
+      ORDER BY MEMBER_ROLE DESC, MEMBER_HOST
+    # argv, not a shell string from the JVM: the SQL goes on stdin and the
+    # password is expanded by bash from the container's environment.
+    command:
+      - /bin/bash
+      - -c
+      - >-
+        MYSQL_PWD="${!MYSQL_CLUSTER_PASSWORD_ENV}" exec mysql
+        --batch --raw --skip-column-names -h127.0.0.1 -u"$MYSQL_CLUSTER_ADMIN_USER"
+    exec-timeout-seconds: ${CHAOS_MYSQL_CLUSTER_EXEC_TIMEOUT_SECONDS:6}
+    expected-member-count: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:3}
+    thread-name: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:mysql-cluster-probe}
+    shutdown-timeout-seconds: ${CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS:5}

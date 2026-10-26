@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.annotation.ChaosAnnotator;
 import com.javalearn.lab.chaos.annotation.HttpGrafanaAnnotator;
 import com.javalearn.lab.chaos.annotation.NoOpChaosAnnotator;
+import com.javalearn.lab.chaos.cluster.MysqlClusterMonitor;
+import com.javalearn.lab.chaos.gateway.ContainerGateway;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,5 +46,18 @@ public class ChaosConfig {
             return new NoOpChaosAnnotator();
         }
         return new HttpGrafanaAnnotator(properties.getAnnotation(), objectMapper);
+    }
+
+    /**
+     * MySQL cluster membership probe (design §8.3 / D11). Only created when the
+     * Docker gateway exists; the monitor owns a dedicated single-thread scheduler
+     * so a hung exec can never delay TTL reverts or readiness probes.
+     */
+    @Bean(destroyMethod = "close")
+    @ConditionalOnProperty(name = "lab.docker.enabled", havingValue = "true", matchIfMissing = true)
+    public MysqlClusterMonitor mysqlClusterMonitor(ContainerGateway gateway,
+                                                   ChaosProperties properties,
+                                                   MeterRegistry meterRegistry) {
+        return new MysqlClusterMonitor(gateway, properties, meterRegistry);
     }
 }

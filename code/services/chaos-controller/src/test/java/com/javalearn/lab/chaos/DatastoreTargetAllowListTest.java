@@ -13,6 +13,7 @@ import com.javalearn.lab.chaos.guide.GuideScenario;
 import com.javalearn.lab.chaos.guide.GuideScenarioLoader;
 import com.javalearn.lab.chaos.guide.GuideScenarioSummary;
 import com.javalearn.lab.chaos.model.ContainerView;
+import com.javalearn.lab.chaos.model.ExecResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -432,6 +433,13 @@ class DatastoreTargetAllowListTest {
         @Override
         public void signal(String containerName, String signal) {
             calls.add("signal:" + containerName + ":" + signal);
+        }
+
+        @Override
+        public ExecResult execInContainer(String containerName, java.util.List<String> command,
+                                          java.util.List<String> env, String stdin, int timeoutSeconds) {
+            calls.add("exec:" + containerName);
+            return new ExecResult("", "", 0, false);
         }
     }
 }

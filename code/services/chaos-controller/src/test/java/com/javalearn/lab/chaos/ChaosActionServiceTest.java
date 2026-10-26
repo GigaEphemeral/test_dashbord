@@ -13,6 +13,7 @@ import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
+import com.javalearn.lab.chaos.model.ExecResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -779,6 +780,13 @@ class ChaosActionServiceTest {
                 throw failure;
             }
             calls.add("signal:" + containerName + ":" + signal);
+        }
+
+        @Override
+        public ExecResult execInContainer(String containerName, java.util.List<String> command,
+                                          java.util.List<String> env, String stdin, int timeoutSeconds) {
+            calls.add("exec:" + containerName);
+            return new ExecResult("", "", 0, false);
         }
     }
 
