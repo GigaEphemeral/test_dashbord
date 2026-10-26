@@ -1,0 +1,24 @@
+{
+  "rules": [
+    {
+      "path": "**/*.java",
+      "rule": "Check that no runtime path, URL, timeout, retry count, TTL, pool size, port, key/queue/exchange prefix or consumer delay is hardcoded. Values must come from application.yml/@ConfigurationProperties, environment variables, or script variables with overridable defaults. seckill-core must remain Java 8 and framework-neutral (no Spring/JPA/jakarta). Do not introduce recording/video/narration features. Do not weaken idempotency, oversell, auth or health checks.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*.{yml,yaml}",
+      "rule": "Check that runtime paths, timeouts, TTLs, retry counts, pool sizes, ports and limits are externalized with environment-overridable defaults. Do not commit secrets/.env. Keep the lab-only security model (loopback ports, Docker socket rw) explicit.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*.sh",
+      "rule": "Check strict mode (set -euo pipefail), path-robustness, no hardcoded URLs/timeouts/ports/credentials, no destructive volume removal by default, and no touching containers outside project java-learn-lab.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/db/migration/*.sql",
+      "rule": "Check Flyway migrations are additive, schema changes match JPA validate expectations, unique constraints for idempotency/order numbers remain, and no cross-domain foreign keys are introduced.",
+      "merge_system_rule": true
+    }
+  ]
+}
