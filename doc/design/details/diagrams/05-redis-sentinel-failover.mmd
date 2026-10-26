@@ -1,0 +1,50 @@
+%% 代码基线：504fc74
+%% 图 5 · Redis Sentinel 切换时序
+%% 依据：RedisClientConfig、SentinelMasterDiscoveryReporter、compose.ha.yml、doc/process/step-24d-sentinel-live-drill.md、doc/process/step-38-ha-acceptance.md
+sequenceDiagram
+    autonumber
+    actor OP as 操作者
+    participant APP as app-1/2/3<br/>Lettuce + Redisson
+    participant S1 as jl-sentinel-1
+    participant S2 as jl-sentinel-2
+    participant S3 as jl-sentinel-3
+    participant R1 as jl-redis-1<br/>172.28.190.11 主
+    participant R2 as jl-redis-2<br/>172.28.190.12 从
+    participant ST as sentinel-status.sh
+
+    Note over APP: REDIS_MODE=sentinel<br/>Lettuce 与 Redisson 同时切换<br/>只按 master 名 mymaster 发现
+    APP->>S1: SENTINEL get-master-addr-by-name mymaster
+    S1-->>APP: 172.28.190.11:6379
+    APP->>R1: 读写（L2 / 锁 / 幂等 / Lua）
+    Note over APP: 启动日志：Redis access mode: sentinel<br/>Sentinel discovered master 'mymaster' at 172.28.190.11:6379
+
+    OP->>R1: chaos kill，TTL=45s（19:05:03.950）
+    Note over R1: 19:05:04 kill → 19:05:05 stop/die
+    R1-->>S1: 数据连接中断
+    Note over S1: down-after-milliseconds=5000
+    S1->>S2: is-master-down-by-addr
+    S1->>S3: is-master-down-by-addr
+    S2-->>S1: 同意
+    S3-->>S1: 同意
+    Note over S1: 19:05:09.993 +sdown master mymaster 172.28.190.11 6379<br/>19:05:11.117 +odown quorum 3/2
+    S1->>R2: SLAVEOF NO ONE（晋升）
+    R2-->>S1: role=master
+    S1->>S2: 19:05:11.630 +switch-master mymaster<br/>172.28.190.11 6379 → 172.28.190.12 6379
+    S1->>S3: +switch-master
+    Note over S1,R2: 停主到新主地址发布约 7.6s<br/>（step-24d 时间戳；step-38 折算）
+
+    APP->>S1: 旧连接失败后按 master 名重新发现
+    S1-->>APP: 172.28.190.12:6379
+    APP->>R2: 重连并恢复读写
+    Note over APP: 19:05:15.8 三实例 Lettuce Reconnected<br/>容器 StartedAt 不变，应用未重启
+    OP->>ST: 轮询取证（商品读 2s，客户端上限 3s）
+    ST-->>OP: 52 次：50×200 / 2×000<br/>停主到首个 200 约 +9.1s（≤15s）
+
+    OP->>R1: TTL 45s 到点，19:05:49 自动 start
+    S1->>R1: 运行时 REPLICAOF 172.28.190.12:6379
+    R1-->>R2: 全量 / 增量同步
+    S1->>S1: 19:05:53 -sdown slave 172.28.190.11:6379
+    OP->>ST: 回归检查
+    ST-->>OP: role=slave，master_link_status=up<br/>三 Sentinel 的 master0 一致
+
+    Note over APP,R1: 失败表现：个别请求在 3s 客户端上限内挂起后成功/降级，<br/>不是快速失败；默认 Lettuce 命令超时大于请求预算。

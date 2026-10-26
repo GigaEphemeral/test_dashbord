@@ -1,0 +1,46 @@
+# 图 3 · 读写路由与 MYSQL_MODE
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[03-read-write-routing.mmd](03-read-write-routing.mmd) · 类型：`flowchart TB`
+
+展示 `LazyConnectionDataSourceProxy` → `AbstractRoutingDataSource` → 写池/读池，以及 `MYSQL_MODE=standalone|router` 如何决定两个池的最终端点（含 Router 6446/6447）。
+
+读图要点：`readOnly=true` 才走读池；`OrderQueryService` 使用普通 `@Transactional`，订单查询也走写池；router 模式缺 URL 会启动失败。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 3 · 读写路由与 MYSQL_MODE
+%% 依据：DataSourceConfig、ReadWriteRoutingDataSource、DataSourceAccessProperties、application.yml（app.datasource.*）、compose.base.yml、compose.mysql.yml
+flowchart TB
+  CALL["业务调用"] --> TX{"当前事务是否<br/>@Transactional(readOnly = true)？"}
+  TX -->|"是（ProductReadService.get）"| RO["TransactionSynchronizationManager<br/>isCurrentTransactionReadOnly() = true"]
+  TX -->|"否 / 无事务 / @Transactional"| RW["默认 WRITE"]
+
+  RO --> LAZY["@Primary DataSource<br/>LazyConnectionDataSourceProxy<br/>事务 begin 后才取物理连接"]
+  RW --> LAZY
+  LAZY --> ROUTE["ReadWriteRoutingDataSource<br/>determineCurrentLookupKey()"]
+  ROUTE -->|"READ"| RP["Hikari readDataSource<br/>pool-name=read-pool"]
+  ROUTE -->|"WRITE"| WP["Hikari writeDataSource<br/>pool-name=write-pool"]
+
+  MODE{"app.datasource.mode<br/>env MYSQL_MODE"}
+  MODE -->|"standalone（默认）"| STAND["app.datasource.write.jdbc-url<br/>app.datasource.read.jdbc-url<br/>jdbc:mysql://mysql:3306/seckill"]
+  MODE -->|"router"| RWURL["DB_WRITE_URL<br/>jdbc:mysql://mysql-router:6446/seckill"]
+  MODE -->|"router"| ROURL["DB_READ_URL<br/>jdbc:mysql://mysql-router:6447/seckill"]
+
+  STAND --> WP
+  STAND --> RP
+  RWURL --> WP
+  ROURL --> RP
+
+  WP --> DEV[("jl-mysql:3306<br/>dev 单机")]
+  RP --> DEV
+  WP --> RW6446["jl-mysql-router:6446<br/>读写，跟随 PRIMARY"]
+  RP --> RO6447["jl-mysql-router:6447<br/>只读，轮询 ONLINE SECONDARY"]
+
+  RW6446 --> GRP[("MySQL InnoDB Cluster<br/>jl-mysql-1 / 2 / 3<br/>单主 Group Replication")]
+  RO6447 --> GRP
+
+  HEALTH["dbHealthContributor<br/>非事务健康检查"] --> LAZY
+  NOTE["关键约束<br/>1. router 模式缺 DB_WRITE_URL / DB_READ_URL → 启动失败，不回退 dev MySQL<br/>2. 只设 DB_*_URL 而不设 MYSQL_MODE=router → 两个 URL 被忽略<br/>3. OrderQueryService 用 @Transactional（非 readOnly）→ 订单查询也走写池<br/>4. 非事务调用默认 WRITE；读池只服务 readOnly 事务"]
+  ROUTE -.-> NOTE
+```
