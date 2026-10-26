@@ -99,7 +99,7 @@
 - **l1-cache 写回次序竞态**：stale-serve 返回旧值后，`@Cacheable` 拦截器会把它写回 L1/L2；若该写恰好晚于异步刷新的写回，会用旧值覆盖新值一个物理 TTL 周期。镜像内已是新值，下一轮过期自愈；与 M4-2 logical-expire 的残余竞态同源，属可解释的短暂现象。
 - **db-fallback 不是完整熔断器**：固定窗口、每实例独立，无 half-open/closed 状态机，也非集群全局预算；窗口边界最多突发 2×permits。跨实例总量需按实例数×permits 解读。
 - **ttl-jitter 不追溯**：只影响经 `@Cacheable` 的后续写；seed 的裸 Redis 写保持同 TTL（这是实验前提）。切换后若键一直命中，不会产生抖动证据。
-- **`ProductAvalancheDefense` 持有但未读取 `properties` 字段**（构造器依赖冗余）：不影响行为，建议下次清理或用于运行期限额，避免误以为有未生效的配置。
+- **`ProductAvalancheDefense` 持有但未读取 `properties` 字段**（构造器依赖冗余）：不影响行为，建议下次清理或用于运行期限额，避免误以为有未生效的配置。（评审后已清理，见文末评审记录）
 - `l1StaleEntriesCached` / `l1RefreshInFlight` 是瞬时值，抓取时刻可能为 0，state 只作观测辅助。
 
 # 待定事项
@@ -110,3 +110,14 @@
 - **跨实例 L1 一致性**：当前不做共享逻辑过期/版本号；若演示需要两实例同值，可缩短 L2 TTL 或预热后同时读，长期方案留待评估。
 - **chaos-controller 广播**三种新模式、k6/compose 场景接线、场景 JSON 剧本（`cache-avalanche` 标签已存在）。
 - **改名**：`app.lab.cache.penetration.mode` 现承载全部 8 个模式，宜后续改为 `app.lab.cache.defense.mode` 并保留旧 key 一个里程碑。
+
+# 独立评审记录（M4-2b，隔离 worktree）
+
+- 结论：**PASS WITH FIXES**。规范符合性核对（设计 8.4 雪崩行：ttl-jitter ±20%、l1-cache 陈旧窗口 ≤ stale-window、熔断降级 + 限流 42901→HTTP 429 经 `GlobalExceptionHandler` 验证）通过；M4-1/M4-2a/M4-3 既有套件（`ProductPenetrationDefenseTest` 8、`ProductBreakdownDefenseTest` 20、`CachedProductViewServiceTest` 6、preheat/state/controller 套件）确认全绿，未被击穿。
+- 评审发现与处置：
+  1. （Minor，已修）`ProductAvalancheDefense` 与 `CacheExperimentDataService` 各有一个从未读取的构造依赖（`properties` / `ttlJitter`）——删除死依赖并同步 `AvalancheProtectionConfig`、`CacheLabConfig` 接线与测试。
+  2. （Minor，已修）`CachedProductViewService` javadoc 仍写"其余模式委托 M4-1 穿透层"，实际委托链是 雪崩→击穿→穿透；改为准确描述。
+  3. （Minor，测试已强化）`AvalancheTtlCacheTest` 的 NoOpCache 用例原本只断言 `getName()`，属空断言；改为断言 resolver 所依赖的 NoOp 契约（存不进取不出、valueLoader 诚实透传）。`everyOtherModeLeavesTheTtlAlone` 补钉"非 ttl-jitter 模式连 TTL 读都不发生"（模式门在 adjuster 之前），坐实 off 路径无额外 Redis 调用；resolver 的 NoOpCache 直通用例补端到端断言（ttl-jitter 模式下写 NoOp 缓存：零 adjuster 调用、零 `cache_avalanche_ttl_jitter` 计器注册）。
+  4. （Minor，测试已强化）l1-cache 与 db-fallback 决策用例补 `verifyNoInteractions(breakdownDefense)`，钉住"单开关、模式互斥、旧层不被叠加执行"。
+- 证伪核对：交接首行"394 例"在本合并 HEAD 上不可复现——实测 surefire 报告 seckill-app-jdk21 **406** 例（多出的 12 例来自作者基线 `6e5d776` 之后合入的 `MySqlModeSwitchTest` 新增 11 例与 `HotKeyTrackerTest` +1 例），0 失败 0 错误 0 跳过；`platform-common` 10、`platform-observability` 4、`seckill-core` 13 不变。394 是作者分支基线（`6e5d776`）口径。
+- 未修（维持原判断）：写回次序竞态、跨实例 L1 一致性、固定窗口边界 2×permits 突发——均为文档已声明的可解释代价；D10 雪崩面板归任务 #31（本步不碰 dashboard/console/code/lab）。

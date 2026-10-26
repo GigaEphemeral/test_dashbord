@@ -92,7 +92,7 @@ class CachedProductViewServiceTest {
                 Runnable::run, (id, value) -> Optional.empty(),
                 new AvalancheLimiter(avalanche.getDbFallback().getPermits(),
                         avalanche.getDbFallback().getPeriodMs(), System::currentTimeMillis),
-                avalanche, System::currentTimeMillis, registry);
+                System::currentTimeMillis, registry);
         this.service = new CachedProductViewService(readService, avalancheDefense);
     }
 

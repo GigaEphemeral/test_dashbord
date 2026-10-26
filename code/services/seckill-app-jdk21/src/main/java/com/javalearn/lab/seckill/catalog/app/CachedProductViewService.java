@@ -25,7 +25,9 @@ import java.util.Optional;
  * the experiment manipulates. It dispatches on the runtime mode: the avalanche
  * strategies handle an L2 avalanche, the M4-2 breakdown strategies
  * ({@code mutex}, {@code logical-expire}) the expired hot key, and every other
- * mode delegates unchanged to the M4-1 {@code ProductPenetrationDefense}. An
+ * mode delegates unchanged to the M4-2a {@code ProductBreakdownDefense}, which
+ * in turn runs the M4-1 {@code ProductPenetrationDefense} for the penetration
+ * modes. An
  * absent product still raises the same {@code 40401} {@link BizException}
  * whatever the defense mode; what changes is only whether the database had to
  * be asked (or, for {@code db-fallback}, whether the budget admitted the

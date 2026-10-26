@@ -104,12 +104,11 @@ public class AvalancheProtectionConfig {
             @Qualifier("avalancheL1RefreshExecutor") ThreadPoolExecutor avalancheL1RefreshExecutor,
             AvalancheLimiter avalancheLimiter,
             CacheManager cacheManager,
-            LabCacheAvalancheProperties properties,
             MeterRegistry meterRegistry) {
         return new ProductAvalancheDefense(cacheDefenseModeService, productBreakdownDefense,
                 avalancheL1Store, avalancheL1RefreshExecutor,
                 BreakdownProtectionConfig.springCacheWriter(cacheManager),
-                avalancheLimiter, properties, System::currentTimeMillis, meterRegistry);
+                avalancheLimiter, System::currentTimeMillis, meterRegistry);
     }
 
     /** Reads/writes the TTL of exactly the keys {@link TwoLevelCache} writes. */

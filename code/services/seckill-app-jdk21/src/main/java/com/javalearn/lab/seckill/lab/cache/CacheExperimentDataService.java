@@ -6,7 +6,6 @@ import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
-import com.javalearn.lab.seckill.catalog.cache.TtlJitter;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
@@ -84,7 +83,6 @@ public final class CacheExperimentDataService {
     private final CacheDefenseModeService modeService;
     private final ProductBreakdownDefense breakdownDefense;
     private final ProductAvalancheDefense avalancheDefense;
-    private final TtlJitter ttlJitter;
     private final LabCacheAvalancheProperties avalancheProperties;
     private final LabToggleService toggleService;
     private final CacheManager cacheManager;
@@ -98,7 +96,6 @@ public final class CacheExperimentDataService {
                                       CacheDefenseModeService modeService,
                                       ProductBreakdownDefense breakdownDefense,
                                       ProductAvalancheDefense avalancheDefense,
-                                      TtlJitter ttlJitter,
                                       LabCacheAvalancheProperties avalancheProperties,
                                       LabToggleService toggleService,
                                       CacheManager cacheManager) {
@@ -111,7 +108,6 @@ public final class CacheExperimentDataService {
         this.modeService = Objects.requireNonNull(modeService, "modeService");
         this.breakdownDefense = Objects.requireNonNull(breakdownDefense, "breakdownDefense");
         this.avalancheDefense = Objects.requireNonNull(avalancheDefense, "avalancheDefense");
-        this.ttlJitter = Objects.requireNonNull(ttlJitter, "ttlJitter");
         this.avalancheProperties = Objects.requireNonNull(avalancheProperties, "avalancheProperties");
         this.toggleService = Objects.requireNonNull(toggleService, "toggleService");
         this.cacheManager = Objects.requireNonNull(cacheManager, "cacheManager");

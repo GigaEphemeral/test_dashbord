@@ -89,8 +89,6 @@ class CacheExperimentDataServiceTest {
             mock(com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense.class);
     private final com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense avalancheDefense =
             mock(com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense.class);
-    private final com.javalearn.lab.seckill.catalog.cache.TtlJitter ttlJitter =
-            new com.javalearn.lab.seckill.catalog.cache.TtlJitter(20D, () -> 0.5D);
     private final LabCacheAvalancheProperties avalancheProperties = avalancheProperties();
 
     /** The id set the filter was last rebuilt from, to prove its coverage. */
@@ -126,7 +124,7 @@ class CacheExperimentDataServiceTest {
 
         service = new CacheExperimentDataService(properties, jdbcTemplate, template, objectMapper,
                 bloomFilter, markerStore, modeService, breakdownDefense, avalancheDefense,
-                ttlJitter, avalancheProperties,
+                avalancheProperties,
                 new LabToggleService(toggles()), cacheManager);
     }
 

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,9 +40,11 @@ class AvalancheTtlCacheTest {
     private final AtomicReference<Duration> remaining = new AtomicReference<>(Duration.ofSeconds(60));
     private final List<Duration> rewrites = new ArrayList<>();
     private final List<Object> rewrittenKeys = new ArrayList<>();
+    private final AtomicInteger ttlReads = new AtomicInteger();
     private final L2TtlAdjuster adjuster = new L2TtlAdjuster() {
         @Override
         public Duration remainingTtl(Object key) {
+            ttlReads.incrementAndGet();
             return remaining.get();
         }
 
@@ -85,6 +88,9 @@ class AvalancheTtlCacheTest {
         assertThat(rewrites).isEmpty();
         assertThat(counter("applied")).isZero();
         assertThat(counter("skipped")).isZero();
+        // The gate is the mode check BEFORE the adjuster: not even the TTL read
+        // happens, so off and every older mode stay free of extra Redis traffic.
+        assertThat(ttlReads).hasValue(0);
         assertThat(delegate.get(1L).get()).isEqualTo(VALUE);
     }
 
@@ -155,8 +161,20 @@ class AvalancheTtlCacheTest {
     }
 
     @Test
-    void aCacheToggleDisabledNoOpCacheIsRecognisedByName() {
-        assertThat(new NoOpCache("product").getName()).isEqualTo("product");
+    void theToggleOffNoOpCacheContractIsWhatTheResolverReliesOn() {
+        NoOpCache cache = new NoOpCache("product");
+
+        // The resolver passes this cache through unwrapped; the no-op semantics
+        // (store nothing, serve nothing, still call the value loader honestly)
+        // are what makes that safe while the cache toggle is off.
+        cache.put(1L, VALUE);
+        assertThat(cache.get(1L)).isNull();
+        assertThat(cache.get(1L, ProductResponse.class)).isNull();
+        assertThat(cache.get(2L, () -> VALUE)).isEqualTo(VALUE);
+
+        cache.evict(1L);
+        cache.clear();
+        assertThat(cache.getName()).isEqualTo("product");
     }
 
     private double counter(String result) {

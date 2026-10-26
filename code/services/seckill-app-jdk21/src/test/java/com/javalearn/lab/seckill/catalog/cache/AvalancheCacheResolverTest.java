@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -63,13 +64,37 @@ class AvalancheCacheResolverTest {
     }
 
     @Test
-    void aToggleOffNoOpCacheIsReturnedUnwrapped() {
+    void aToggleOffNoOpCacheIsReturnedUnwrappedAndProducesNoJitterTraffic() {
         NoOpCache noOp = new NoOpCache("product");
-        CacheResolver resolver = resolver(cacheManager(noOp));
+        List<Duration> rewrites = new ArrayList<>();
+        AtomicInteger ttlReads = new AtomicInteger();
+        L2TtlAdjuster recording = new L2TtlAdjuster() {
+            @Override
+            public Duration remainingTtl(Object key) {
+                ttlReads.incrementAndGet();
+                return Duration.ofSeconds(60);
+            }
 
-        Collection<? extends Cache> resolved = resolver.resolveCaches(context("product"));
+            @Override
+            public void rewrite(Object key, Duration ttl) {
+                rewrites.add(ttl);
+            }
+        };
+        modeService.update("ttl-jitter");
+        CacheResolver resolver = new AvalancheCacheResolver(cacheManager(noOp), modeService,
+                jitter, recording, registry);
 
-        assertThat(resolved.iterator().next()).isSameAs(noOp);
+        Cache resolved = resolver.resolveCaches(context("product")).iterator().next();
+        assertThat(resolved).isSameAs(noOp);
+
+        // Even a write in ttl-jitter mode goes nowhere near Redis or the
+        // jitter meters while the cache toggle is off.
+        resolved.put(1L, new ProductResponse(1L, "键盘", new BigDecimal("1.00"),
+                "ON_SALE", "描述"));
+
+        assertThat(ttlReads).hasValue(0);
+        assertThat(rewrites).isEmpty();
+        assertThat(registry.find("cache_avalanche_ttl_jitter").counters()).isEmpty();
     }
 
     @Test

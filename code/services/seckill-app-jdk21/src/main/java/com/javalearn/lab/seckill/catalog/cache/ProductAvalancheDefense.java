@@ -3,7 +3,6 @@ package com.javalearn.lab.seckill.catalog.cache;
 import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
-import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseMode;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseModeService;
 import io.micrometer.core.instrument.Counter;
@@ -62,7 +61,6 @@ public final class ProductAvalancheDefense {
     private final Executor refreshExecutor;
     private final ProductBreakdownDefense.CacheWriter cacheWriter;
     private final AvalancheLimiter limiter;
-    private final LabCacheAvalancheProperties properties;
     private final LongSupplier nowMillis;
 
     /** One async L1 refresh per key: the herd control of the l1-cache path. */
@@ -86,7 +84,6 @@ public final class ProductAvalancheDefense {
                                    Executor refreshExecutor,
                                    ProductBreakdownDefense.CacheWriter cacheWriter,
                                    AvalancheLimiter limiter,
-                                   LabCacheAvalancheProperties properties,
                                    LongSupplier nowMillis,
                                    MeterRegistry meterRegistry) {
         this.modeService = Objects.requireNonNull(modeService, "modeService");
@@ -95,7 +92,6 @@ public final class ProductAvalancheDefense {
         this.refreshExecutor = Objects.requireNonNull(refreshExecutor, "refreshExecutor");
         this.cacheWriter = Objects.requireNonNull(cacheWriter, "cacheWriter");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
-        this.properties = Objects.requireNonNull(properties, "properties");
         this.nowMillis = Objects.requireNonNull(nowMillis, "nowMillis");
 
         String cache = TwoLevelCacheManager.PRODUCT_CACHE;

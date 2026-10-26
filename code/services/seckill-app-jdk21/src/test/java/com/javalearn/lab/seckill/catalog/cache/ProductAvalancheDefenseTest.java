@@ -153,6 +153,8 @@ class ProductAvalancheDefenseTest {
         assertThat(avalancheFallbacks()).isEqualTo(1.0);
         assertThat(finderCalls.get()).isEqualTo(1);
         assertThat(l1Store.size()).isEqualTo(1L);
+        // l1-cache replaces the older stages on the switch; it must not run them.
+        verifyNoInteractions(breakdownDefense);
     }
 
     @Test
@@ -309,6 +311,7 @@ class ProductAvalancheDefenseTest {
         assertThat(defense.limiterRejected()).isEqualTo(1L);
         assertThat(avalancheFallbacks()).isEqualTo(3.0);
         assertThat(finderCalls.get()).isEqualTo(3);            // the 4th never reached the DB
+        verifyNoInteractions(breakdownDefense);
     }
 
     @Test
@@ -338,7 +341,7 @@ class ProductAvalancheDefenseTest {
     private ProductAvalancheDefense defenseWith(Executor refreshExecutor,
                                                 ProductBreakdownDefense.CacheWriter writer) {
         return new ProductAvalancheDefense(modeService, breakdownDefense, l1Store,
-                refreshExecutor, writer, limiter, properties, nowMillis::get, registry);
+                refreshExecutor, writer, limiter, nowMillis::get, registry);
     }
 
     private ProductPenetrationDefense.ProductFinder finder(ProductResponse value) {
