@@ -35,13 +35,21 @@ import java.util.concurrent.atomic.AtomicLong;
  * best-effort like the rest of the cache: a failed publish is logged, counted as
  * {@code cache_hotkey_publish{result="failure"}}, and the previous Redis list is
  * left in place; the read path never sees the exception. Publishing replaces the
- * whole ZSet (delete + add) so old members do not linger with stale scores.</p>
+ * whole ZSet through a staging key and an atomic {@code RENAME}, so readers never
+ * see an empty or partial list and old members do not linger with stale scores.</p>
  */
 public final class HotKeyTracker {
 
     private static final Logger log = LoggerFactory.getLogger(HotKeyTracker.class);
 
     static final String CACHE_TAG = "product";
+
+    /**
+     * Side key a Top-N publish stages into before an atomic {@code RENAME}
+     * moves it onto the shared hot list. One key per hot list; a leftover from
+     * a crashed attempt is pre-cleared by the next publish.
+     */
+    static final String STAGING_SUFFIX = ":staging";
 
     private final LabCachePreheatProperties properties;
     private final StringRedisTemplate redisTemplate;
@@ -111,24 +119,42 @@ public final class HotKeyTracker {
 
     /**
      * Replaces the shared ZSet with the current Top-N. Scores are the decayed
-     * counts; expiry of the list itself is intentionally not set — every
-     * instance republishes its own view on {@code flush-interval-seconds}.
+     * counts; expiry of the list itself is intentionally not set — the list is
+     * exactly what lets a restarted instance preheat (design 8.4: 跨实例共享).
      *
-     * @return the number of members published, 0 when Redis refused the write
+     * <p>The replacement is staged under {@code <hot-list-key>:staging} and
+     * moved onto the shared key with {@code RENAME}, which Redis executes
+     * atomically: readers never observe an empty or partial list, and a Redis
+     * outage mid-publish leaves the previously shared list in place (the
+     * original delete-first/add-second order destroyed it on failure,
+     * contradicting this method's own contract). Cross-instance semantics are
+     * last-writer-wins: each publisher replaces the list with its own Top-N
+     * view, which converges while instances share traffic.</p>
+     *
+     * <p>A flush whose local Top-N is empty is a no-op: an instance that has
+     * seen no reads yet (fresh boot, idle replica) must not wipe the list the
+     * other instances' startup preheat depends on.</p>
+     *
+     * @return the number of members published; 0 for an empty view or when
+     *         Redis refused the write
      */
     public int publishTopN() {
         List<ScoredProduct> top = topN();
         String key = properties.getHotListKey();
+        if (top.isEmpty()) {
+            refreshHotListSize();
+            return 0;
+        }
+        String stagingKey = key + STAGING_SUFFIX;
         try {
-            redisTemplate.delete(key);
-            if (!top.isEmpty()) {
-                Set<ZSetOperations.TypedTuple<String>> tuples = new LinkedHashSet<>();
-                for (ScoredProduct product : top) {
-                    tuples.add(ZSetOperations.TypedTuple.of(
-                            Long.toString(product.productId()), (double) product.score()));
-                }
-                redisTemplate.opsForZSet().add(key, tuples);
+            Set<ZSetOperations.TypedTuple<String>> tuples = new LinkedHashSet<>();
+            for (ScoredProduct product : top) {
+                tuples.add(ZSetOperations.TypedTuple.of(
+                        Long.toString(product.productId()), (double) product.score()));
             }
+            redisTemplate.delete(stagingKey);
+            redisTemplate.opsForZSet().add(stagingKey, tuples);
+            redisTemplate.rename(stagingKey, key);
             Long size = redisTemplate.opsForZSet().zCard(key);
             hotListSize.set(size == null ? 0L : size);
             publishSuccess.increment();
@@ -137,7 +163,18 @@ public final class HotKeyTracker {
             publishFailure.increment();
             log.warn("Hot-key publish to Redis ZSet '{}' failed; keeping the previous list: {}",
                     key, ex.toString());
+            deleteQuietly(stagingKey);
             return 0;
+        }
+    }
+
+    /** Best-effort staging cleanup; the next flush pre-clears the key anyway. */
+    private void deleteQuietly(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (RuntimeException ignored) {
+            // Redis is already counted as failing; a stale staging key is
+            // invisible to readers and is deleted by the next publish attempt.
         }
     }
 

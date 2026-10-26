@@ -18,9 +18,12 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +35,7 @@ import static org.mockito.Mockito.when;
 class HotKeyTrackerTest {
 
     private static final String HOT_KEY = "hot:products";
+    private static final String HOT_STAGING = "hot:products:staging";
 
     private SimpleMeterRegistry registry;
     private StringRedisTemplate redisTemplate;
@@ -113,7 +117,7 @@ class HotKeyTrackerTest {
     }
 
     @Test
-    void publishReplacesTheSharedZSetWithScoredTopN() {
+    void publishReplacesTheSharedZSetAtomicallyWithScoredTopN() {
         when(zset.zCard(HOT_KEY)).thenReturn(2L);
         HotKeyTracker tracker = tracker();
         tracker.record(7L);
@@ -123,12 +127,15 @@ class HotKeyTrackerTest {
         int published = tracker.publishTopN();
 
         assertThat(published).isEqualTo(2);
-        verify(redisTemplate).delete(HOT_KEY);
+        // Staged under the side key and moved onto the shared key with RENAME:
+        // readers never observe an empty or partial hot list.
+        verify(redisTemplate).delete(HOT_STAGING);
+        verify(redisTemplate).rename(HOT_STAGING, HOT_KEY);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Set<ZSetOperations.TypedTuple<String>>> tuples =
                 ArgumentCaptor.forClass(Set.class);
-        verify(zset).add(eq(HOT_KEY), tuples.capture());
+        verify(zset).add(eq(HOT_STAGING), tuples.capture());
         Map<String, Double> scores = tuples.getValue().stream()
                 .collect(Collectors.toMap(ZSetOperations.TypedTuple::getValue,
                         ZSetOperations.TypedTuple::getScore));
@@ -141,9 +148,27 @@ class HotKeyTrackerTest {
     }
 
     @Test
-    void aRedisOutageDuringPublishIsCountedAndSwallowed() {
+    void aColdInstanceFlushIsANoopThatKeepsTheSharedList() {
+        // A just-booted or idle instance has an empty local Top-N; publishing
+        // must not delete the list the OTHER instances' startup preheat needs.
+        when(zset.zCard(HOT_KEY)).thenReturn(3L);
+        HotKeyTracker tracker = tracker();
+
+        int published = tracker.publishTopN();
+
+        assertThat(published).isZero();
+        assertThat(tracker.hotListSize()).isEqualTo(3L);
+        verify(zset, never()).add(anyString(), anySet());
+        verify(redisTemplate, never()).rename(anyString(), anyString());
+        verify(redisTemplate, never()).delete(anyString());
+        assertThat(counter("cache_hotkey_publish", "result", "success")).isZero();
+        assertThat(counter("cache_hotkey_publish", "result", "failure")).isZero();
+    }
+
+    @Test
+    void aRedisOutageDuringPublishIsCountedAndSwallowedAndKeepsThePreviousList() {
         doThrow(new RedisConnectionFailureException("redis down"))
-                .when(zset).add(eq(HOT_KEY), anySet());
+                .when(zset).add(eq(HOT_STAGING), anySet());
         HotKeyTracker tracker = tracker();
         tracker.record(1L);
 
@@ -151,6 +176,12 @@ class HotKeyTrackerTest {
 
         assertThat(counter("cache_hotkey_publish", "result", "failure")).isEqualTo(1.0);
         assertThat(counter("cache_hotkey_publish", "result", "success")).isZero();
+        // The shared key was never touched: with the old delete-first publish a
+        // mid-flight outage destroyed the cross-instance hot list.
+        verify(redisTemplate, never()).delete(HOT_KEY);
+        verify(redisTemplate, never()).rename(anyString(), anyString());
+        // The failed attempt cleans its staging key up for the next flush.
+        verify(redisTemplate, atLeast(2)).delete(HOT_STAGING);
     }
 
     @Test
