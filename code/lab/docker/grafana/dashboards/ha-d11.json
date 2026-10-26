@@ -1,0 +1,1424 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "name": "Chaos 切换/故障动作",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "chaos"
+          ],
+          "type": "tags"
+        },
+        "type": "tags"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "mode": "markdown",
+        "content": "### D11 数据库高可用（设计 §7.4）\n\n- 集群成员/主节点来自 chaos-controller 每 10s 一次的只读探测（`performance_schema.replication_group_members`），标签 `member` 取 `MEMBER_HOST`（`mysql-1` 等，不带 `jl-` 前缀）；容器名才是 `jl-mysql-1`。\n- `mysql_cluster_primary_info` 在 Prometheus 侧被剥掉 `_info`，本页一律查询导出名 `mysql_cluster_primary`。\n- 探针失败时保留最后一次成功的成员/主节点序列，只把 `mysql_cluster_probe_up` 置 0：**probe_up=0 + 旧拓扑仍在**表示“探针坏了”，**probe_up=1 + 成员非 ONLINE** 才是“集群降级”。成员从视图中消失时其序列会被清除，状态时间轴出现空白。\n- 节点可达性用 `mysqld-exporter-ha` 的 `mysql_up`（每节点一个 target，带 `member` 标签）。**该抓取文件 `mysql-ha-scrape.yml` 当前仍是惰性文件**：`prometheus.yml` 没有 `scrape_config_files`，接线前本面板为空（见 step-38 runbook）。\n- Router 不暴露 Prometheus 指标：不要用假的时间序列表示 Router，状态与读写分流用本页探针 + `code/lab/scripts/db-cluster-status.sh` 观察（见页面底部说明）。\n- Redis 只抓 dev 单机 `redis-exporter`（`redis:6379`）；HA 的三个 `jl-redis-*-exporter` 与 Sentinel **都没有被 Prometheus 抓取**，Redis 面板不代表 Sentinel 拓扑。\n- 切换标注来自 chaos-controller 的 Grafana annotation（默认启用，强制带 `chaos` 标签），只覆盖经 chaos API 的动作；`docker stop/start` 手工操作不会出现在时间轴上。"
+      },
+      "targets": [],
+      "title": "D11 使用说明与口径",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 100,
+      "panels": [],
+      "title": "集群成员与主节点",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "每个成员一行。state 是标签而不是数值，因此用 PromQL 把 ONLINE/RECOVERING/OFFLINE/ERROR/UNREACHABLE/UNKNOWN 编码成 1–6 再交给状态时间轴映射；空白 = 该成员不在最近一次成功探测的视图中（或探针尚未成功过）。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 100,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "ONLINE"
+                },
+                "2": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "RECOVERING"
+                },
+                "3": {
+                  "color": "orange",
+                  "index": 2,
+                  "text": "OFFLINE"
+                },
+                "4": {
+                  "color": "red",
+                  "index": 3,
+                  "text": "ERROR"
+                },
+                "5": {
+                  "color": "purple",
+                  "index": 4,
+                  "text": "UNREACHABLE"
+                },
+                "6": {
+                  "color": "gray",
+                  "index": 5,
+                  "text": "UNKNOWN"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 13,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"ONLINE\"} * 1) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"RECOVERING\"} * 2) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"OFFLINE\"} * 3) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"ERROR\"} * 4) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"UNREACHABLE\"} * 5) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\",state=\"UNKNOWN\"} * 6)",
+          "legendFormat": "{{member}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "成员状态时间轴",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "直接展示探针标签原值（member/role/state），不把 state 标签硬编码成数值。role 取值 PRIMARY/SECONDARY/UNKNOWN，state 取值 ONLINE/RECOVERING/OFFLINE/ERROR/UNREACHABLE/UNKNOWN。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "inspect": false
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "是"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 13,
+        "y": 6
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\"}",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "成员明细（member / role / state）",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value": "在册",
+              "member": "成员",
+              "role": "角色",
+              "state": "状态"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "1 = 当前主节点。用 mysql_cluster_member_state * 0 补齐非主成员为 0，保证“每个成员一行”；主节点选举窗口内可能全部为 0（无 PRIMARY）。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "displayName": "${__field.labels.member}",
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "blue",
+                  "index": 0,
+                  "text": "SECONDARY"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "PRIMARY"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (member) (mysql_cluster_primary{job=\"chaos-controller\",member=~\"$member\"}) or max by (member) (mysql_cluster_member_state{job=\"chaos-controller\",member=~\"$member\"} * 0)",
+          "instant": true,
+          "legendFormat": "{{member}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "主节点（每成员一行）",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "最近一次成功探测的成员行数，期望 3（chaos.mysql-cluster.expected-member-count）。探针失败时保持上一次成功值，要结合 probe_up 一起看。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "3": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "3/3 在册"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 3
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 8,
+        "y": 14
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_cluster_member_count{job=\"chaos-controller\"}",
+          "instant": true,
+          "legendFormat": "成员数",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "成员数",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "1 = 最近一次探测成功；0 = 探测失败（exec 超时/非零退出/解析失败）。失败时成员与主节点序列保留，所以“probe_up=0 + 旧拓扑”是探针故障，不是集群故障。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "探测失败"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "探测正常"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 12,
+        "y": 14
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_cluster_probe_up{job=\"chaos-controller\"}",
+          "instant": true,
+          "legendFormat": "probe_up",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "探针健康",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "5 分钟窗口内探测失败/成功的增量。probe 每 10s 一次，正常时 5 分钟成功增量约 30、失败为 0；持续失败会看到失败线抬升且 probe_up=0。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "次/5m",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "increase(mysql_cluster_probe_failure_total{job=\"chaos-controller\"}[5m])",
+          "legendFormat": "失败/5m",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "increase(mysql_cluster_probe_success_total{job=\"chaos-controller\"}[5m])",
+          "legendFormat": "成功/5m",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "探针失败 / 成功（5m 增量）",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 101,
+      "panels": [],
+      "title": "节点可达性与读写分流",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "mysqld-exporter 的 mysql_up：1 = exporter 能连到本节点。job/member/instance 布局来自 mysql-ha-scrape.yml（三 target，member=mysql-1/2/3，instance=mysql-N-exporter:9104）。注意该抓取文件目前未被 prometheus.yml 引用，接线前面板为空。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "displayName": "${__field.labels.member}",
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_up{job=\"mysqld-exporter-ha\",instance=~\"$instance\"}",
+          "instant": true,
+          "legendFormat": "{{member}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "节点可达性（mysql_up）",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "router 模式（MYSQL_MODE=router）下写池指向 6446、读池指向 6447；此图用两个 Hikari 池的 active 连接间接观察读写分流，不是 Router 自身指标。standalone 模式下两池都连 dev mysql，曲线仍会出现。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "connections",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 21
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (hikaricp_connections_active{job=~\"seckill-app.*\",pool=~\"write-pool|read-pool\"})",
+          "legendFormat": "{{pool}} active",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (hikaricp_connections_pending{job=~\"seckill-app.*\",pool=~\"write-pool|read-pool\"})",
+          "legendFormat": "{{pool}} pending",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "读写池连接（路由的间接观察）",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 102,
+      "panels": [],
+      "title": "Redis 主从（dev 单机导出器）",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "redis-exporter 只抓 dev 单机 redis:6379；1 = 可连接。Sentinel 与 jl-redis-1/2/3 的 exporter 都不在抓取列表里，所以这个 UP 不代表 Sentinel 拓扑健康。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 0,
+        "y": 28
+      },
+      "id": 10,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "redis_up{job=\"redis-exporter\"}",
+          "instant": true,
+          "legendFormat": "redis",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Redis 可达",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "客户端连接数来自 redis_connected_clients；已连接从节点数来自 INFO replication 的 redis_connected_slaves（step-24a 实测该 exporter 会导出）。dev 单机 redis 通常从节点为 0，出现非 0 说明连到了带副本的实例，但 Prometheus 抓的仍是单机 target。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "count",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 20,
+        "x": 4,
+        "y": 28
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "redis_connected_clients{job=\"redis-exporter\"}",
+          "legendFormat": "客户端连接",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "redis_connected_slaves{job=\"redis-exporter\"}",
+          "legendFormat": "已连接从节点",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Redis 连接与从节点",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 103,
+      "panels": [],
+      "title": "切换与故障动作",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "chaos_actions_total{action,target,result} 的 5m 速率，按 target/result 拆分。MySQL 主节点容器名是 jl-mysql-1；默认 datastore 白名单只放行 jl-redis-[1-3]，未放宽前对该目标的动作会 403，不会出现在这里。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "actions/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (action, target, result) (rate(chaos_actions_total{job=\"chaos-controller\",action=~\"$action\"}[5m]))",
+          "legendFormat": "{{action}} {{target}} {{result}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "故障动作速率（按目标/结果）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "chaos_reverts_total{action,result} 的 5m 速率：自动回滚（TTL/watchdog/stop-all）成功或失败。回滚成功不代表节点已重新加入集群，成员状态要回到上面的时间轴确认。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "reverts/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 12,
+        "y": 35
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (action, result) (rate(chaos_reverts_total{job=\"chaos-controller\",action=~\"$action\"}[5m]))",
+          "legendFormat": "{{action}} {{result}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "自动回滚速率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "当前未回滚的 kill/freeze 动作数（chaos_active_actions，无标签 gauge）。PAUSED 只冻结 TTL，不减少 active 数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 35
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "chaos_active_actions{job=\"chaos-controller\"}",
+          "instant": true,
+          "legendFormat": "active",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "活跃故障动作",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 104,
+      "panels": [],
+      "title": "Router 状态（无 Prometheus 指标）",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 15,
+      "options": {
+        "mode": "markdown",
+        "content": "### Router 状态与读写分流（无 Prometheus 指标）\n\n`jl-mysql-router` 没有暴露 metrics 端点（compose 里只有 healthcheck），所以本页**不画 Router 时间序列**。Router 只是入口，不持有集群成员视图；它路由所依赖的元数据与 `mysql_cluster_member_state` / `mysql_cluster_primary` 同源。观察方式：\n\n1. `bash code/lab/scripts/db-cluster-status.sh`：打印三节点 `replication_group_members`，再对 6446（read/write）与 6447（read-only）各探一次，显示当前后端与 `read_only`；末行 `RESULT: ok - 3/3 node(s) answering, exactly one PRIMARY.` 是验收门。\n2. 探针指标：`mysql_cluster_primary` 跳变 = 主节点切换；`mysql_cluster_member_state` 变成 `RECOVERING` 表示被踢节点正在 clone 重加入。\n3. 读写分流：`MYSQL_MODE=router` 时应用写池→6446、读池→6447，用上方 `hikaricp_connections_active{pool=\"write-pool\"|\"read-pool\"}` 间接观察；`standalone` 下两池都连 dev `mysql`，不能据此判断路由。\n4. **Router 是单点**：当前只有一个 `jl-mysql-router`（6446/6447）。Router 挂了路由能力即中断，但集群探针仍可能显示 3/3 ONLINE——两类故障必须分开判断。\n5. Router 日志在卷内：`docker exec jl-mysql-router tail -n 30 /var/lib/mysqlrouter/log/mysqlrouter.log`。"
+      },
+      "targets": [],
+      "title": "Router 观察手册",
+      "type": "text"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "ha-lab",
+    "d11",
+    "database",
+    "ha"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(mysql_cluster_member_state, member)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "成员",
+        "multi": true,
+        "name": "member",
+        "options": [],
+        "query": {
+          "query": "label_values(mysql_cluster_member_state, member)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(mysql_up{job=\"mysqld-exporter-ha\"}, instance)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "节点导出器",
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(mysql_up{job=\"mysqld-exporter-ha\"}, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(chaos_actions_total, action)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "动作",
+        "multi": true,
+        "name": "action",
+        "options": [],
+        "query": {
+          "query": "label_values(chaos_actions_total, action)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "D11 数据库高可用",
+  "uid": "ha-d11",
+  "version": 1,
+  "weekStart": ""
+}
