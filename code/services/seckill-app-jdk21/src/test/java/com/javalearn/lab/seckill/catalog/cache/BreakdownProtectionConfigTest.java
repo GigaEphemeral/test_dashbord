@@ -18,9 +18,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -121,6 +123,23 @@ class BreakdownProtectionConfigTest {
         when(broken.get(any())).thenThrow(new IllegalStateException("redis is down"));
         // The double-check can never turn a working read into a failed one.
         assertThat(BreakdownProtectionConfig.springCacheProbe(throwing).peek(1L)).isEmpty();
+    }
+
+    @Test
+    void writerPublishesThroughTheSameCacheTheReadPathUsesAndToleratesItsAbsence() {
+        CacheManager cacheManager = mock(CacheManager.class);
+        Cache cache = mock(Cache.class);
+        when(cacheManager.getCache("product")).thenReturn(cache);
+
+        BreakdownProtectionConfig.springCacheWriter(cacheManager).write(1L, VALUE);
+        verify(cache).put(1L, VALUE);
+
+        // Cache toggle off / manager without the cache: the publish is a no-op,
+        // never an exception on the refresh thread.
+        CacheManager missing = mock(CacheManager.class);
+        when(missing.getCache("product")).thenReturn(null);
+        assertThatCode(() -> BreakdownProtectionConfig.springCacheWriter(missing).write(1L, VALUE))
+                .doesNotThrowAnyException();
     }
 
     @Test

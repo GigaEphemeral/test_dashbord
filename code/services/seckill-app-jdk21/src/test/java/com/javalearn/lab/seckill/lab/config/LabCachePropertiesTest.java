@@ -255,6 +255,18 @@ class LabCachePropertiesTest {
                 .hasMessageContaining("thread-name-prefix");
     }
 
+    @Test
+    void aStaleWindowShorterThanTheHotKeyLifetimeIsRejected() {
+        // retention 300 == hot-key TTL 300: the stale entry is evicted exactly
+        // when the L2 key expires, so every breakdown burst would find an empty
+        // store and logical-expire would silently behave like `off`.
+        LabCacheProperties tooShort = TestLabCacheProperties.defaults();
+        tooShort.getBreakdown().getLogicalExpire().setRetentionSeconds(300L);
+        assertThatThrownBy(tooShort::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must exceed app.lab.cache.seed.hot-key-ttl-seconds");
+    }
+
     /**
      * Binds the real {@code app.lab.cache} subtree out of {@code application.yml}.
      * Placeholders are reduced to their defaults because the test classpath has no

@@ -25,6 +25,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -291,6 +295,97 @@ class ProductBreakdownDefenseTest {
 
         assertThat(logical("cold-rebuild")).isEqualTo(2.0);
         assertThat(breakdownFallbacks()).isEqualTo(2.0);
+    }
+
+    // ------------------------------------------------- refresh publish (M4-2 fix)
+
+    @Test
+    void anAsyncRefreshPublishesTheFreshValueToTheSharedCache() {
+        modeService.update("logical-expire");
+        AtomicReference<ProductResponse> latest = new AtomicReference<>(OLD);
+        ProductPenetrationDefense.ProductFinder finder = id -> Optional.of(latest.get());
+        defense.load(1L, finder);                             // cold rebuild: @Cacheable caches it, no publish
+        assertThat(published).isEmpty();
+
+        advanceLogical();
+        latest.set(NEW);
+        assertThat(defense.load(1L, finder)).contains(OLD);   // stale serve + inline refresh
+
+        // Without this publish the stale value the serve re-cached would stay
+        // in L2 for a full physical TTL - the wrong demo symptom.
+        assertThat(published).containsEntry(1L, NEW);
+        assertThat(refresh("success")).isEqualTo(1.0);
+    }
+
+    @Test
+    void aFailedOrVanishedRefreshPublishesNothingToTheCache() {
+        modeService.update("logical-expire");
+        defense.load(1L, finder(OLD));                        // cold rebuild
+        advanceLogical();
+
+        assertThat(defense.load(1L, id -> {
+            throw new IllegalStateException("db down");
+        })).contains(OLD);
+        assertThat(defense.load(1L, id -> Optional.empty())).contains(OLD);
+
+        assertThat(published).isEmpty();                      // never invent data into the cache
+        assertThat(refresh("failure")).isEqualTo(2.0);
+    }
+
+    @Test
+    void aCachePublishFailureNeverEscapesTheStaleServe() {
+        modeService.update("logical-expire");
+        defense.load(1L, finder(OLD));                        // cold rebuild warms the store
+        advanceLogical();
+        defense = new ProductBreakdownDefense(modeService, penetration, redisson, staleStore,
+                executor, id -> probeResult.get(),
+                (id, value) -> {
+                    throw new IllegalStateException("cache manager exploded");
+                }, properties, nowMillis::get, registry);
+
+        assertThatCode(() -> defense.load(1L, finder(NEW))).doesNotThrowAnyException();
+
+        // The refresh still succeeded (stale store carries NEW); the publish
+        // failure is swallowed so a reader never sees a 500 from the guard.
+        assertThat(refresh("success")).isEqualTo(1.0);
+        assertThat(logical("stale-serve")).isEqualTo(1.0);
+    }
+
+    // ------------------------------------------------------- mutex robustness
+
+    @Test
+    void aThrowingRebuildStillReleasesTheMutexLock() throws Exception {
+        modeService.update("mutex");
+        acquire(true);
+
+        assertThatThrownBy(() -> defense.load(1L, id -> {
+            throw new IllegalStateException("db down mid-rebuild");
+        })).isInstanceOf(IllegalStateException.class);
+
+        // Lock leak would deadlock every later reader: release is mandatory.
+        verify(lock).unlock();
+        assertThat(mutex("rebuild")).isEqualTo(1.0);
+        assertThat(breakdownFallbacks()).isEqualTo(1.0);
+        assertThat(staleStore.size()).isZero();
+    }
+
+    @Test
+    void anInterruptedWaiterFallsBackToTheDatabaseAndKeepsTheInterruptFlag() throws Exception {
+        modeService.update("mutex");
+        when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class)))
+                .thenThrow(new InterruptedException("simulated shutdown signal"));
+        try {
+            ProductPenetrationDefense.ProductFinder finder = finder(OLD);
+
+            assertThat(defense.load(1L, finder)).contains(OLD);
+
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(mutex("error")).isEqualTo(1.0);
+            assertThat(breakdownFallbacks()).isEqualTo(1.0);
+            verify(lock, never()).unlock();                   // never held, never falsely released
+        } finally {
+            Thread.interrupted();                             // do not leak the flag into other tests
+        }
     }
 
     // ---------------------------------------------------------- delegation
