@@ -1,0 +1,61 @@
+# 图 8 · 线程实验室生命周期
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[08-thread-lab-lifecycle.mmd](08-thread-lab-lifecycle.mmd) · 类型：`stateDiagram-v2`
+
+两个独立生命周期：单线程六态 `DemoState`（真实 `Thread.getState()`）与故障动作 `LifecycleState`（ACTIVE/PAUSED/STOPPED）。
+
+读图要点：`thread_lab_demo_state_code`（0–5）与 `thread_lab_lifecycle_state_code`（0/1/2）是两套指标，不能互相替代；freeze 不冻结 JVM。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 8 · 线程实验室生命周期（单线程六态 + 故障动作生命周期）
+%% 依据：LifecycleDemoService、DemoState、ThreadFaultService、FaultAction、LifecycleState、ThreadLabMetrics、LifecycleDemoMetrics
+%% 图中 MODE 指七种故障模式之一：stuck / cpu-burn / heap-leak / thread-leak / deadlock / starvation / oom
+stateDiagram-v2
+    state Demo {
+        state "NEW" as D_NEW
+        state "RUNNABLE" as D_RUNNABLE
+        state "BLOCKED" as D_BLOCKED
+        state "WAITING" as D_WAITING
+        state "TIMED_WAITING" as D_TIMED_WAITING
+        state "TERMINATED" as D_TERMINATED
+
+        [*] --> D_NEW
+        D_NEW --> D_RUNNABLE: POST /lab/thread/lifecycle/start
+        D_RUNNABLE --> D_BLOCKED: step（helper 先持有监视器）
+        D_BLOCKED --> D_RUNNABLE: helper 自然释放（真实态；阶段仍 BLOCKED）
+        D_BLOCKED --> D_WAITING: step（监视器释放后推进）
+        D_WAITING --> D_TIMED_WAITING: step / notifyAll
+        D_TIMED_WAITING --> D_TERMINATED: step（sleep 结束后过最终 gate，run 返回）
+        D_RUNNABLE --> D_NEW: reset（中断 + join）
+        D_BLOCKED --> D_NEW: reset
+        D_WAITING --> D_NEW: reset
+        D_TIMED_WAITING --> D_NEW: reset
+        D_TERMINATED --> D_NEW: reset
+        note right of D_WAITING
+            freeze 只取消自动推进、置 frozen
+            并抓一次快照，不冻结 JVM；
+            resume 从冻结步继续；
+            指标 thread_lab_demo_state_code 0–5
+        end note
+    }
+
+    state Fault {
+        state "ACTIVE" as F_ACTIVE
+        state "PAUSED" as F_PAUSED
+        state "STOPPED" as F_STOPPED
+
+        [*] --> F_ACTIVE: new FaultAction（注入，auto 或 manual）
+        F_ACTIVE --> F_PAUSED: POST /lab/thread/fault/MODE/pause
+        F_PAUSED --> F_ACTIVE: POST /lab/thread/fault/MODE/resume
+        F_ACTIVE --> F_STOPPED: TTL 到期 / stop / stop-all
+        F_PAUSED --> F_STOPPED: stop / stop-all
+        F_STOPPED --> [*]
+        note right of F_PAUSED
+            只冻结剩余 TTL，故障线程继续运行；
+            指标 thread_lab_lifecycle_state_code
+            0 STOPPED / 1 ACTIVE / 2 PAUSED
+        end note
+    }
+```

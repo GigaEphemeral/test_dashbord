@@ -1,0 +1,70 @@
+# 图 7 · 故障注入与向导状态机
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[07-chaos-guide-state-machines.mmd](07-chaos-guide-state-machines.mmd) · 类型：`stateDiagram-v2`
+
+两个独立状态机：向导 `GuideStatus`（IDLE/RUNNING/PAUSED/COMPLETED/FAILED）与动作 `ChaosActionStatus`（APPLYING/ACTIVE/REVERTING/REVERTED/FAILED/COMPLETED）。
+
+读图要点：动作没有 PAUSED 状态；向导 pause 只冻结动作的剩余 TTL。reset 在任何向导状态都可用；`reset-mode=auto` 只在 COMPLETED/FAILED 触发 stop-all。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 7 · 故障注入与向导状态机（两个独立状态机）
+%% 依据：GuideService、GuideStatus、ChaosActionService、ChaosActionStatus、doc/design/details/06-故障注入与实验向导.md
+stateDiagram-v2
+    state Guide {
+        state "IDLE" as G_IDLE
+        state "RUNNING" as G_RUNNING
+        state "PAUSED" as G_PAUSED
+        state "COMPLETED" as G_COMPLETED
+        state "FAILED" as G_FAILED
+
+        [*] --> G_IDLE
+        G_IDLE --> G_RUNNING: start(scenarioId)
+        G_COMPLETED --> G_RUNNING: start（允许重跑）
+        G_FAILED --> G_RUNNING: start（允许重跑）
+        G_RUNNING --> G_RUNNING: step / skip（未到最后一步）
+        G_RUNNING --> G_COMPLETED: step / skip（最后一步）
+        G_RUNNING --> G_FAILED: step 抛异常（lastError 记录）
+        G_RUNNING --> G_PAUSED: pause（冻结全部动作的剩余 TTL）
+        G_PAUSED --> G_RUNNING: resume（按剩余 TTL 重排，不重置）
+        G_IDLE --> G_IDLE: reset
+        G_RUNNING --> G_IDLE: reset（stop-all + unfreeze）
+        G_PAUSED --> G_IDLE: reset
+        G_COMPLETED --> G_IDLE: reset
+        G_FAILED --> G_IDLE: reset
+        note right of G_PAUSED
+            pause 只允许从 RUNNING 进入
+            reset 在任何状态都允许
+            chaos.reset-mode=auto 时，
+            COMPLETED / FAILED 会触发 stop-all
+        end note
+    }
+
+    state Action {
+        state "APPLYING" as A_APPLYING
+        state "ACTIVE" as A_ACTIVE
+        state "REVERTING" as A_REVERTING
+        state "REVERTED" as A_REVERTED
+        state "FAILED" as A_FAILED
+        state "COMPLETED（一次性）" as A_COMPLETED
+
+        [*] --> A_APPLYING: execute(kill / freeze) 注册并排 TTL
+        [*] --> A_COMPLETED: one-shot start / restart / resume
+        A_APPLYING --> A_ACTIVE: markApplied()
+        A_APPLYING --> A_FAILED: DockerUnavailable，结果不确定但保留待撤销
+        A_ACTIVE --> A_REVERTING: TTL / stop-all / watchdog
+        A_FAILED --> A_REVERTING: stop-all / watchdog 重试（小于 max-revert-attempts）
+        A_REVERTING --> A_REVERTED: start / SIGCONT 成功，移出 active
+        A_REVERTING --> A_FAILED: 撤销失败，保留可见并继续重试
+        A_REVERTED --> [*]
+        A_COMPLETED --> [*]
+        note right of A_ACTIVE
+            动作没有 PAUSED 状态：
+            guide pause 只冻结剩余 TTL，
+            状态仍是 ACTIVE；
+            stop-all 遇到 APPLYING 只登记
+            stop request，撤销在 apply 完成检查点触发
+        end note
+    }
+```

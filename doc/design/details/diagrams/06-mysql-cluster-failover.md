@@ -1,0 +1,50 @@
+# 图 6 · MySQL InnoDB Cluster 切换时序
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[06-mysql-cluster-failover.mmd](06-mysql-cluster-failover.mmd) · 类型：`sequenceDiagram`
+
+应用经 Router 6446/6447 读写，kill 主后组内选举、Router 重路由、TTL 到点旧主以 SECONDARY 重加入。
+
+读图要点：Router 重路由的精确时刻与旧主完成重加入的时刻未逐秒记录，已标 `待补`；不要用 `mysql_cluster_*` 指标替代 Router 日志结论，探针本身也可能被误杀。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 6 · MySQL InnoDB Cluster 切换时序
+%% 依据：compose.mysql.yml、DataSourceAccessProperties、prometheus.yml（mysqld-exporter-ha）、MysqlClusterMonitor、doc/process/step-31-mysql-router-live-drill.md
+sequenceDiagram
+    autonumber
+    actor OP as 操作者
+    participant APP as app-1/2/3<br/>MYSQL_MODE=router
+    participant RT as jl-mysql-router<br/>6446 RW / 6447 RO
+    participant M1 as jl-mysql-1<br/>PRIMARY
+    participant M2 as jl-mysql-2<br/>SECONDARY
+    participant M3 as jl-mysql-3<br/>SECONDARY
+    participant ST as db-cluster-status.sh
+
+    Note over APP: 写池 → DB_WRITE_URL 6446<br/>读池 → DB_READ_URL 6447<br/>启动日志：MySQL access mode: router
+    APP->>RT: 写事务（OrderTransactionService @Transactional）
+    RT->>M1: 6446 路由到当前 PRIMARY
+    APP->>RT: 只读事务（ProductReadService readOnly=true）
+    RT->>M2: 6447 轮询 ONLINE SECONDARY
+    Note over M1,M3: 单主 Group Replication<br/>三节点 member_weight 均为 100
+
+    OP->>M1: chaos kill，TTL=45s（21:28:26Z FinishedAt）
+    M1-->>M2: 组通信中断，成员被驱逐
+    M2->>M2: 组内自动选举（单主）
+    M2-->>M3: 新主视图传播
+    Note over M2: mysql-2 成为新 PRIMARY
+    RT->>M2: 6446 重新指向新主<br/>21:28:44Z 的 5s 采样已看到 server_id=2、read_only=0
+    Note over RT: Router 重路由的精确时刻未落盘<br/>只能由 5s 采样与 Router 日志间接观察（待补）
+    APP->>RT: 切换后的写 / 读（回组完成后）
+    RT->>M2: 6446 写请求
+    RT->>M2: 6447 读请求（在可用 SECONDARY 间轮询）
+    Note over APP: step-31：商品读 21:28:33–21:31:24 共 70 次全部 200<br/>窗口内无 5xx；写请求在 21:30:30 返回 200（回组后）
+
+    OP->>M1: TTL=45s 到点，21:29:01Z 自动 start
+    M1->>M2: 以 SECONDARY 身份重加入（RECOVERING → ONLINE，clone/recovery）
+    Note over M1: 重加入完成时刻未逐秒记录<br/>21:30:30Z 的写请求已 200（待补）
+    OP->>ST: 取证
+    ST-->>OP: 3/3 ONLINE，恰好一个 PRIMARY<br/>6446 → mysql-2（RW）<br/>6447 → mysql-1（RO，回组后）
+    Note over RT: Router 无 Prometheus 指标端点<br/>D11 用 mysql_cluster_* 探针 + 脚本说明，不画假曲线
+    Note over ST: 探针每 10s 查询 replication_group_members<br/>演练时不要把探针容器指向将被 kill 的节点
+```
