@@ -929,6 +929,10 @@ fi
 # use, so the topology has a single source of configuration.
 REDIS_HA_VERIFY="${REDIS_HA_VERIFY:-auto}"
 REDIS_HA_VERIFY_POLL_RETRIES="${REDIS_HA_VERIFY_POLL_RETRIES:-15}"
+# A zero/negative budget would skip the poll loop entirely and leave the round's
+# variables (agreement address, discovery detail) never assigned, so the set -u run
+# would die instead of reporting. The sane reading of "0" is "check once".
+(( REDIS_HA_VERIFY_POLL_RETRIES >= 1 )) || REDIS_HA_VERIFY_POLL_RETRIES=1
 REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS="${REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS:-2}"
 REDIS_HA_MASTER_NAME="${REDIS_HA_MASTER_NAME:-mymaster}"
 REDIS_HA_NODE_PORT="${REDIS_HA_NODE_PORT:-6379}"

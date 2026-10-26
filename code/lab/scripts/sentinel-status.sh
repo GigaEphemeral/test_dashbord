@@ -28,9 +28,10 @@ Print the Redis Sentinel topology (master / replicas / Sentinels) from inside th
 jl-net containers. Read-only: no failover, no writes, no state changes.
 
 Options:
-  --watch [SECONDS]  refresh every SECONDS (SENTINEL_STATUS_WATCH_INTERVAL_SECONDS,
-                     default 2) until -n COUNT refreshes are done. Handy to keep on
-                     screen while you stop the master and watch the promotion.
+  --watch [SECONDS]  refresh every SECONDS until -n COUNT refreshes are done.
+                     Handy to keep on screen while you stop the master and watch
+                     the promotion. Without SECONDS the interval falls back to
+                     SENTINEL_STATUS_WATCH_INTERVAL_SECONDS (default 2).
   -n, --count N      number of refreshes when using --watch (default 15)
   -h, --help         show this help
 
@@ -102,7 +103,10 @@ fi
 DATA_CONTAINERS="${SENTINEL_STATUS_DATA_CONTAINERS:-jl-redis-1 jl-redis-2 jl-redis-3}"
 SENTINEL_CONTAINERS="${SENTINEL_STATUS_SENTINEL_CONTAINERS:-jl-sentinel-1 jl-sentinel-2 jl-sentinel-3}"
 EXEC_TIMEOUT="${SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS:-5}"
-WATCH_INTERVAL="${SENTINEL_STATUS_WATCH_INTERVAL_SECONDS:-${WATCH_INTERVAL_ARG:-2}}"
+# Priority: an explicit `--watch SECONDS` beats the environment/.env key, which beats
+# the built-in 2. .env.example ships SENTINEL_STATUS_WATCH_INTERVAL_SECONDS=2, so the
+# old order (env first) silently ignored every `--watch 5` argument.
+WATCH_INTERVAL="${WATCH_INTERVAL_ARG:-${SENTINEL_STATUS_WATCH_INTERVAL_SECONDS:-2}}"
 MASTER_NAME="${REDIS_HA_MASTER_NAME:-mymaster}"
 NODE_PORT="${REDIS_HA_NODE_PORT:-6379}"
 SENTINEL_PORT="${REDIS_HA_SENTINEL_PORT:-26379}"

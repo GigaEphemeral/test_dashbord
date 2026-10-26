@@ -59,10 +59,28 @@ COMPOSE_FILES=(-f "$DOCKER_DIR/compose.base.yml" -f "$DOCKER_DIR/compose.dev.yml
 # The Sentinel topology lives in compose.ha.yml behind the "ha" profile. Include the
 # file plus its profile so `down` removes those containers too; if the file is absent
 # (an older checkout) the dev-only behaviour is unchanged.
+# compose.ha.yml interpolates every operational value from the env file without inline
+# defaults, so a .env that predates the ha feature makes `docker compose` reject the
+# whole render ("mem_limit invalid size") and the dev stack could no longer be stopped.
+# Only overlay the file when every ${VAR} it uses (without a `:-default`) resolves to a
+# non-empty value; otherwise fall back to the pre-M3-1a dev-only teardown and say so.
 HA_PROFILES=()
 if [[ -f "$DOCKER_DIR/compose.ha.yml" ]]; then
-  COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.ha.yml")
-  HA_PROFILES=(--profile ha)
+  ha_missing=""
+  for ha_key in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$DOCKER_DIR/compose.ha.yml" \
+    | tr -d '${}' | sort -u); do
+    grep -Eq "^[[:space:]]*${ha_key}[[:space:]]*=[[:space:]]*[^[:space:]]" "$ENV_FILE" \
+      || ha_missing="$ha_missing $ha_key"
+  done
+  if [[ -z "$ha_missing" ]]; then
+    COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.ha.yml")
+    HA_PROFILES=(--profile ha)
+  else
+    echo "WARN: compose.ha.yml needs env keys missing or empty in $ENV_FILE:$ha_missing" >&2
+    echo "      Skipping the ha overlay; a running Redis Sentinel topology (jl-redis-1..3," >&2
+    echo "      jl-sentinel-1..3) will NOT be torn down. Add the keys (up.sh prints the" >&2
+    echo "      full missing list) and run down.sh again to remove those containers." >&2
+  fi
 fi
 
 compose() {

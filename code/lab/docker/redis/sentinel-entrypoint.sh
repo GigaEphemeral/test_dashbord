@@ -29,11 +29,15 @@ fi
 mkdir -p "$REDIS_HA_SENTINEL_DIR"
 
 TMP="$CONF.render.$$"
-cp "$TEMPLATE" "$TMP"
+# Copy through `tr -d '\r'`: the lab lives on Windows, and a clone with
+# core.autocrlf=true would hand us the template as CRLF. A trailing \r inside the
+# rendered config would silently change values (port, quorum, the auth-pass password)
+# instead of failing loudly, so line endings are normalised before any substitution.
+tr -d '\r' < "$TEMPLATE" > "$TMP"
 
 # Discover the placeholders from the template itself (comment lines excluded, so the
 # documentation can mention the syntax without becoming a required variable).
-for key in $(sed '/^[[:space:]]*#/d' "$TEMPLATE" | grep -o '@[A-Za-z0-9_]*@' | sed 's/@//g' | sort -u); do
+for key in $(sed '/^[[:space:]]*#/d' "$TMP" | grep -o '@[A-Za-z0-9_]*@' | sed 's/@//g' | sort -u); do
   value="$(printenv "$key" || true)"
   if [ -z "$value" ]; then
     echo "ERROR: $key is empty or unset; $TEMPLATE needs it (see code/lab/docker/.env.example)." >&2

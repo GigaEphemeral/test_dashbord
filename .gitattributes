@@ -1,0 +1,9 @@
+# Bind-mounted files that are executed or parsed INSIDE the Linux containers must
+# keep LF line endings: a clone with the Windows-git default core.autocrlf=true
+# would otherwise convert them to CRLF at checkout.
+#   - the redis HA entrypoints are run as `sh <path>` by compose.ha.yml (CRLF breaks
+#     the shebang parsing and every command),
+#   - sentinel.conf.tpl is rendered into the live Sentinel config (a trailing \r
+#     silently changes port/quorum/auth-pass values).
+*.sh text eol=lf
+*.tpl text eol=lf
