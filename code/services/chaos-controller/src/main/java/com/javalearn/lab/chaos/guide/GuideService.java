@@ -101,7 +101,15 @@ public class GuideService {
         return view();
     }
 
-    /** Freezes every tracked TTL while the operator inspects the lab. */
+    /**
+     * Freezes every tracked TTL while the operator inspects the lab.
+     *
+     * <p>API semantics for the Task 23 console: pause is RUNNING-only, so a
+     * one-event scenario (like the shared {@code quick-failover.json}) turns
+     * COMPLETED right after its single step and the pause action must then be
+     * disabled; {@code reset} stays available in every status and is the
+     * documented escape hatch while actions are still tracked.</p>
+     */
     public synchronized GuideStateView pause() {
         if (run.status != GuideStatus.RUNNING) {
             throw new GuideConflictException("Guide is " + run.status.wireName()

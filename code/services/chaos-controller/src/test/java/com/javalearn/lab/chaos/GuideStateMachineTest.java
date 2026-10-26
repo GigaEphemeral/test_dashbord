@@ -199,4 +199,41 @@ class GuideStateMachineTest {
                 .isInstanceOf(ScenarioNotFoundException.class);
         assertThat(guide.state().status()).isEqualTo("idle");
     }
+
+    @Test
+    void pauseAndResumeAreRejectedAfterCompletion() throws IOException {
+        // API contract for the Task 23 console: a one-event scenario (like the
+        // shared quick-failover.json) is COMPLETED right after its single step,
+        // and pause/resume stay RUNNING/PAUSED-only. The console must disable
+        // the pause button once the status is completed/failed.
+        Files.writeString(tempDir.resolve("single-step.json"), """
+                {
+                  "schemaVersion": 1,
+                  "id": "single-step",
+                  "name": "Single step",
+                  "events": [
+                    {"atSeconds": 5, "action": "kill", "target": "jl-app-3", "ttlSeconds": 15,
+                     "title": "Stop app-3", "text": "only step"}
+                  ]
+                }
+                """);
+
+        guide.start("single-step");
+        GuideStateView completed = guide.step();
+
+        assertThat(completed.status()).isEqualTo("completed");
+        assertThat(completed.currentStep()).isEqualTo(1);
+        assertThatThrownBy(guide::pause)
+                .isInstanceOf(GuideConflictException.class)
+                .hasMessageContaining("completed");
+        assertThatThrownBy(guide::resume).isInstanceOf(GuideConflictException.class);
+        verify(chaos, never()).pause();
+
+        // reset remains the escape hatch in COMPLETED with tracked actions.
+        when(chaos.activeActions()).thenReturn(List.of(new ChaosActionView("id-1", "jl-app-3",
+                "kill", 15, Instant.parse("2026-10-26T10:00:20Z"), "start", "active")));
+        GuideStateView reset = guide.reset();
+        assertThat(reset.status()).isEqualTo("idle");
+        verify(chaos).stopAll();
+    }
 }
