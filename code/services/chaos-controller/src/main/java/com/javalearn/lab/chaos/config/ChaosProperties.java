@@ -192,7 +192,7 @@ public class ChaosProperties {
                 "/bin/bash",
                 "-c",
                 "MYSQL_PWD=\"${!MYSQL_CLUSTER_PASSWORD_ENV}\" exec mysql --batch --raw --skip-column-names "
-                        + "-h127.0.0.1 -u\"$MYSQL_CLUSTER_ADMIN_USER\""));
+                        + "-h127.0.0.1 -u\"$MYSQL_CLUSTER_ADMIN_USER\" -e \"$MYSQL_CLUSTER_QUERY\""));
 
         /** Java-side bound for one exec, smaller than the interval by validation. */
         private int execTimeoutSeconds = 6;

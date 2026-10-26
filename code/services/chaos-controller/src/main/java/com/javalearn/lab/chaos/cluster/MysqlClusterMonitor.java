@@ -71,6 +71,8 @@ public class MysqlClusterMonitor implements AutoCloseable {
     /** Exec environment consumed by the default command; neither value is a secret. */
     public static final String ENV_ADMIN_USER = "MYSQL_CLUSTER_ADMIN_USER";
     public static final String ENV_PASSWORD_VARIABLE = "MYSQL_CLUSTER_PASSWORD_ENV";
+    /** SQL travels as an env var: docker-java hangs when an exec attaches stdin (see step-31). */
+    public static final String ENV_QUERY = "MYSQL_CLUSTER_QUERY";
 
     private static final Logger log = LoggerFactory.getLogger(MysqlClusterMonitor.class);
     private static final int MAX_REASON = 200;
@@ -176,9 +178,10 @@ public class MysqlClusterMonitor implements AutoCloseable {
         try {
             List<String> env = List.of(
                     ENV_ADMIN_USER + "=" + config.getAdminUser(),
-                    ENV_PASSWORD_VARIABLE + "=" + config.getPasswordEnvVar());
+                    ENV_PASSWORD_VARIABLE + "=" + config.getPasswordEnvVar(),
+                    ENV_QUERY + "=" + config.getQuery());
             ExecResult result = gateway.execInContainer(config.getContainer(), config.getCommand(),
-                    env, config.getQuery(), config.getExecTimeoutSeconds());
+                    env, null, config.getExecTimeoutSeconds());
             if (result == null) {
                 throw new MysqlClusterProbeException("gateway returned no result");
             }

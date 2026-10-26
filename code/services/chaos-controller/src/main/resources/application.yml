@@ -98,14 +98,17 @@ chaos:
       SELECT MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE
       FROM performance_schema.replication_group_members
       ORDER BY MEMBER_ROLE DESC, MEMBER_HOST
-    # argv, not a shell string from the JVM: the SQL goes on stdin and the
-    # password is expanded by bash from the container's environment.
+    # argv, not a shell string from the JVM: password and SQL are expanded by
+    # bash from the container's environment. The SQL must NOT travel on stdin:
+    # docker-java 3.7.1 never gives the container an EOF on an attached stdin,
+    # so `mysql` would block until the exec timeout (observed live, step-31).
     command:
       - /bin/bash
       - -c
       - >-
         MYSQL_PWD="${!MYSQL_CLUSTER_PASSWORD_ENV}" exec mysql
         --batch --raw --skip-column-names -h127.0.0.1 -u"$MYSQL_CLUSTER_ADMIN_USER"
+        -e "$MYSQL_CLUSTER_QUERY"
     exec-timeout-seconds: ${CHAOS_MYSQL_CLUSTER_EXEC_TIMEOUT_SECONDS:6}
     expected-member-count: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:3}
     thread-name: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:mysql-cluster-probe}
