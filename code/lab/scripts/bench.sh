@@ -38,7 +38,7 @@ K6_SUMMARY_EXPORT_CONTAINER="${BENCH_SUMMARY_EXPORT_PATH:-/reports/summary.json}
 PROM_URL="${PROM_URL:-http://127.0.0.1:8080/prom}"
 GRAFANA_URL="${BENCH_GRAFANA_URL:-http://127.0.0.1:3000}"
 GRAFANA_DASHBOARD_UID="${BENCH_GRAFANA_DASHBOARD_UID:-ha-d4}"
-NGINX_CONTAINER="${BENCH_NGINX_CONTAINER:-jl-nginx}"
+NGINX_SERVICE="${BENCH_NGINX_SERVICE:-nginx}"
 PROMETHEUS_READY_URL="${BENCH_PROMETHEUS_READY_URL:-http://prometheus:9090/-/ready}"
 HEALTH_URL="${BENCH_HEALTH_URL:-http://127.0.0.1:8080/health}"
 READY_TIMEOUT_SECONDS="${BENCH_READY_TIMEOUT_SECONDS:-60}"
@@ -59,6 +59,12 @@ Everything after "--" is exported as KEY=VALUE and forwarded to the k6
 container. Examples:
   bench.sh load -- LOAD_DURATION=1m
   bench.sh smoke -- ERROR_RATE=0          # deliberately impossible threshold
+
+Overrides after "--" must be k6 scenario variables. Internal names are
+rejected (they would corrupt the archive or the runner): RUN_ID, SCENARIO,
+PATH/HOME, K6_DIR/K6_IMAGE/K6_NETWORK/K6_REPORT_DIR/K6_REPORT_MOUNT/
+K6_SUMMARY_EXPORT/K6_RUNNER/K6_FORWARD_ENV and any BENCH_*/RESET_* name.
+Set BENCH_*/RESET_* variables in the environment before invoking bench.sh.
 
 The stack must already be running; bench.sh never starts it.
 
@@ -103,14 +109,25 @@ while [[ $# -gt 0 ]]; do
       ;;
     --)
       shift
+      # Names bench.sh (or run.sh / reset-lab.sh) itself consumes; overriding
+      # them via "--" would corrupt the archive, the mount or the reset
+      # semantics, so they are rejected. Legitimate scenario overrides such as
+      # LOAD_DURATION or ERROR_RATE are unaffected.
+      reserved_override_re='^(PATH|HOME|IFS|ENV|BASH_ENV|RUN_ID|SCENARIO|K6_(DIR|RUNNER|IMAGE|NETWORK|REPORT_DIR|REPORT_MOUNT|SUMMARY_EXPORT|FORWARD_ENV)|BENCH_.*|RESET_.*)$'
       while [[ $# -gt 0 ]]; do
         override="$1"
         if [[ ! "$override" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
           printf 'ERROR: k6 override "%s" must be KEY=VALUE.\n' "$override" >&2
           exit 2
         fi
+        override_name="${BASH_REMATCH[1]}"
+        if [[ "$override_name" =~ $reserved_override_re ]]; then
+          printf 'ERROR: override "%s" is reserved by bench.sh; pass only k6 scenario variables after "--".\n' \
+            "$override_name" >&2
+          exit 2
+        fi
         export "$override"
-        OVERRIDE_NAMES+=("${BASH_REMATCH[1]}")
+        OVERRIDE_NAMES+=("$override_name")
         shift
       done
       ;;
@@ -255,7 +272,9 @@ if [[ "$nginx_health" != "ok" ]]; then
   exit 1
 fi
 
-prom_ready="$(docker exec "$NGINX_CONTAINER" wget -qO- -T "$HTTP_TIMEOUT" \
+# Checked through the pinned compose project (never a raw container name), so
+# a same-named container from another project can never be exec'd here.
+prom_ready="$(compose exec -T "$NGINX_SERVICE" wget -qO- -T "$HTTP_TIMEOUT" \
   "$PROMETHEUS_READY_URL" 2>/dev/null | tr -d '\r\n' || true)"
 if [[ "$prom_ready" != *"Ready"* ]]; then
   printf 'ERROR: Prometheus %s is not ready ("%s").\n' "$PROMETHEUS_READY_URL" "$prom_ready" >&2

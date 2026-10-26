@@ -21,7 +21,10 @@
 # container outside the pinned `java-learn-lab` compose project. Every value
 # (paths, container/service names, baseline, queue, credentials, timeouts,
 # retries) is environment-overridable; credentials come from the lab .env and
-# are passed via MYSQL_PWD/-u or curl -u -- never printed and never on argv.
+# never appear on argv, in logs or in any archive: MySQL receives MYSQL_PWD
+# through a 0600 docker-exec --env-file and the RabbitMQ management API basic
+# auth is fed to curl through stdin (--config -). Both temp files are removed
+# by an EXIT trap.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -147,6 +150,52 @@ if (( ${#APP_SERVICES[@]} == 0 )); then
   exit 2
 fi
 
+# --- Credential transport (never on argv) -----------------------------------
+# The MySQL password goes into a 0600 file consumed by `docker exec
+# --env-file` (as MYSQL_PWD, so the mysql client never sees it on argv and no
+# `-e MYSQL_PWD=...` argument ever appears in the process list). The
+# RabbitMQ basic-auth string goes to curl through stdin via `--config -`.
+# Both temp files are removed by the EXIT trap below.
+MYSQL_PWD_FILE="$(mktemp "${TMPDIR:-/tmp}/jl-reset-mysql-XXXXXX")"
+SECRETS_TMP=("$MYSQL_PWD_FILE")
+chmod 600 "$MYSQL_PWD_FILE"
+# shellcheck disable=SC2016
+printf 'MYSQL_PWD=%s\n' "$MYSQL_PASSWORD" > "$MYSQL_PWD_FILE"
+
+host_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# True between "app tier stopped" and "app tier started again": if the script
+# dies in that window the EXIT trap restarts the app tier instead of leaving
+# the stack down, without masking the original exit code.
+APP_RECOVERY_NEEDED=false
+
+cleanup_and_recover() {
+  local rc=$?
+  local file
+  for file in "${SECRETS_TMP[@]}"; do
+    rm -f "$file"
+  done
+  if $APP_RECOVERY_NEEDED; then
+    APP_RECOVERY_NEEDED=false
+    if (( rc != 0 )); then
+      printf 'WARN: reset failed (exit %s) while the app tier was stopped; attempting to restart it.\n' "$rc" >&2
+    fi
+    if compose start "${APP_SERVICES[@]}" >/dev/null 2>&1; then
+      printf 'NOTE: app tier restarted after the failed reset (the data reset itself is NOT complete).\n' >&2
+    else
+      printf 'ERROR: automatic app-tier restart FAILED. Recover manually:\n  cd %s && docker compose --project-name %s --env-file %s -f compose.base.yml -f compose.dev.yml start %s\n' \
+        "$DOCKER_DIR" "$COMPOSE_PROJECT" "$ENV_FILE" "${APP_SERVICES[*]}" >&2
+    fi
+  fi
+}
+trap cleanup_and_recover EXIT
+
 compose() {
   docker compose \
     --project-name "$COMPOSE_PROJECT" \
@@ -189,6 +238,65 @@ container_project() {
   docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$1" 2>/dev/null || true
 }
 
+# --- Read-only helpers (shared by preflight probes and the state snapshot) --
+urlencode_segment() {
+  local value="$1" out="" char index encoded
+  for (( index = 0; index < ${#value}; index++ )); do
+    char="${value:index:1}"
+    case "$char" in
+      [a-zA-Z0-9.~_-])
+        out+="$char"
+        ;;
+      *)
+        printf -v encoded '%%%02X' "'$char"
+        out+="$encoded"
+        ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Escapes a value for use inside a double-quoted curl --config string.
+curl_config_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+# Runs curl with the RabbitMQ basic credentials supplied on stdin
+# (`--config -`), so user:pass never appears in argv or in ps output.
+rabbit_curl() {
+  printf 'user = %s\n' \
+    "$(curl_config_quote "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}")" |
+    curl --config - "$@"
+}
+
+# Runs a read-only or write SQL statement; the password travels via the 0600
+# MYSQL_PWD env file, only the (non-sensitive) user name is on argv.
+mysql_exec() {
+  docker exec --env-file "$(host_path "$MYSQL_PWD_FILE")" "$MYSQL_CONTAINER" \
+    mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$1"
+}
+
+mysql_scalar() {
+  mysql_exec "$1" 2>/dev/null | tr -d '\r\n' || true
+}
+
+redis_cli() {
+  docker exec "$REDIS_CONTAINER" redis-cli "$@" 2>/dev/null | tr -d '\r' || true
+}
+
+# First occurrence only: the queue object is a single JSON line and nested
+# message stats must not override the queue-level counters.
+queue_field() {
+  local body
+  body="$(rabbit_curl -sS --max-time "$CURL_MAX_TIME" \
+    "${RABBITMQ_MANAGEMENT_URL%/}/api/queues/%2F/$(urlencode_segment "$RABBITMQ_QUEUE")" \
+    2>/dev/null || true)"
+  grep -o "\"$1\":[0-9][0-9]*" <<<"$body" | head -n 1 | cut -d: -f2
+}
+
 # Preflight collects every problem before any destructive action. A real run
 # aborts on the first reported issue; --dry-run reports them as warnings so an
 # operator can inspect the plan while the stack is stopped.
@@ -209,8 +317,10 @@ for pair in "$MYSQL_SERVICE:$MYSQL_CONTAINER" "$REDIS_SERVICE:$REDIS_CONTAINER" 
   if [[ "$state" != "running" ]]; then
     preflight_problems+=("$container is not running (state=${state:-missing})")
   fi
-  if [[ -n "$project" && "$project" != "$COMPOSE_PROJECT" ]]; then
-    preflight_problems+=("$container belongs to project \"$project\", not \"$COMPOSE_PROJECT\"")
+  # Reject an empty label too: a plain (non-compose) container that merely
+  # shares the name must never be reset.
+  if [[ "$project" != "$COMPOSE_PROJECT" ]]; then
+    preflight_problems+=("$container compose project label is \"${project:-<missing>}\", expected \"$COMPOSE_PROJECT\"")
   fi
 done
 
@@ -227,17 +337,40 @@ for service in "${APP_SERVICES[@]}"; do
   if [[ "$state" != "running" ]]; then
     preflight_problems+=("$container is not running (state=${state:-missing})")
   fi
-  if [[ -n "$project" && "$project" != "$COMPOSE_PROJECT" ]]; then
-    preflight_problems+=("$container belongs to project \"$project\", not \"$COMPOSE_PROJECT\"")
+  if [[ "$project" != "$COMPOSE_PROJECT" ]]; then
+    preflight_problems+=("$container compose project label is \"${project:-<missing>}\", expected \"$COMPOSE_PROJECT\"")
   fi
 done
 
-# The management API must be reachable before anything is stopped.
-rabbit_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_MAX_TIME" \
-  -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
+# The management API and the target queue must both be usable before anything
+# is stopped: a wrong RABBITMQ_QUEUE has to fail here, not after the truncate.
+rabbit_code="$(rabbit_curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_MAX_TIME" \
   "${RABBITMQ_MANAGEMENT_URL%/}/api/overview" 2>/dev/null || true)"
 if [[ "$rabbit_code" != "200" ]]; then
   preflight_problems+=("RabbitMQ management API returned HTTP ${rabbit_code:-000}")
+else
+  queue_probe_code="$(rabbit_curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_MAX_TIME" \
+    "${RABBITMQ_MANAGEMENT_URL%/}/api/queues/%2F/$(urlencode_segment "$RABBITMQ_QUEUE")" 2>/dev/null || true)"
+  if [[ "$queue_probe_code" != "200" ]]; then
+    preflight_problems+=("RabbitMQ queue \"$RABBITMQ_QUEUE\" not found via management API (HTTP ${queue_probe_code:-000}); check RABBITMQ_QUEUE")
+  fi
+fi
+
+# Readability probes for the two direct-exec datastores, so a wrong
+# credential or dead service is caught before the app tier goes down.
+mysql_probe="$(mysql_scalar 'SELECT 1;')"
+if [[ "$mysql_probe" != "1" ]]; then
+  preflight_problems+=("cannot run read-only MySQL queries on $MYSQL_CONTAINER (check credentials/database)")
+else
+  catalog_probe="$(mysql_scalar 'SELECT COUNT(*) FROM catalog_product;')"
+  if [[ ! "$catalog_probe" =~ ^[0-9]+$ ]] || (( catalog_probe == 0 )); then
+    preflight_problems+=("catalog_product is empty or unreadable (count=${catalog_probe:-?}); refusing to reset")
+  fi
+fi
+
+redis_ping="$(redis_cli ping | tr -d '\n' || true)"
+if [[ "$redis_ping" != "PONG" ]]; then
+  preflight_problems+=("redis-cli ping on $REDIS_CONTAINER returned \"${redis_ping:-no response}\", expected PONG")
 fi
 
 if (( ${#preflight_problems[@]} > 0 )); then
@@ -256,40 +389,6 @@ if (( ${#preflight_problems[@]} > 0 )); then
 fi
 
 # --- Read-only state snapshot (used by dry-run and the final summary) -------
-urlencode_segment() {
-  local value="$1" out="" char index encoded
-  for (( index = 0; index < ${#value}; index++ )); do
-    char="${value:index:1}"
-    case "$char" in
-      [a-zA-Z0-9.~_-])
-        out+="$char"
-        ;;
-      *)
-        printf -v encoded '%%%02X' "'$char"
-        out+="$encoded"
-        ;;
-    esac
-  done
-  printf '%s' "$out"
-}
-
-mysql_scalar() {
-  compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" "$MYSQL_SERVICE" \
-    mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$1" 2>/dev/null \
-    | tr -d '\r\n' || true
-}
-
-# First occurrence only: the queue object is a single JSON line and nested
-# message stats must not override the queue-level counters.
-queue_field() {
-  local body
-  body="$(curl -sS --max-time "$CURL_MAX_TIME" \
-    -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
-    "${RABBITMQ_MANAGEMENT_URL%/}/api/queues/%2F/$(urlencode_segment "$RABBITMQ_QUEUE")" \
-    2>/dev/null || true)"
-  grep -o "\"$1\":[0-9][0-9]*" <<<"$body" | head -n 1 | cut -d: -f2
-}
-
 catalog_count="$(mysql_scalar 'SELECT COUNT(*) FROM catalog_product;')"
 inventory_rows="$(mysql_scalar 'SELECT COUNT(*) FROM inventory_stock;')"
 inventory_min="$(mysql_scalar 'SELECT MIN(available) FROM inventory_stock;')"
@@ -298,7 +397,7 @@ reserved_sum="$(mysql_scalar 'SELECT COALESCE(SUM(reserved), 0) FROM inventory_s
 order_rows="$(mysql_scalar 'SELECT COUNT(*) FROM order_order;')"
 queue_ready="$(queue_field messages_ready)"
 queue_unacked="$(queue_field messages_unacknowledged)"
-redis_dbsize="$(docker exec "$REDIS_CONTAINER" redis-cli dbsize 2>/dev/null | tr -d '\r\n' || true)"
+redis_dbsize="$(redis_cli dbsize | tr -d '\n' || true)"
 
 echo "Reset plan (project=$COMPOSE_PROJECT, env=$ENV_FILE)"
 echo "  1. stop app tier      : ${APP_SERVICES[*]}"
@@ -336,7 +435,10 @@ step() {
 # 1. Quiesce the app tier first so no consumer can create an order between the
 #    DB truncate and the queue purge. `stop` + `start` is a full restart of the
 #    same containers (fresh JVM, toggles, circuit breakers, Caffeine L1).
+#    From here until the start below, the EXIT trap restarts the app tier on
+#    any failure so a mid-reset error never leaves the stack down.
 step "stopping app tier (${APP_SERVICES[*]})"
+APP_RECOVERY_NEEDED=true
 compose stop --timeout "$COMPOSE_TIMEOUT_SECONDS" "${APP_SERVICES[@]}" >/dev/null
 
 # 2. MySQL: orders and stock only; Flyway history and catalog seeds stay.
@@ -349,13 +451,12 @@ SELECT c.id, ${BASELINE_STOCK}, 0
 FROM catalog_product c
 WHERE NOT EXISTS (SELECT 1 FROM inventory_stock s WHERE s.product_id = c.id);
 "
-compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" "$MYSQL_SERVICE" \
-  mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$mysql_reset_sql" >/dev/null
+mysql_exec "$mysql_reset_sql" >/dev/null
 
 # 3. Redis FLUSHDB: the lab instance holds only lab keys (cache, login tokens,
 #    seckill idempotency claims, seckill:stock:*).
 step "flushing Redis DB on $REDIS_CONTAINER"
-redis_flush="$(docker exec "$REDIS_CONTAINER" redis-cli flushdb 2>/dev/null | tr -d '\r\n' || true)"
+redis_flush="$(redis_cli flushdb | tr -d '\n' || true)"
 if [[ "$redis_flush" != "OK" ]]; then
   echo "ERROR: redis-cli flushdb returned \"$redis_flush\"." >&2
   exit 1
@@ -363,14 +464,13 @@ fi
 
 # 4. RabbitMQ: delete ready messages; the durable queue and bindings stay.
 step "purging RabbitMQ queue \"$RABBITMQ_QUEUE\""
-purge_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_MAX_TIME" \
-  -X DELETE -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
-  "${RABBITMQ_MANAGEMENT_URL%/}${queue_path}/contents" 2>/dev/null || true)"
+purge_code="$(rabbit_curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_MAX_TIME" \
+  -X DELETE "${RABBITMQ_MANAGEMENT_URL%/}${queue_path}/contents" 2>/dev/null || true)"
 case "$purge_code" in
   204)
     ;;
   404)
-    echo "WARN: queue \"$RABBITMQ_QUEUE\" did not exist; nothing to purge." >&2
+    echo "WARN: queue \"$RABBITMQ_QUEUE\" disappeared mid-reset; nothing to purge." >&2
     ;;
   *)
     echo "ERROR: RabbitMQ purge returned HTTP ${purge_code:-000}." >&2
@@ -381,6 +481,7 @@ esac
 # 5. Start the app tier; the stock seeder repopulates Redis from MySQL.
 step "starting app tier (${APP_SERVICES[*]})"
 compose start "${APP_SERVICES[@]}" >/dev/null
+APP_RECOVERY_NEEDED=false
 
 step "waiting for app tier health (timeout ${APP_HEALTH_TIMEOUT_SECONDS}s)"
 deadline=$(( SECONDS + APP_HEALTH_TIMEOUT_SECONDS ))
@@ -458,8 +559,7 @@ if [[ -n "$product_ids" ]]; then
     redis_keys+=("${SECKILL_STOCK_KEY_PREFIX}${product_id}")
   done
   for attempt in $(seq 1 "$VERIFY_RETRIES"); do
-    redis_values="$(docker exec "$REDIS_CONTAINER" redis-cli --raw mget "${redis_keys[@]}" \
-      2>/dev/null | tr -d '\r' || true)"
+    redis_values="$(redis_cli --raw mget "${redis_keys[@]}" || true)"
     seeded_count=0
     while IFS= read -r value; do
       if [[ "$value" == "$BASELINE_STOCK" ]]; then

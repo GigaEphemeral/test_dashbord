@@ -210,8 +210,13 @@ Reset-specific overrides: `RESET_BASELINE_STOCK`, `RESET_APP_SERVICES`,
 Bench-specific overrides: `BENCH_REPORTS_DIR`, `BENCH_DOC_DIR`,
 `BENCH_GRAFANA_URL`, `BENCH_GRAFANA_DASHBOARD_UID`, `BENCH_READY_TIMEOUT_SECONDS`,
 `BENCH_READY_INTERVAL_SECONDS`, `BENCH_REQUIRED_SERVICES` (default: every
-compose service). Credentials for the reset come from the lab `.env`; they are
-never passed on a command line, written to an archive or committed.
+compose service). Overrides passed after `--` must be k6 scenario variables:
+bench.sh internal names (`RUN_ID`, `SCENARIO`, `PATH`, `K6_*` runner/archive
+names, `BENCH_*`, `RESET_*`) are rejected so they cannot corrupt the archive,
+the mount or the reset baseline; set those in the environment before invoking
+bench.sh. Credentials for the reset come from the lab `.env`; they are never
+passed on a command line, written to an archive or committed (MySQL via a
+0600 `--env-file`, RabbitMQ via curl stdin config).
 
 ## Compare runs and D9 (M2-2b)
 
