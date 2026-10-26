@@ -31,13 +31,7 @@ const lastEventSeconds = events.reduce((latest, event) => {
   return end > latest ? end : latest;
 }, 0);
 const loadSeconds = chaosConfig.loadDurationMs / 1000;
-if (lastEventSeconds > loadSeconds) {
-  console.warn(
-    `[chaos] ${scenario.id}: last event ends ${lastEventSeconds}s after timeline start, ` +
-      `but load runs ${loadSeconds}s; the tail has no background traffic. ` +
-      'Increase CHAOS_DURATION or shorten the scenario.',
-  );
-}
+const offsetSeconds = chaosConfig.startOffsetMs / 1000;
 
 export const options = {
   ...baseOptions,
@@ -87,6 +81,22 @@ export function chaosTimeline() {
     `[chaos] timeline start id=${scenario.id} events=${events.length} file=${scenarioPath} ` +
       `offset=${chaosConfig.startOffset}`,
   );
+  // Checked here (single chaos VU) instead of module init, which k6 runs once
+  // per VU and would print the same warning N+1 times. The timeline's events
+  // land between `offset` and `offset + lastEventSeconds` of the load window.
+  const remainingLoadSeconds = loadSeconds - offsetSeconds;
+  if (remainingLoadSeconds <= 0) {
+    console.warn(
+      `[chaos] ${scenario.id}: CHAOS_START_OFFSET=${offsetSeconds}s is not below ` +
+        `CHAOS_DURATION=${loadSeconds}s; the timeline runs without background traffic.`,
+    );
+  } else if (lastEventSeconds > remainingLoadSeconds) {
+    console.warn(
+      `[chaos] ${scenario.id}: last event ends ${lastEventSeconds}s after the timeline starts, ` +
+        `but only ${remainingLoadSeconds}s of load remain; the tail has no background traffic. ` +
+        'Increase CHAOS_DURATION or shorten the scenario.',
+    );
+  }
 
   for (const event of events) {
     const elapsedSeconds = (Date.now() - started) / 1000;

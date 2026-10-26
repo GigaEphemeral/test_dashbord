@@ -56,14 +56,20 @@ function positiveInteger(name, fallback) {
   return value;
 }
 
-/** k6 duration for scenario `startTime`; "0" and "0s" are valid (no delay). */
+/**
+ * k6 duration for scenario `startTime`. Any zero value ("0", "0s", "0.0",
+ * "00") is normalized to "0s" because k6/Go only accepts a bare "0" without
+ * a unit; non-zero values must carry a ms/s/m/h unit.
+ */
 function startOffset(name, fallback) {
   const raw = text(name, fallback).trim();
   if (!/^\d+(?:\.\d+)?(?:ms|s|m|h)?$/.test(raw)) {
     throw new Error(`[k6/chaos] ${name} must be a k6 duration ("0s", "5s", "1m"), got "${raw}"`);
   }
-  const milliseconds = Number.parseFloat(raw) === 0 ? 0 : parseDurationMs(raw, name);
-  return { raw, milliseconds };
+  if (Number.parseFloat(raw) === 0) {
+    return { raw: '0s', milliseconds: 0 };
+  }
+  return { raw, milliseconds: parseDurationMs(raw, name) };
 }
 
 function targetPattern() {
@@ -156,14 +162,15 @@ function bodySnippet(res) {
   return body.length > 300 ? `${body.slice(0, 300)}...` : body;
 }
 
-function postJson(path, body, timeout, tags, labToken) {
+function postJson(baseUrl, path, body, timeout, tags, labToken) {
+  const base = String(baseUrl).replace(/\/+$/, '');
   const headers = { Accept: 'application/json', 'X-Lab-Token': labToken };
   let payload = null;
   if (body !== null && body !== undefined) {
     headers['Content-Type'] = 'application/json';
     payload = JSON.stringify(body);
   }
-  const res = http.post(`${controllerUrl}${path}`, payload, {
+  const res = http.post(`${base}${path}`, payload, {
     headers,
     timeout,
     tags: {
@@ -173,15 +180,18 @@ function postJson(path, body, timeout, tags, labToken) {
     },
     responseCallback: http.expectedStatuses(200, 202),
   });
-  if (res.status < 200 || res.status > 299) {
-    throw new Error(`POST ${path} returned HTTP ${res.status}: ${bodySnippet(res)}`);
+  // Same contract as expectedStatuses: the action endpoint answers 202 (and
+  // 200 stays allowed); anything else is a hard failure, not "some 2xx".
+  if (res.status !== 200 && res.status !== 202) {
+    throw new Error(`POST ${path} returned HTTP ${res.status} (expected 200/202): ${bodySnippet(res)}`);
   }
   return res;
 }
 
 /**
- * Applies one scenario event. Throws on any non-2xx response; the timeline
- * treats a throw as a hard stop for the remaining events.
+ * Applies one scenario event against `baseUrl`. Throws on any status other
+ * than 200/202; the timeline treats a throw as a hard stop for the remaining
+ * events.
  */
 export function action(baseUrl, labToken, event, timeout) {
   if (event === null || typeof event !== 'object') {
@@ -190,6 +200,9 @@ export function action(baseUrl, labToken, event, timeout) {
   const target = String(event.target);
   const actionName = String(event.action);
   const url = String(baseUrl).replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(url)) {
+    throw new Error(`[k6/chaos] controller base URL must be an absolute http(s) URL, got "${url}"`);
+  }
   const path = `/chaos/instances/${encodeURIComponent(target)}/actions`;
   const body = { action: actionName };
   if (event.ttlSeconds !== undefined && event.ttlSeconds !== null) {
@@ -197,7 +210,7 @@ export function action(baseUrl, labToken, event, timeout) {
   }
   const tags = { chaos_action: actionName, chaos_target: target };
   try {
-    const res = postJson(path, body, timeout, tags, labToken);
+    const res = postJson(url, path, body, timeout, tags, labToken);
     chaosEvents.add(1, { action: actionName, target, result: 'accepted' });
     return res;
   } catch (error) {
@@ -219,8 +232,10 @@ export function stopAll(baseUrl, labToken, timeout) {
     },
     responseCallback: http.expectedStatuses(200),
   });
-  if (res.status < 200 || res.status > 299) {
-    throw new Error(`POST /chaos/stop-all returned HTTP ${res.status}: ${bodySnippet(res)}`);
+  if (res.status !== 200) {
+    // The controller answers 200 with Result<StopAllResult>; anything else
+    // is a failed rollback.
+    throw new Error(`POST /chaos/stop-all returned HTTP ${res.status} (expected 200): ${bodySnippet(res)}`);
   }
   let payload = null;
   try {
