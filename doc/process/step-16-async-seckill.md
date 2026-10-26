@@ -1,6 +1,6 @@
 > 步骤交接 · M1-5 秒杀主链路：锁、库存、MQ
 > 日期：2026-10-26
-> 分支 / HEAD：`feature/ha-lab` / 本次提交 `feat: add async seckill order flow`（父提交 `a1b690b`）
+> 分支 / HEAD：`feature/ha-lab` / `d6b3d21`（Task 16 配置修复，基于 `9044ed9`；父提交 `a1b690b`）
 > 关联任务：#16（M1-5）
 > 测试 / verify：reactor 126 tests 绿；app 85 tests 绿；`verify.sh` 80 PASS / 1 WARN
 > 运行状态：16 个 lab 容器运行中，三实例健康；product 20 库存 DB/Redis 均 97
@@ -11,6 +11,7 @@
 - 既有同步 `/api/orders` 仍是持久订单唯一路径；消费者通过 `OrderApplicationService` 复用它，没有复制事务/库存逻辑。
 - 配置外置规约首次强制执行：所有路径、超时、TTL、前缀、队列/交换机、消费延迟、Redisson 池大小均在 `application.yml` / compose env，Java 无运行值硬编码。
 - 全量测试：reactor 126（app 85、core 13、chaos 14、common 10、observability 4）；`verify.sh` 80 PASS / 1 WARN（cAdvisor/WSL2 既有 WARN）。
+- Qwen 审核 Approved；按配置外置规约补修两处 Minor（verify curl 超时、compose Redis/Rabbit 端口），提交 `d6b3d21`，范围复审通过。
 - 下一步：Task 17（M1-6 限流熔断、mock login、运行时 toggles）。
 
 # 完成功能项
@@ -28,6 +29,7 @@
 - 测试：新增 10 个 `SeckillAdmissionServiceTest`、5 个 `SeckillOrderConsumerTest`、10 个 `SeckillControllerTest`、5 个 `SeckillStockStoreIT`、`SeckillAsyncIT`、`SeckillConcurrencyIT`、`SeckillIdempotencyIT`；`MySqlRabbitIntegrationTestSupport` + `RabbitMqTestContainer` 为所有 full-context 测试提供 RabbitMQ 4.1。
 - `verify.sh` 新增 7 项：product 20 初始库存、202+requestId、轮询 CREATED、同 key 重放、DB/Redis 各 -1 且仅 1 条订单、RabbitMQ 队列存在且 `messages_ready=0`、秒杀指标暴露。
 - 应用镜像重建、三实例 force-recreate，当前全部 healthy。
+- 配置补丁：`verify.sh` seckill 段 curl 超时改为 `SECKILL_CURL_MAX_TIME` / `SECKILL_CURL_POLL_MAX_TIME`；compose `REDIS_PORT`/`RABBITMQ_PORT` 改为 `${VAR:-default}`；默认行为不变（`d6b3d21`）。
 
 # 设计逻辑
 
@@ -59,7 +61,7 @@
 - 消息 DLQ 与请求状态补偿扫描可在 M2/M3 故障场景中补齐。
 - 演示数据累积：product 1 库存 91、product 20 库存 97、订单 12；尚无 reset 脚本。
 - 栈保持运行，不要 `--purge` 或删命名卷；Product 20 已被 verify 使用，后续秒杀验证继续用它，product 1 留给同步订单检查。
-- 提交：本次 `feat: add async seckill order flow`；报告在 `.superpowers/sdd/ha-lab/task-16-report.md`（gitignored）。
+- 提交：`9044ed9`（异步秒杀）、`d6b3d21`（配置外置修复）；报告在 `.superpowers/sdd/ha-lab/task-16-report.md`（gitignored）。
 
 # 附录
 
