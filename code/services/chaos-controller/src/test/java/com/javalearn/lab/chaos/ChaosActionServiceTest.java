@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -341,6 +342,164 @@ class ChaosActionServiceTest {
         assertThat(service.resume()).isFalse();
         assertThat(service.pause()).isTrue();
         assertThat(service.pause()).isFalse();
+    }
+
+    @Test
+    void pauseLandingDuringScheduleLeavesNoFullTtlTaskBehind() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        properties.setDefaultTtlSeconds(30);
+        properties.setMaxTtlSeconds(600);
+        properties.setWatchdogIntervalSeconds(60);
+        List<CapturedTask> tasks = new CopyOnWriteArrayList<>();
+        AtomicBoolean pauseHookArmed = new AtomicBoolean(true);
+        ChaosActionService frozen = serviceWithScheduleHook(clock, tasks, pauseHookArmed,
+                () -> {
+                    // Simulate a pause landing after execute()'s `paused` check
+                    // but before the scheduled future is visible to freeze().
+                    frozenPause();
+                });
+
+        frozen.execute(APP, new ChaosActionRequest("kill", 30));
+
+        assertThat(frozen.isPaused()).isTrue();
+        assertThat(tasks).hasSize(1);
+        // The late-attached full-TTL task must be cancelled, otherwise it would
+        // revert early once the guide resumes.
+        assertThat(tasks.get(0).cancelled()).isTrue();
+
+        clock.advance(Duration.ofSeconds(10));
+        assertThat(frozen.resume()).isTrue();
+        assertThat(tasks).hasSize(2);
+        assertThat(tasks.get(1).delayMillis()).isEqualTo(TimeUnit.SECONDS.toMillis(30));
+
+        tasks.get(0).runIfActive();
+        assertThat(gateway.calls).doesNotContain("start:" + APP);
+        tasks.get(1).runIfActive();
+        assertThat(gateway.calls).contains("start:" + APP);
+        assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    @Test
+    void resumeUpdatesEveryExpiryBeforeUnpausingTheWatchdog() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        properties.setDefaultTtlSeconds(30);
+        properties.setMaxTtlSeconds(600);
+        properties.setWatchdogIntervalSeconds(60);
+        List<CapturedTask> tasks = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        AtomicBoolean sweepHookArmed = new AtomicBoolean(false);
+        ScheduledExecutorService manual = mock(ScheduledExecutorService.class);
+        when(manual.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> {
+                    CapturedTask task = new CapturedTask(invocation.getArgument(0),
+                            invocation.getArgument(1));
+                    tasks.add(task);
+                    if (sweepHookArmed.compareAndSet(true, false)) {
+                        // Watchdog fires the instant resume releases the pause.
+                        watchdogs.get(0).run();
+                    }
+                    return task.future();
+                });
+        when(manual.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> {
+                    watchdogs.add(invocation.getArgument(0));
+                    return mock(ScheduledFuture.class);
+                });
+        ChaosActionService frozen = new ChaosActionService(gateway, annotator, properties,
+                registry, manual, clock);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", 30));
+        frozen.execute(APP2, new ChaosActionRequest("kill", 30));
+        clock.advance(Duration.ofSeconds(10));
+        frozen.pause();
+        assertThat(tasks).hasSize(2);
+        // The guide stays paused past the original expiry; the remaining TTL is
+        // what resume must restore, so a watchdog landing mid-resume must not
+        // see the stale frozen expiry.
+        clock.advance(Duration.ofSeconds(60));
+
+        sweepHookArmed.set(true);
+        Instant resumedAt = clock.instant();
+        assertThat(frozen.resume()).isTrue();
+
+        // The mid-resume watchdog must not revert anything: every expiry is
+        // already moved to resumedAt + remaining before the paused flag drops.
+        assertThat(gateway.calls).doesNotContain("start:" + APP, "start:" + APP2);
+        assertThat(frozen.activeActions()).hasSize(2);
+        assertThat(tasks).hasSize(4);
+        assertThat(tasks.get(2).delayMillis()).isEqualTo(TimeUnit.SECONDS.toMillis(20));
+        assertThat(tasks.get(3).delayMillis()).isEqualTo(TimeUnit.SECONDS.toMillis(20));
+        assertThat(frozen.activeActions()).allMatch(action ->
+                action.expiresAt().equals(resumedAt.plusSeconds(20)));
+
+        // The remaining TTL still reverts both actions.
+        clock.advance(Duration.ofSeconds(25));
+        watchdogs.get(0).run();
+        assertThat(gateway.calls).contains("start:" + APP, "start:" + APP2);
+        assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    private volatile ChaosActionService pauseHookTarget;
+
+    private void frozenPause() {
+        pauseHookTarget.pause();
+    }
+
+    private ChaosActionService serviceWithScheduleHook(MutableClock clock,
+                                                       List<CapturedTask> tasks,
+                                                       AtomicBoolean hookArmed,
+                                                       Runnable scheduleHook) {
+        ScheduledExecutorService manual = mock(ScheduledExecutorService.class);
+        when(manual.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> {
+                    CapturedTask task = new CapturedTask(invocation.getArgument(0),
+                            invocation.getArgument(1));
+                    tasks.add(task);
+                    if (hookArmed.compareAndSet(true, false)) {
+                        scheduleHook.run();
+                    }
+                    return task.future();
+                });
+        when(manual.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(invocation -> mock(ScheduledFuture.class));
+        ChaosActionService frozen = new ChaosActionService(gateway, annotator, properties,
+                registry, manual, clock);
+        pauseHookTarget = frozen;
+        return frozen;
+    }
+
+    /** Scheduled task capture that honours cancel for deterministic races. */
+    static final class CapturedTask {
+
+        private final Runnable task;
+        private final long delayMillis;
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final ScheduledFuture<?> future;
+
+        private CapturedTask(Runnable task, long delayMillis) {
+            this.task = task;
+            this.delayMillis = delayMillis;
+            this.future = mock(ScheduledFuture.class);
+            when(this.future.cancel(anyBoolean())).thenAnswer(inv -> cancelled.compareAndSet(false, true));
+        }
+
+        private long delayMillis() {
+            return delayMillis;
+        }
+
+        private boolean cancelled() {
+            return cancelled.get();
+        }
+
+        private void runIfActive() {
+            if (!cancelled.get()) {
+                task.run();
+            }
+        }
+
+        private ScheduledFuture<?> future() {
+            return future;
+        }
     }
 
     private ChaosActionService serviceWithManualScheduler(MutableClock clock,

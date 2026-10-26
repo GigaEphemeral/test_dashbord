@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,7 +41,15 @@ import java.util.concurrent.TimeUnit;
  * <p>The guide can freeze the whole action set: while paused, scheduled reverts
  * and the watchdog do not fire, and every action keeps its remaining TTL.
  * Resuming schedules that remaining TTL (not a fresh one); stop-all reverts
- * regardless of pause.</p>
+ * regardless of pause. {@code pause}/{@code resume}/{@code execute} serialize
+ * on this service's monitor so a racing pause can never leave a full-TTL task
+ * attached, and resume moves every expiry before it unpauses the watchdog.</p>
+ *
+ * <p>Documented limitations: a revert that already claimed its CAS may still
+ * complete shortly after {@code pause} returns; FAILED retries stay frozen
+ * until resume (pausing is deliberately "freeze the whole lab"); a plain
+ * {@code stop-all} while paused keeps the paused flag - use
+ * {@code POST /lab/guide/reset} (or resume) to unfreeze the service.</p>
  */
 @Service
 public class ChaosActionService {
@@ -118,22 +127,34 @@ public class ChaosActionService {
         Instant now = clock.instant();
         ChaosAction action = new ChaosAction(UUID.randomUUID().toString(), target, type, ttl,
                 now, now.plusSeconds(ttl));
-        register(action);
-        if (paused) {
-            // Freeze immediately: the action stays visible with its full TTL
-            // remaining and is scheduled when the guide resumes.
-            action.freeze(now);
-        } else {
-            // Schedule before touching Docker: if the apply below fails we cancel;
-            // if scheduling itself failed nothing was stopped/frozen yet.
-            try {
-                long delayMillis = TimeUnit.SECONDS.toMillis(ttl);
-                ScheduledFuture<?> future = scheduler.schedule(
-                        () -> autoRevert(action, "ttl"), delayMillis, TimeUnit.MILLISECONDS);
-                action.schedule(future);
-            } catch (RejectedExecutionException e) {
-                active.remove(target, action);
-                throw e;
+        // Register and schedule under the pause/resume monitor: otherwise a
+        // pause() landing between the `paused` check and schedule() could not
+        // cancel this future (freeze runs before it exists), leaving a full-TTL
+        // task that reverts early once the guide resumes.
+        synchronized (this) {
+            register(action);
+            if (paused) {
+                // Freeze immediately: the action stays visible with its full TTL
+                // remaining and is scheduled when the guide resumes.
+                action.freeze(now);
+            } else {
+                // Schedule before touching Docker: if the apply below fails we cancel;
+                // if scheduling itself failed nothing was stopped/frozen yet.
+                try {
+                    long delayMillis = TimeUnit.SECONDS.toMillis(ttl);
+                    ScheduledFuture<?> future = scheduler.schedule(
+                            () -> autoRevert(action, "ttl"), delayMillis, TimeUnit.MILLISECONDS);
+                    action.schedule(future);
+                    if (paused) {
+                        // Defensive double-check: pause ran on this thread while
+                        // scheduling; drop the late task and freeze again.
+                        action.cancelSchedule();
+                        action.freeze(now);
+                    }
+                } catch (RejectedExecutionException e) {
+                    active.remove(target, action);
+                    throw e;
+                }
             }
         }
 
@@ -195,32 +216,57 @@ public class ChaosActionService {
      * Restores every ACTIVE action with its remaining TTL (never a full reset)
      * and lets the watchdog retry FAILED reverts again.
      *
+     * <p>All frozen expiries are moved to {@code now + remaining} while the
+     * service is still paused; only then is the paused flag dropped. A watchdog
+     * sweep landing between the two phases therefore never sees the stale
+     * (already past) frozen expiry and cannot revert earlier than the
+     * remaining TTL.</p>
+     *
      * @return true when this call resumed the service, false if it was not paused
      */
     public synchronized boolean resume() {
         if (!paused) {
             return false;
         }
-        paused = false;
         Instant now = clock.instant();
+        List<ChaosAction> resuming = new ArrayList<>();
         for (ChaosAction action : active.values()) {
             if (action.status() != ChaosActionStatus.ACTIVE) {
                 continue;
             }
-            long remaining = Math.max(0L, action.remainingMillis());
-            Instant expiresAt = action.resumeAt(now, remaining);
-            long delayMillis = Math.max(0L, java.time.Duration.between(now, expiresAt).toMillis());
+            long remaining = action.remainingMillis();
+            if (remaining < 0) {
+                // Defensive: pause never froze this action, so there is no
+                // remaining TTL to restore. Keep the original expiry (its own
+                // task or the watchdog reverts it); never treat "-1" as zero,
+                // which would revert the moment we resume.
+                log.warn("Chaos action {} ({} on {}) has no frozen remainder on resume;"
+                                + " keeping expiry {}",
+                        action.id(), action.type().wireName(), action.target(), action.expiresAt());
+                continue;
+            }
+            action.resumeAt(now, remaining);
+            resuming.add(action);
+            log.info("Resumed chaos action {} ({} on {}): remaining={}ms",
+                    action.id(), action.type().wireName(), action.target(), remaining);
+        }
+        paused = false;
+        for (ChaosAction action : resuming) {
+            long delayMillis = Math.max(0L, Duration.between(clock.instant(), action.expiresAt()).toMillis());
             try {
                 ScheduledFuture<?> future = scheduler.schedule(
                         () -> autoRevert(action, "ttl"), delayMillis, TimeUnit.MILLISECONDS);
                 action.schedule(future);
+                if (paused) {
+                    // pause() ran on this thread while rescheduling; refreeze.
+                    action.cancelSchedule();
+                    action.freeze(clock.instant());
+                }
             } catch (RejectedExecutionException e) {
                 // The watchdog (now unpaused) still reverts once expiresAt passes.
                 log.warn("Could not reschedule {} on {} after resume; watchdog will revert: {}",
                         action.type().wireName(), action.target(), e.toString());
             }
-            log.info("Resumed chaos action {} ({} on {}): remaining={}ms",
-                    action.id(), action.type().wireName(), action.target(), remaining);
         }
         return true;
     }
