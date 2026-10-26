@@ -2,7 +2,6 @@ package com.javalearn.lab.seckill.catalog.api;
 
 import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
-import com.javalearn.lab.seckill.catalog.domain.Product;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -23,11 +22,11 @@ class ProductControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private ProductQueryService productQueryService;
+    private ProductViewService productViewService;
 
     @Test
     void returnsProductWithSuccessEnvelope() throws Exception {
-        given(productQueryService.get(1L)).willReturn(new Product(
+        given(productViewService.get(1L)).willReturn(new ProductResponse(
                 1L, "极客机械键盘", new BigDecimal("299.00"), "ON_SALE", "87 键热插拔轴体"));
 
         mockMvc.perform(get("/api/products/1"))
@@ -42,7 +41,7 @@ class ProductControllerTest {
 
     @Test
     void missingProductReturns404WithNotFoundCode() throws Exception {
-        given(productQueryService.get(999999L)).willThrow(
+        given(productViewService.get(999999L)).willThrow(
                 new BizException(CommonErrorCode.NOT_FOUND, "Product not found: 999999"));
 
         mockMvc.perform(get("/api/products/999999"))

@@ -17,6 +17,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  data:
+    # Redis is the product cache L2. Connections are lazy, so a Redis outage
+    # degrades reads to the database instead of preventing startup.
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+
 server:
   port: 8080
   # Boot 3 disables the Tomcat MBean registry by default; D2 reads

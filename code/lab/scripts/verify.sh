@@ -110,6 +110,22 @@ check_http_ok() {
   fail "$label" "GET $url did not return 2xx"
 }
 
+# Wait for a Prometheus instant query to report a positive scalar value.
+check_prometheus_positive() {
+  local label="$1" encoded_query="$2" body="" attempt
+  for attempt in $(seq 1 30); do
+    body="$(prometheus_query "$encoded_query")"
+    if grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*(\.[0-9]+)?"\]' <<<"$body"; then
+      pass "$label"
+      return 0
+    fi
+    if (( attempt < 30 )); then
+      sleep 2
+    fi
+  done
+  fail "$label" "response: ${body:0:200}"
+}
+
 # Query the Prometheus HTTP API from inside jl-net. The caller passes a
 # percent-encoded query expression so no host-side URL encoding is required.
 prometheus_query() {
@@ -244,6 +260,56 @@ if [[ "$missing_product_code" == "404" ]] \
 else
   fail "nginx /api/products/999999 returns 404 with code=40401" \
     "HTTP ${missing_product_code:-000} body: ${missing_product_body:0:160}"
+fi
+
+# 2c-bis. Two-level product cache (Task 14): Caffeine L1 + Redis L2 behind
+# Spring Cache. The calls above already warmed L1 on each instance and wrote
+# the L2 key; another round proves L1 hits and keeps the cache observable.
+cache_calls_ok=true
+cache_call_code=""
+for _ in $(seq 1 6); do
+  cache_call_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+    http://127.0.0.1:8080/api/products/1 2>/dev/null || true)"
+  if [[ "$cache_call_code" != "200" ]]; then
+    cache_calls_ok=false
+    break
+  fi
+done
+if $cache_calls_ok; then
+  pass "six /api/products/1 calls through nginx succeed while warming the cache"
+else
+  fail "six /api/products/1 calls through nginx succeed while warming the cache" \
+    "HTTP ${cache_call_code:-000}"
+fi
+
+check_prometheus_positive \
+  "prometheus has cache_l1_requests_total{cache=\"product\",result=\"hit\"} > 0" \
+  'sum%28cache_l1_requests_total%7Bjob%3D%22seckill-app%22%2Ccache%3D%22product%22%2Cresult%3D%22hit%22%7D%29'
+check_prometheus_positive \
+  "prometheus has cache_l1_requests_total{cache=\"product\",result=\"miss\"} > 0" \
+  'sum%28cache_l1_requests_total%7Bjob%3D%22seckill-app%22%2Ccache%3D%22product%22%2Cresult%3D%22miss%22%7D%29'
+check_prometheus_positive \
+  "prometheus has cache_l2_requests_total{cache=\"product\",result=\"hit\"} > 0" \
+  'sum%28cache_l2_requests_total%7Bjob%3D%22seckill-app%22%2Ccache%3D%22product%22%2Cresult%3D%22hit%22%7D%29'
+check_prometheus_positive \
+  "prometheus has cache_l2_requests_total{cache=\"product\",result=\"miss\"} > 0" \
+  'sum%28cache_l2_requests_total%7Bjob%3D%22seckill-app%22%2Ccache%3D%22product%22%2Cresult%3D%22miss%22%7D%29'
+
+cache_keys="$(docker exec jl-redis redis-cli --scan --pattern 'cache:product:*' 2>/dev/null \
+  | tr -d '\r' || true)"
+if [[ -n "$cache_keys" ]]; then
+  cache_key_count="$(printf '%s\n' "$cache_keys" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+  pass "redis has $cache_key_count cache:product:* key(s) written by the L2 cache"
+  cache_key="$(printf '%s\n' "$cache_keys" | sed '/^[[:space:]]*$/d' | head -n 1)"
+  cache_ttl="$(docker exec jl-redis redis-cli ttl "$cache_key" 2>/dev/null | tr -d '\r' || true)"
+  if [[ "$cache_ttl" =~ ^[0-9]+$ ]] && (( cache_ttl > 0 )); then
+    pass "redis TTL for $cache_key is positive (${cache_ttl}s)"
+  else
+    fail "redis TTL for $cache_key is positive" "ttl='${cache_ttl}'"
+  fi
+else
+  fail "redis has at least one cache:product:* key" "scan returned no keys"
+  fail "redis TTL for a cache:product:* key is positive" "no cache key to inspect"
 fi
 
 # 2d. Inventory + idempotent order flow through Nginx (Task 13). The three

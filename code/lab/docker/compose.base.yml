@@ -42,6 +42,10 @@ x-app-env: &app-env
   MYSQL_DATABASE: ${MYSQL_DATABASE}
   MYSQL_USER: ${MYSQL_USER}
   MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+  # Product cache L2 (Task 14). Redis remains best-effort: failures fall back
+  # to MySQL reads and are counted as cache_l2_errors.
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
   OTEL_SERVICE_NAME: seckill-app
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc

@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.instance=test-1"
         })
 @Testcontainers
-class HelloControllerIntegrationTest extends MySqlIntegrationTestSupport {
+class HelloControllerIntegrationTest extends MySqlRedisIntegrationTestSupport {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
