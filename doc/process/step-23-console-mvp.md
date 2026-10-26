@@ -195,3 +195,21 @@ background traffic stop shows in the status bar / log panel renders container ou
 no in-page error banner / no uncaught page errors / no failed lab-api requests
 console smoke: 26 PASS, 0 FAIL
 ```
+
+# 审核修复（2026-10-26 独立评审）
+
+评审在隔离 worktree 由 Qwen3.8 子代理执行，结论：**无 Critical**，1 个 Important 已修复并
+cherry-pick 回主分支（`e2e45fc` → 主会话 `ab09a63`）。
+
+- **冒烟里的空断言（Important）**：`expectCondition('every always-on container is running')`
+  只比较 `up === total`，而首屏（容器尚未取到）与"失败后被清掉的横幅"都渲染 `0/0`，
+  于是这条断言可以在完全没有证明栈健康的情况下 PASS。探针改为要求
+  `Number.isInteger(up) && Number.isInteger(total) && total > 0 && up === total`，
+  与"轮询正例"的约定保持一致。合并后真浏览器重跑 **26 PASS / 0 FAIL**。
+- 主会话抽查（只读）确认评审关注的其余高风险项：仓库内已无代码读取
+  `currentStepTitle`/`currentStepText`（仅历史文档描述该变更）；`GuideStepExplain`
+  记录体不再带任何会被 Jackson 序列化成属性的辅助 getter（`explain.empty` 已由
+  `GuideControllerTest` 的 `doesNotExist()` 锁定）；dashboard 轮询间隔走
+  `VITE_LAB_SYNC_INTERVAL_MS`，无新增硬编码端口/超时/池大小。
+- 评审回报未按约定格式给出完整分级清单（子代理在等待全 reactor 复跑时结束），
+  因此上述"其余项"由主会话以定向 grep + 复跑冒烟补齐，未发现其它待修项。
