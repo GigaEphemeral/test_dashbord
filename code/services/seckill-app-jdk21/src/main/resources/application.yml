@@ -185,6 +185,42 @@ app:
           keep-alive-seconds: ${LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60}
           thread-name-prefix: ${LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh}
 
+      # Caffeine 预热 (M4-3, design 8.4). The hot-key tracker is per instance and
+      # capped; the Top-N is published to ONE shared Redis ZSet so every
+      # instance preheats from the same list. Startup/periodic preheat warms L1
+      # from L2 only — it never rewrites cache:product:<id> TTLs, otherwise the
+      # M4-2 avalanche experiment's identical-TTL set would be destroyed.
+      preheat:
+        # Gates the automatic startup + periodic runs. Hot-key tracking and
+        # publishing stay active, and POST /lab/cache/preheat stays available.
+        enabled: ${LAB_CACHE_PREHEAT_ENABLED:true}
+        top-n: ${LAB_CACHE_PREHEAT_TOP_N:200}
+        hot-list-key: ${LAB_CACHE_PREHEAT_HOT_LIST_KEY:hot:products}
+        tracker:
+          # Caffeine cap on tracked product ids (design 8.4: 10 万).
+          capacity: ${LAB_CACHE_PREHEAT_TRACKER_CAPACITY:100000}
+          # Counters halve once per interval (design 8.4: 30s).
+          decay-interval-seconds: ${LAB_CACHE_PREHEAT_TRACKER_DECAY_INTERVAL_SECONDS:30}
+          # How often the local Top-N replaces the shared ZSet.
+          flush-interval-seconds: ${LAB_CACHE_PREHEAT_TRACKER_FLUSH_INTERVAL_SECONDS:10}
+        load:
+          # Rate limit: this many L2 reads, then chunk-pause-ms of sleep.
+          chunk-size: ${LAB_CACHE_PREHEAT_LOAD_CHUNK_SIZE:50}
+          chunk-pause-ms: ${LAB_CACHE_PREHEAT_LOAD_CHUNK_PAUSE_MS:50}
+          # The startup run is async after ApplicationReadyEvent, never during boot.
+          startup-delay-ms: ${LAB_CACHE_PREHEAT_STARTUP_DELAY_MS:1000}
+          # Incremental reheat period (design 8.4: 5 minutes).
+          periodic-interval-seconds: ${LAB_CACHE_PREHEAT_PERIODIC_INTERVAL_SECONDS:300}
+          scheduler-pool-size: ${LAB_CACHE_PREHEAT_SCHEDULER_POOL_SIZE:1}
+          thread-name-prefix: ${LAB_CACHE_PREHEAT_THREAD_PREFIX:cache-preheat}
+        # The former TwoLevelCache L1 constants, now externalized. Defaults keep
+        # the previous behaviour (10k / 60s); refreshAfterWrite is the design's
+        # async "refresh L1 from L2" story and must stay below the write expiry.
+        l1:
+          maximum-size: ${LAB_CACHE_L1_MAXIMUM_SIZE:10000}
+          refresh-after-write-seconds: ${LAB_CACHE_L1_REFRESH_AFTER_WRITE_SECONDS:10}
+          expire-after-write-seconds: ${LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS:60}
+
     # Fault-thread lab (Task M5-1 / design 9.1). /lab/thread/** injects the seven
     # faulty-thread modes; every thread count, TTL, interval, chunk size, pool size
     # and the OOM throwaway gate is externalized here — nothing is hardcoded. The
