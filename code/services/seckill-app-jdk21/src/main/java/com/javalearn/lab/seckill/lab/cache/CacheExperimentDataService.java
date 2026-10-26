@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
+import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
+import com.javalearn.lab.seckill.lab.toggle.CacheDefenseMode;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseModeService;
 import com.javalearn.lab.seckill.lab.toggle.LabToggle;
 import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
@@ -77,6 +79,7 @@ public final class CacheExperimentDataService {
     private final ProductBloomFilterService bloomFilter;
     private final NullValueMarkerStore markerStore;
     private final CacheDefenseModeService modeService;
+    private final ProductBreakdownDefense breakdownDefense;
     private final LabToggleService toggleService;
     private final CacheManager cacheManager;
 
@@ -87,6 +90,7 @@ public final class CacheExperimentDataService {
                                       ProductBloomFilterService bloomFilter,
                                       NullValueMarkerStore markerStore,
                                       CacheDefenseModeService modeService,
+                                      ProductBreakdownDefense breakdownDefense,
                                       LabToggleService toggleService,
                                       CacheManager cacheManager) {
         this.properties = Objects.requireNonNull(properties, "properties");
@@ -96,6 +100,7 @@ public final class CacheExperimentDataService {
         this.bloomFilter = Objects.requireNonNull(bloomFilter, "bloomFilter");
         this.markerStore = Objects.requireNonNull(markerStore, "markerStore");
         this.modeService = Objects.requireNonNull(modeService, "modeService");
+        this.breakdownDefense = Objects.requireNonNull(breakdownDefense, "breakdownDefense");
         this.toggleService = Objects.requireNonNull(toggleService, "toggleService");
         this.cacheManager = Objects.requireNonNull(cacheManager, "cacheManager");
     }
@@ -185,6 +190,7 @@ public final class CacheExperimentDataService {
         return new CacheStateResponse(
                 new CacheStateResponse.Defense(modeService.current().key(),
                         toggleService.isEnabled(LabToggle.CACHE)),
+                breakdownView(),
                 new CacheStateResponse.Dataset(startId, endId, seed.getProductCount(), rowsInRange,
                         Math.max(0L, seed.getProductCount() - rowsInRange),
                         seed.getAvalancheKeyCount(), seed.getAvalancheTtlSeconds(), hotKeyId),
@@ -196,6 +202,23 @@ public final class CacheExperimentDataService {
                         properties.getPenetration().getNullCache().getTtlSeconds(),
                         properties.getPenetration().getNullCache().getJitterSeconds(),
                         markers));
+    }
+
+    /**
+     * The active breakdown strategy plus its parameters and live guard gauges;
+     * the console reads this to show what is protecting the hot key right now.
+     */
+    private CacheStateResponse.Breakdown breakdownView() {
+        CacheDefenseMode mode = modeService.current();
+        LabCacheProperties.Mutex mutex = properties.getBreakdown().getMutex();
+        LabCacheProperties.LogicalExpire logical = properties.getBreakdown().getLogicalExpire();
+        return new CacheStateResponse.Breakdown(mode.key(),
+                mode == CacheDefenseMode.MUTEX,
+                mode == CacheDefenseMode.LOGICAL_EXPIRE,
+                mutex.getWaitMs(), mutex.getLeaseMs(), mutex.getOnLockTimeout(),
+                logical.getLogicalTtlSeconds(), logical.getRetentionSeconds(),
+                logical.getRefreshPoolSize(), logical.getRefreshQueueCapacity(),
+                breakdownDefense.staleEntries(), breakdownDefense.refreshInFlight());
     }
 
     /**

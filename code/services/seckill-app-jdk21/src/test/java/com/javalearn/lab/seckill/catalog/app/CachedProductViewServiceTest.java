@@ -2,8 +2,10 @@ package com.javalearn.lab.seckill.catalog.app;
 
 import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
+import com.javalearn.lab.seckill.catalog.cache.LogicalStaleStore;
 import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
+import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductPenetrationDefense;
 import com.javalearn.lab.seckill.catalog.domain.Product;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
@@ -19,6 +21,7 @@ import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,8 +65,18 @@ class CachedProductViewServiceTest {
                 Duration.ofSeconds(10), Duration.ofSeconds(5), () -> 0L, registry);
         ProductBloomFilterService bloom = new ProductBloomFilterService(redisson,
                 "bloom:product-ids", 10_000L, 0.01D, registry);
-        this.service = new CachedProductViewService(readService,
-                new ProductPenetrationDefense(modeService, markers, bloom, registry));
+        ProductPenetrationDefense penetration =
+                new ProductPenetrationDefense(modeService, markers, bloom, registry);
+        // The breakdown stage is active but seeded in off mode, so every case
+        // here delegates exactly like M4-1 did; mutex/logical-expire decision
+        // tables live in ProductBreakdownDefenseTest.
+        ProductBreakdownDefense breakdown = new ProductBreakdownDefense(modeService, penetration,
+                redisson,
+                new LogicalStaleStore(properties.getBreakdown().getLogicalExpire().getMaxEntries(),
+                        Duration.ofSeconds(120), Duration.ofSeconds(30), System::nanoTime),
+                Runnable::run, id -> Optional.empty(), properties, System::currentTimeMillis,
+                registry);
+        this.service = new CachedProductViewService(readService, breakdown);
     }
 
     @BeforeEach

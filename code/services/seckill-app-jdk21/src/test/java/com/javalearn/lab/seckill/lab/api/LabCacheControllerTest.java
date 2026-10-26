@@ -84,7 +84,7 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.mode").value("off"));
 
-        for (String mode : List.of("null-cache", "bloom", "off")) {
+        for (String mode : List.of("null-cache", "bloom", "mutex", "logical-expire", "off")) {
             mockMvc.perform(post("/lab/cache/mode")
                             .header(LabTokenFilter.TOKEN_HEADER, TOKEN)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -156,6 +156,8 @@ class LabCacheControllerTest {
     void stateExposesDefenseDatasetKeysBloomAndNullCacheWithoutSecrets() throws Exception {
         when(experimentData.state()).thenReturn(new CacheStateResponse(
                 new CacheStateResponse.Defense("bloom", true),
+                new CacheStateResponse.Breakdown("bloom", false, false, 200L, 2_000L, "db",
+                        30L, 120L, 2, 100, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 1_000L, 0L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(true, 12L, 201L, 200L, true),
                 new CacheStateResponse.Bloom("bloom:product-ids", true, 1_020L, 10_000L, 0.01D),
@@ -165,12 +167,18 @@ class LabCacheControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data", hasKey("defense")))
+                .andExpect(jsonPath("$.data", hasKey("breakdown")))
                 .andExpect(jsonPath("$.data", hasKey("dataset")))
                 .andExpect(jsonPath("$.data", hasKey("keys")))
                 .andExpect(jsonPath("$.data", hasKey("bloom")))
                 .andExpect(jsonPath("$.data", hasKey("nullCache")))
                 .andExpect(jsonPath("$.data.defense.mode").value("bloom"))
                 .andExpect(jsonPath("$.data.defense.cacheToggleEnabled").value(true))
+                .andExpect(jsonPath("$.data.breakdown.strategy").value("bloom"))
+                .andExpect(jsonPath("$.data.breakdown.mutexActive").value(false))
+                .andExpect(jsonPath("$.data.breakdown.logicalExpireActive").value(false))
+                .andExpect(jsonPath("$.data.breakdown.mutexOnLockTimeout").value("db"))
+                .andExpect(jsonPath("$.data.breakdown.refreshPoolSize").value(2))
                 .andExpect(jsonPath("$.data.dataset.rowsInRange").value(1_000))
                 .andExpect(jsonPath("$.data.dataset.missingRows").value(0))
                 .andExpect(jsonPath("$.data.keys.redisReachable").value(true))
@@ -187,6 +195,8 @@ class LabCacheControllerTest {
     void stateKeepsWorkingWhenRedisIsDown() throws Exception {
         when(experimentData.state()).thenReturn(new CacheStateResponse(
                 new CacheStateResponse.Defense("off", true),
+                new CacheStateResponse.Breakdown("off", false, false, 200L, 2_000L, "db",
+                        30L, 120L, 2, 100, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 0L, 1_000L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(false, 0L, 0L, 0L, false),
                 new CacheStateResponse.Bloom("bloom:product-ids", false, 0L, 10_000L, 0.01D),

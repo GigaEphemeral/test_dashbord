@@ -4,7 +4,7 @@ import com.javalearn.lab.common.BizException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.api.ProductViewService;
-import com.javalearn.lab.seckill.catalog.cache.ProductPenetrationDefense;
+import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
@@ -20,11 +20,14 @@ import java.util.Optional;
  * database read to the read pool. The cached method itself must stay
  * non-transactional, otherwise a cache hit would still open a transaction.</p>
  *
- * <p>The method body is the penetration stage of the read path: it only runs
- * after L1 and L2 missed, so {@link ProductPenetrationDefense} sees exactly the
- * traffic the experiment manipulates. An absent product still raises the same
- * {@code 40401} {@link BizException} as before, whatever the defense mode; what
- * changes is only whether the database had to be asked.</p>
+ * <p>The method body is the defense stage of the read path: it only runs after
+ * L1 and L2 missed, so {@link ProductBreakdownDefense} sees exactly the traffic
+ * the experiment manipulates. It dispatches on the runtime mode — the M4-2
+ * breakdown strategies ({@code mutex}, {@code logical-expire}) handle the expired
+ * hot key, every other mode delegates unchanged to the M4-1
+ * {@code ProductPenetrationDefense}. An absent product still raises the same
+ * {@code 40401} {@link BizException} whatever the defense mode; what changes is
+ * only whether the database had to be asked.</p>
  */
 @Service
 public class CachedProductViewService implements ProductViewService {
@@ -32,18 +35,18 @@ public class CachedProductViewService implements ProductViewService {
     public static final String PRODUCT_CACHE = "product";
 
     private final ProductReadService productReadService;
-    private final ProductPenetrationDefense penetrationDefense;
+    private final ProductBreakdownDefense breakdownDefense;
 
     public CachedProductViewService(ProductReadService productReadService,
-                                    ProductPenetrationDefense penetrationDefense) {
+                                    ProductBreakdownDefense breakdownDefense) {
         this.productReadService = Objects.requireNonNull(productReadService, "productReadService");
-        this.penetrationDefense = Objects.requireNonNull(penetrationDefense, "penetrationDefense");
+        this.breakdownDefense = Objects.requireNonNull(breakdownDefense, "breakdownDefense");
     }
 
     @Override
     @Cacheable(cacheNames = PRODUCT_CACHE, key = "#id")
     public ProductResponse get(long id) {
-        return penetrationDefense.load(id, this::findInDatabase)
+        return breakdownDefense.load(id, this::findInDatabase)
                 .orElseThrow(() -> new BizException(
                         CommonErrorCode.NOT_FOUND, "Product not found: " + id));
     }

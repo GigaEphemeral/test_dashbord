@@ -84,6 +84,8 @@ class CacheExperimentDataServiceTest {
     private final ProductBloomFilterService bloomFilter = new ProductBloomFilterService(redisson,
             "bloom:product-ids", 10_000L, 0.01D, registry);
     private final CacheDefenseModeService modeService = new CacheDefenseModeService(properties);
+    private final com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense breakdownDefense =
+            mock(com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense.class);
 
     /** The id set the filter was last rebuilt from, to prove its coverage. */
     private Collection<Long> bloomIdsSeen = List.of();
@@ -117,7 +119,7 @@ class CacheExperimentDataServiceTest {
         when(productCache.getNativeCache()).thenReturn(l1);
 
         service = new CacheExperimentDataService(properties, jdbcTemplate, template, objectMapper,
-                bloomFilter, markerStore, modeService,
+                bloomFilter, markerStore, modeService, breakdownDefense,
                 new LabToggleService(toggles()), cacheManager);
     }
 
@@ -302,6 +304,24 @@ class CacheExperimentDataServiceTest {
         // protection is backed by a usable filter, not just by the switch.
         assertThat(state.bloom().key()).isEqualTo("bloom:product-ids");
         assertThat(state.bloom().initialised()).isTrue();
+
+        // M4-2: the same view names the ACTIVE breakdown strategy, so the
+        // console can show what protects the hot key without inferring it.
+        modeService.update("mutex");
+        CacheStateResponse mutexState = service.state();
+        assertThat(mutexState.breakdown().strategy()).isEqualTo("mutex");
+        assertThat(mutexState.breakdown().mutexActive()).isTrue();
+        assertThat(mutexState.breakdown().logicalExpireActive()).isFalse();
+        assertThat(mutexState.breakdown().mutexWaitMs()).isEqualTo(200L);
+        assertThat(mutexState.breakdown().mutexOnLockTimeout()).isEqualTo("db");
+
+        modeService.update("logical-expire");
+        CacheStateResponse logicalState = service.state();
+        assertThat(logicalState.breakdown().strategy()).isEqualTo("logical-expire");
+        assertThat(logicalState.breakdown().logicalExpireActive()).isTrue();
+        assertThat(logicalState.breakdown().logicalTtlSeconds()).isEqualTo(30L);
+        assertThat(logicalState.breakdown().retentionSeconds()).isEqualTo(120L);
+        assertThat(logicalState.breakdown().refreshPoolSize()).isEqualTo(2);
     }
 
     private long totalRows() {

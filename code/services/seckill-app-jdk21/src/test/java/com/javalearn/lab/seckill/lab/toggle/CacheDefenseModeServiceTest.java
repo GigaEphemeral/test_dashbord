@@ -79,10 +79,12 @@ class CacheDefenseModeServiceTest {
         assertThat(CacheDefenseMode.fromKey("off")).isSameAs(CacheDefenseMode.OFF);
         assertThat(CacheDefenseMode.fromKey("null-cache")).isSameAs(CacheDefenseMode.NULL_CACHE);
         assertThat(CacheDefenseMode.fromKey("bloom")).isSameAs(CacheDefenseMode.BLOOM);
+        assertThat(CacheDefenseMode.fromKey("mutex")).isSameAs(CacheDefenseMode.MUTEX);
+        assertThat(CacheDefenseMode.fromKey("logical-expire")).isSameAs(CacheDefenseMode.LOGICAL_EXPIRE);
         assertThat(CacheDefenseMode.fromKey("")).isNull();
         assertThat(CacheDefenseMode.fromKey(null)).isNull();
         assertThat(CacheDefenseMode.values())
                 .extracting(CacheDefenseMode::key)
-                .containsExactly("off", "null-cache", "bloom");
+                .containsExactly("off", "null-cache", "bloom", "mutex", "logical-expire");
     }
 }

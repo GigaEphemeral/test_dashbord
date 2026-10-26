@@ -52,6 +52,10 @@ public final class ProductPenetrationDefense {
             case OFF -> finder.find(id);
             case NULL_CACHE -> withNullCache(id, finder);
             case BLOOM -> withBloom(id, finder);
+            // Breakdown modes never enter this guard as the entry point —
+            // ProductBreakdownDefense dispatches first and only delegates the
+            // three penetration modes above. Honest DB read as a safety net.
+            case MUTEX, LOGICAL_EXPIRE -> finder.find(id);
         };
     }
 
