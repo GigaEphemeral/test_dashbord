@@ -45,7 +45,7 @@ class ChaosControllerTest {
     void validActionReturns202WithView() throws Exception {
         when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
                 .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
-                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active"));
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
 
         mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -66,7 +66,7 @@ class ChaosControllerTest {
     @Test
     void oneShotActionWithoutBodyTtlReturns202() throws Exception {
         when(chaosActionService.execute(eq("jl-app-3"), any()))
-                .thenReturn(new ChaosActionView("id-2", "jl-app-3", "restart", null, null, null, "completed"));
+                .thenReturn(new ChaosActionView("id-2", "jl-app-3", "restart", null, null, null, "completed", null));
 
         mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -141,13 +141,15 @@ class ChaosControllerTest {
     void listReturnsActiveActions() throws Exception {
         when(chaosActionService.activeActions()).thenReturn(List.of(
                 new ChaosActionView("id-1", "jl-app-3", "kill", 30,
-                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active")));
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "failed",
+                        "IllegalStateException: docker start failed")));
 
         mockMvc.perform(get("/chaos/actions"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].target").value("jl-app-3"))
-                .andExpect(jsonPath("$.data[0].revertAction").value("start"));
+                .andExpect(jsonPath("$.data[0].revertAction").value("start"))
+                .andExpect(jsonPath("$.data[0].lastError").value("IllegalStateException: docker start failed"));
     }
 
     @Test

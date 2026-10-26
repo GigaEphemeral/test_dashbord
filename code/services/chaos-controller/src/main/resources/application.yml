@@ -44,6 +44,9 @@ chaos:
   stop-grace-seconds: ${CHAOS_STOP_GRACE_SECONDS:10}
   # Revert retries before an action stays FAILED until stop-all.
   max-revert-attempts: ${CHAOS_MAX_REVERT_ATTEMPTS:3}
+  # Core threads of the scheduler that runs TTL reverts, the watchdog and the
+  # readiness probes; raise it if many probes could starve TTL reverts.
+  scheduler-threads: ${CHAOS_SCHEDULER_THREADS:4}
   # Interactive guide (Task 22b). Scenarios are shared with k6 (schema v1).
   guide:
     # Read-only scenario directory; compose mounts code/lab/scenarios here.

@@ -23,7 +23,8 @@ final class ChaosAction {
     private final int ttlSeconds;
     private final Instant createdAt;
     private volatile Instant expiresAt;
-    private final AtomicReference<ChaosActionStatus> status = new AtomicReference<>(ChaosActionStatus.ACTIVE);
+    private final AtomicReference<ChaosActionStatus> status =
+            new AtomicReference<>(ChaosActionStatus.APPLYING);
     private final AtomicInteger revertAttempts = new AtomicInteger();
     private volatile ScheduledFuture<?> scheduled;
     private volatile long remainingMillis = -1;
@@ -84,19 +85,36 @@ final class ChaosAction {
     }
 
     /**
-     * Claims the revert. Succeeds from ACTIVE or FAILED (watchdog retry);
-     * concurrent callers lose and do nothing.
+     * Marks the faulting Docker call (stop/SIGSTOP) as finished. Only from now
+     * on may a revert be claimed; reverting early would race the still-running
+     * stop and could leave the container permanently down.
      */
-    boolean claimRevert() {
-        while (true) {
-            ChaosActionStatus current = status.get();
-            if (current != ChaosActionStatus.ACTIVE && current != ChaosActionStatus.FAILED) {
-                return false;
-            }
-            if (status.compareAndSet(current, ChaosActionStatus.REVERTING)) {
-                return true;
-            }
+    boolean markApplied() {
+        return status.compareAndSet(ChaosActionStatus.APPLYING, ChaosActionStatus.ACTIVE);
+    }
+
+    /**
+     * Claims the revert. Succeeds from ACTIVE or FAILED (watchdog retry);
+     * concurrent callers lose and do nothing. Never succeeds while the fault
+     * is still applying. Synchronized on {@code this} so {@code register()} can
+     * atomically supersede a FAILED action under the same monitor.
+     */
+    synchronized boolean claimRevert() {
+        ChaosActionStatus current = status.get();
+        if (current != ChaosActionStatus.ACTIVE && current != ChaosActionStatus.FAILED) {
+            return false;
         }
+        status.set(ChaosActionStatus.REVERTING);
+        return true;
+    }
+
+    /**
+     * Retires a FAILED action that a newer action replaced. Must be called
+     * under the action monitor ({@code register()}) so a watchdog claim racing
+     * in between can no longer revert the replaced action.
+     */
+    synchronized void markSuperseded() {
+        status.set(ChaosActionStatus.REVERTED);
     }
 
     void markReverted() {
@@ -117,11 +135,13 @@ final class ChaosAction {
     /**
      * Cancels the scheduled revert and captures the remaining TTL. A zero or
      * negative remainder is clamped to zero so resume reverts immediately
-     * instead of losing the action.
+     * instead of losing the action. An action whose fault is still applying has
+     * no task yet but must still keep its countdown, so APPLYING is captured too.
      */
     long freeze(Instant now) {
         cancelSchedule();
-        if (status() == ChaosActionStatus.ACTIVE) {
+        ChaosActionStatus current = status();
+        if (current == ChaosActionStatus.ACTIVE || current == ChaosActionStatus.APPLYING) {
             remainingMillis = Math.max(0L, Duration.between(now, expiresAt).toMillis());
         }
         return remainingMillis;
@@ -147,6 +167,6 @@ final class ChaosAction {
     ChaosActionView toView() {
         return new ChaosActionView(id, target, type.wireName(), ttlSeconds, expiresAt,
                 type.revertAction() == null ? null : type.revertAction().wireName(),
-                status().wireName());
+                status().wireName(), lastError);
     }
 }

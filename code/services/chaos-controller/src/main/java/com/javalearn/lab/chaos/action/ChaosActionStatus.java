@@ -5,6 +5,8 @@ import java.util.Locale;
 /** Lifecycle of a tracked (reverting) chaos action. */
 public enum ChaosActionStatus {
 
+    /** The faulting Docker call is still running; a revert must not be claimed. */
+    APPLYING,
     /** Applied; a revert is scheduled. */
     ACTIVE,
     /** Revert currently running. */

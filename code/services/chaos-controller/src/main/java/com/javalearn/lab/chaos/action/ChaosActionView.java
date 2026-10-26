@@ -11,7 +11,8 @@ import java.time.Instant;
  * @param ttlSeconds   TTL for reverting actions, otherwise {@code null}
  * @param expiresAt    scheduled revert time for reverting actions, otherwise {@code null}
  * @param revertAction action that undoes it, otherwise {@code null}
- * @param status       active/reverting/reverted/failed/completed
+ * @param status       applying/active/reverting/reverted/failed/completed
+ * @param lastError    last revert failure reason for failed actions, otherwise {@code null}
  */
 public record ChaosActionView(String id,
                               String target,
@@ -19,5 +20,6 @@ public record ChaosActionView(String id,
                               Integer ttlSeconds,
                               Instant expiresAt,
                               String revertAction,
-                              String status) {
+                              String status,
+                              String lastError) {
 }

@@ -188,7 +188,7 @@ class GuideStateMachineTest {
     @Test
     void stateReportsActiveActionCountFromTheActionService() {
         when(chaos.activeActions()).thenReturn(List.of(new ChaosActionView("id-1", "jl-app-3",
-                "kill", 15, Instant.parse("2026-10-26T10:00:15Z"), "start", "active")));
+                "kill", 15, Instant.parse("2026-10-26T10:00:15Z"), "start", "active", null)));
 
         assertThat(guide.state().activeActions()).isEqualTo(1);
     }
@@ -231,7 +231,7 @@ class GuideStateMachineTest {
 
         // reset remains the escape hatch in COMPLETED with tracked actions.
         when(chaos.activeActions()).thenReturn(List.of(new ChaosActionView("id-1", "jl-app-3",
-                "kill", 15, Instant.parse("2026-10-26T10:00:20Z"), "start", "active")));
+                "kill", 15, Instant.parse("2026-10-26T10:00:20Z"), "start", "active", null)));
         GuideStateView reset = guide.reset();
         assertThat(reset.status()).isEqualTo("idle");
         verify(chaos).stopAll();

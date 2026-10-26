@@ -31,6 +31,9 @@ public class ChaosProperties {
     /** Revert attempts before a FAILED action stays failed until stop-all. */
     private int maxRevertAttempts = 3;
 
+    /** Core threads of the chaos scheduler (TTL reverts + watchdog + readiness probes). */
+    private int schedulerThreads = 4;
+
     private final Annotation annotation = new Annotation();
 
     private final Guide guide = new Guide();
@@ -81,6 +84,14 @@ public class ChaosProperties {
 
     public void setMaxRevertAttempts(int maxRevertAttempts) {
         this.maxRevertAttempts = maxRevertAttempts;
+    }
+
+    public int getSchedulerThreads() {
+        return schedulerThreads;
+    }
+
+    public void setSchedulerThreads(int schedulerThreads) {
+        this.schedulerThreads = schedulerThreads;
     }
 
     public Annotation getAnnotation() {

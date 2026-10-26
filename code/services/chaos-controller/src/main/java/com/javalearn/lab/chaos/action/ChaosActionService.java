@@ -5,6 +5,7 @@ import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
+import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
@@ -34,9 +35,13 @@ import java.util.concurrent.TimeUnit;
  * <p>Reverting actions (kill/freeze) live in {@link #active} keyed by target so
  * a target can only have one pending revert (409). Each action gets a scheduled
  * revert task; a watchdog sweep is the second safety net if a task is lost.
- * Revert failures stay visible as FAILED and are retried up to
- * {@code chaos.max-revert-attempts}. Every Docker call goes through the gateway,
- * which enforces the {@code lab=java-learn} label.</p>
+ * A revert is only claimable after the faulting Docker call finished
+ * ({@link ChaosActionStatus#APPLYING} gate), so a short TTL can never start a
+ * container whose stop is still in flight. If the apply fails with an
+ * indeterminate transport error the action stays tracked as FAILED and the
+ * watchdog performs the revert. Revert failures stay visible as FAILED and are
+ * retried up to {@code chaos.max-revert-attempts}. Every Docker call goes
+ * through the gateway, which enforces the {@code lab=java-learn} label.</p>
  *
  * <p>The guide can freeze the whole action set: while paused, scheduled reverts
  * and the watchdog do not fire, and every action keeps its remaining TTL.
@@ -49,7 +54,9 @@ import java.util.concurrent.TimeUnit;
  * complete shortly after {@code pause} returns; FAILED retries stay frozen
  * until resume (pausing is deliberately "freeze the whole lab"); a plain
  * {@code stop-all} while paused keeps the paused flag - use
- * {@code POST /lab/guide/reset} (or resume) to unfreeze the service.</p>
+ * {@code POST /lab/guide/reset} (or resume) to unfreeze the service. An action
+ * paused while still {@code APPLYING} has no frozen remainder, so resume keeps
+ * its original expiry and the watchdog reverts it once that expiry passes.</p>
  */
 @Service
 public class ChaosActionService {
@@ -118,7 +125,7 @@ public class ChaosActionService {
         if (!type.reverting()) {
             applyOneShot(type, target);
             ChaosActionView view = new ChaosActionView(UUID.randomUUID().toString(), target,
-                    type.wireName(), null, null, null, ChaosActionStatus.COMPLETED.wireName());
+                    type.wireName(), null, null, null, ChaosActionStatus.COMPLETED.wireName(), null);
             safeAnnotate(oneShotTags(type, target), oneShotText(type, target));
             probeReadinessAsync(target, type);
             return view;
@@ -138,8 +145,11 @@ public class ChaosActionService {
                 // remaining and is scheduled when the guide resumes.
                 action.freeze(now);
             } else {
-                // Schedule before touching Docker: if the apply below fails we cancel;
-                // if scheduling itself failed nothing was stopped/frozen yet.
+                // Schedule before touching Docker so a lost thread can never leave
+                // the container without a revert path; while the fault is still
+                // applying the revert task claims nothing (see
+                // ChaosActionStatus.APPLYING) and the expiry is handled right
+                // after apply finishes (or by the watchdog).
                 try {
                     long delayMillis = TimeUnit.SECONDS.toMillis(ttl);
                     ScheduledFuture<?> future = scheduler.schedule(
@@ -160,11 +170,28 @@ public class ChaosActionService {
 
         try {
             applyReverting(action);
+        } catch (DockerUnavailableException e) {
+            // Indeterminate outcome: the daemon may have applied the stop/signal
+            // even though the response was lost. Keep the action tracked as
+            // FAILED so the watchdog still issues the revert (start/SIGCONT);
+            // a revert on a never-faulted container is an idempotent no-op.
+            action.cancelSchedule();
+            action.recordFailure(e);
+            countAction(type, target, "failed");
+            throw e;
         } catch (RuntimeException e) {
+            // Definite "fault was not applied" error (unknown container, or the
+            // target was not running for SIGSTOP): discard the action.
             action.cancelSchedule();
             active.remove(target, action);
             countAction(type, target, "failed");
             throw e;
+        }
+        action.markApplied();
+        if (!action.expiresAt().isAfter(clock.instant())) {
+            // The apply itself outlived the TTL (slow stop + short TTL): revert
+            // now instead of waiting for the next watchdog sweep.
+            autoRevert(action, "ttl");
         }
 
         countAction(type, target, "accepted");
@@ -412,8 +439,19 @@ public class ChaosActionService {
         if (existing == null) {
             return;
         }
-        if (existing.status() == ChaosActionStatus.FAILED
-                && active.replace(action.target(), existing, action)) {
+        boolean replaced;
+        // Same monitor as ChaosAction.claimRevert(): either the watchdog has
+        // already claimed the FAILED revert (status REVERTING -> 409) or we
+        // supersede atomically, so the replaced action can never run a revert
+        // that would abort the freshly applied replacement.
+        synchronized (existing) {
+            replaced = existing.status() == ChaosActionStatus.FAILED
+                    && active.replace(action.target(), existing, action);
+            if (replaced) {
+                existing.markSuperseded();
+            }
+        }
+        if (replaced) {
             // A failed action never reverted; let the operator try again.
             existing.cancelSchedule();
             log.warn("Replacing failed chaos action {} on {} with {}", existing.id(), action.target(),

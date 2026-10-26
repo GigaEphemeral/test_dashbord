@@ -24,18 +24,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 @EnableConfigurationProperties(ChaosProperties.class)
 public class ChaosConfig {
 
-    /** TTL reverts + watchdog + bounded readiness probes run here. */
-    static final int SCHEDULER_THREADS = 4;
-
     @Bean(destroyMethod = "shutdownNow")
-    public ScheduledExecutorService chaosActionScheduler() {
+    public ScheduledExecutorService chaosActionScheduler(ChaosProperties properties) {
+        int threads = Math.max(1, properties.getSchedulerThreads());
         AtomicInteger sequence = new AtomicInteger();
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "chaos-action-" + sequence.incrementAndGet());
             thread.setDaemon(true);
             return thread;
         };
-        return Executors.newScheduledThreadPool(SCHEDULER_THREADS, factory);
+        return Executors.newScheduledThreadPool(threads, factory);
     }
 
     @Bean

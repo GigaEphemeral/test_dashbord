@@ -9,6 +9,7 @@ import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
+import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
@@ -25,6 +26,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -209,6 +212,12 @@ class ChaosActionServiceTest {
 
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                 assertThat(service.activeActions()).anyMatch(action -> "failed".equals(action.status())));
+        // The failure reason must be visible through the API, not only in logs.
+        assertThat(service.activeActions()).allSatisfy(action -> {
+            if ("failed".equals(action.status())) {
+                assertThat(action.lastError()).contains("IllegalStateException: docker start failed");
+            }
+        });
         assertThat(counter("chaos.reverts", "action", "kill", "result", "failed"))
                 .isGreaterThanOrEqualTo(1.0);
 
@@ -552,6 +561,68 @@ class ChaosActionServiceTest {
         }
     }
 
+    @Test
+    void revertNeverStartsContainerBeforeUnderlyingStopCompleted() throws Exception {
+        // Reproduction: with the old schedule-before-apply ordering the TTL task
+        // (or the watchdog) could claim the revert and call start() while the
+        // Docker stop was still running. Docker answers 304 "already running",
+        // the revert is treated as success and the entry is cleared; the stop
+        // then completes and the container stays down forever.
+        gateway.stopGate = new CountDownLatch(1);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        try {
+            var future = caller.submit(() -> service.execute(APP, new ChaosActionRequest("kill", 1)));
+            assertThat(gateway.stopStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // TTL (1s) elapses while the stop call is still blocked.
+            Thread.sleep(1500);
+            assertThat(gateway.calls).doesNotContain("start:" + APP);
+
+            gateway.stopGate = null;
+            gateway.stopRelease.countDown();
+            ChaosActionView view = future.get(5, TimeUnit.SECONDS);
+
+            // The revert must run strictly AFTER the stop finished, exactly once.
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(service.activeActions()).isEmpty());
+            assertThat(gateway.calls).containsExactly("stop:" + APP, "start:" + APP);
+            assertThat(view.status()).isIn("reverted", "active");
+            assertThat(counter("chaos.reverts", "action", "kill", "result", "success")).isEqualTo(1.0);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    void indeterminateApplyFailureKeepsActionTrackedForWatchdog() {
+        // A transport-level Docker failure on stop is indeterminate: the daemon
+        // may have applied the stop even though the response was lost. The
+        // action must stay tracked (FAILED) so the watchdog issues the start,
+        // instead of silently removing the entry and leaving a stopped container.
+        gateway.stopFailure = new DockerUnavailableException("transport died", new RuntimeException("boom"));
+
+        assertThatThrownBy(() -> service.execute(APP, new ChaosActionRequest("kill", 5)))
+                .isInstanceOf(DockerUnavailableException.class);
+        assertThat(service.activeActions()).hasSize(1);
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(gateway.calls).contains("start:" + APP));
+        assertThat(service.activeActions()).isEmpty();
+        assertThat(counter("chaos.reverts", "action", "kill", "result", "success")).isEqualTo(1.0);
+    }
+
+    @Test
+    void definiteApplyFailureRemovesTheActionWithoutRevertAttempt() {
+        // "Container is not running" means the SIGSTOP definitely was not
+        // delivered: the action is discarded and no compensating call is made.
+        gateway.signalFailure = new InvalidChaosActionException("Container is not running: " + APP);
+
+        assertThatThrownBy(() -> service.execute(APP, new ChaosActionRequest("freeze", 5)))
+                .isInstanceOf(InvalidChaosActionException.class);
+        assertThat(service.activeActions()).isEmpty();
+        assertThat(gateway.calls).doesNotContain("signal:" + APP + ":SIGCONT");
+    }
+
     private double counter(String name, String... tags) {
         var counter = registry.find(name).tags(tags).counter();
         assertThat(counter).as("meter %s %s", name, List.of(tags)).isNotNull();
@@ -562,7 +633,15 @@ class ChaosActionServiceTest {
 
         final Set<String> labContainers = Set.of(APP, APP2);
         final List<String> calls = new CopyOnWriteArrayList<>();
+        final CountDownLatch stopStarted = new CountDownLatch(1);
+        final CountDownLatch stopRelease = new CountDownLatch(1);
         volatile boolean failStart;
+        /** When non-null, {@link #stop} blocks until {@link #stopRelease} fires. */
+        volatile CountDownLatch stopGate;
+        /** When non-null, {@link #stop} throws after the gate (and records nothing). */
+        volatile RuntimeException stopFailure;
+        /** When non-null, {@link #signal} throws before recording the call. */
+        volatile RuntimeException signalFailure;
 
         @Override
         public List<ContainerView> listLabContainers() {
@@ -587,6 +666,18 @@ class ChaosActionServiceTest {
 
         @Override
         public void stop(String containerName, int graceSeconds) {
+            stopStarted.countDown();
+            if (stopGate != null) {
+                try {
+                    stopRelease.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            RuntimeException failure = stopFailure;
+            if (failure != null) {
+                throw failure;
+            }
             calls.add("stop:" + containerName);
         }
 
@@ -605,6 +696,10 @@ class ChaosActionServiceTest {
 
         @Override
         public void signal(String containerName, String signal) {
+            RuntimeException failure = signalFailure;
+            if (failure != null) {
+                throw failure;
+            }
             calls.add("signal:" + containerName + ":" + signal);
         }
     }
