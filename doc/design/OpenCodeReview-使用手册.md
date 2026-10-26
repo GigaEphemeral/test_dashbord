@@ -6,6 +6,8 @@
 > 插件：Qoder `open-code-review@qoder-marketplace`（`C:\Users\CZQ\.qoder\plugins\cache\qoder-marketplace\open-code-review\0.1.0`）
 > 上游：https://github.com/alibaba/open-code-review
 
+> 当前状态：**未启用**。OCR 需要额外配置 LLM，用户决定暂不使用；当前审核使用独立 Qoder 会话 + Qwen 子代理 + 隔离 worktree。本手册保留备查。
+
 ## 1. 它是什么
 
 Open Code Review（`ocr`）是阿里开源的 AI 代码审核 CLI，读取 Git diff，按文件并发分析，输出带文件/行号的审核意见，支持自动修复建议。Qoder 插件把它的技能封装为 `open-code-review`，供新会话/子代理调用。
