@@ -53,6 +53,17 @@ final class TestLabThreadProperties {
         starvation.setSubmitCount(10L);
         starvation.setTaskBlockMs(100_000L);
 
+        LabThreadProperties.Lifecycle lifecycle = properties.getLifecycle();
+        lifecycle.setEnabled(true);
+        lifecycle.setThreadName("thread-lab-demo-test");
+        lifecycle.setMonitorThreadName("thread-lab-demo-test-monitor");
+        lifecycle.setAutoAdvanceIntervalMs(100L);
+        lifecycle.setMonitorHoldMs(300L);
+        lifecycle.setMonitorAcquireTimeoutMs(1_000L);
+        lifecycle.setTimedWaitMs(200L);
+        lifecycle.setMaxSteps(6L);
+        lifecycle.setShutdownJoinTimeoutMs(2_000L);
+
         return properties;
     }
 }
