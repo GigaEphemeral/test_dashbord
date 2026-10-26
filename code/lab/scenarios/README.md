@@ -34,7 +34,7 @@ same file drives the interactive guide and the automated k6 run.
 | Field | Required | Type | Semantics |
 |---|---|---|---|
 | `schemaVersion` | yes | integer | Must be `1`. Bumped only for breaking changes. |
-| `id` | yes | string | Stable machine id (lowercase, `[a-z0-9-]`); matches the file name by convention. |
+| `id` | yes | string | Stable machine id. Convention: lowercase `[a-z0-9-]`, matching the file name. The schema enforces non-empty only; the format is not validated. |
 | `name` | yes | string | Display name for the console/README. |
 | `description` | no | string | One or two sentences for the operation console. |
 | `durationHintSeconds` | no | number > 0 | Expected wall-clock length of the drill. A hint for UI progress bars; the k6 driver uses its own `CHAOS_DURATION`. |
@@ -80,6 +80,12 @@ no k6 imports, so it runs under Node and inside k6):
    controller's `chaos.max-ttl-seconds`); it must be absent for one-shot actions.
 
 Validation failures abort k6 during init with `[k6/chaos] <file>: <reason>`.
+The rules above are regression-tested under plain Node:
+
+```bash
+node --test code/lab/k6/test/chaos-schema.test.mjs
+```
+
 The controller still re-validates every request (token, lab whitelist, action,
 TTL ceiling), so the JSON schema is a fast pre-flight, not the security
 boundary.

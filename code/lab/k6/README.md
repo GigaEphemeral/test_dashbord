@@ -20,6 +20,7 @@ code/lab/
 │   ├── lib/chaos.js           # controller client, chaos_events counter, loader
 │   ├── scenarios/{smoke,load,stress,spike,soak}.js
 │   ├── scenarios/ha-failover.js  # product load + chaos timeline + teardown
+│   ├── test/chaos-schema.test.mjs  # node --test schema regression suite
 │   ├── run.sh                 # dockerized scenario runner (+ summary export)
 │   ├── reports/<run_id>/      # generated archives (gitignored)
 │   └── README.md
@@ -95,11 +96,20 @@ LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
   bash code/lab/k6/run.sh ha-failover
 ```
 
-`run.sh` mounts `code/lab/scenarios` read-only at `/chaos-scenarios` (not under
-`/scripts`: that mount is already read-only and holds the k6 JS scenarios) and
-forwards `LAB_TOKEN` plus the `CHAOS_*` variables. The token is passed as an
-environment variable only; it is never printed, tagged or written to an
-archive.
+For **ha-failover runs only**, `run.sh` additionally mounts `code/lab/scenarios`
+read-only at `/chaos-scenarios` (not under `/scripts`: that mount is already
+read-only and holds the k6 JS scenarios) and forwards `LAB_TOKEN` plus the
+`CHAOS_*` variables. The other scenarios keep their original mounts, printed
+lines and environment — in particular the token never reaches their containers.
+The token is passed as an environment variable only; it is never printed,
+tagged or written to an archive.
+
+The schema rules and both bundled JSON files are covered by a Node-runnable
+regression suite:
+
+```bash
+node --test code/lab/k6/test/chaos-schema.test.mjs
+```
 
 Expected actions for the bundled files:
 
@@ -124,15 +134,15 @@ Schema, field semantics and validation rules:
 | `CHAOS_CONTROLLER_URL` | `http://chaos-controller:8081` | Controller base URL on `jl-net` (host runs: `http://127.0.0.1:8080/lab-api`). |
 | `CHAOS_SCENARIO_FILE` | `ha-app-failover.json` | Bare name under `CHAOS_SCENARIO_DIR`, or an absolute path. |
 | `CHAOS_SCENARIO_DIR` | `/chaos-scenarios` | Container mount point of `code/lab/scenarios` (set by `run.sh`). |
-| `CHAOS_START_OFFSET` | `0s` | Delay before the timeline VU starts (k6 `startTime`). |
+| `CHAOS_START_OFFSET` | `0s` | Delay before the timeline VU starts (k6 `startTime`); any zero form (`0`, `0.0`, `00`) is normalized to `0s`. |
 | `CHAOS_HTTP_TIMEOUT` | `5s` | Per-action HTTP timeout. |
 | `CHAOS_TEARDOWN_TIMEOUT` | `10s` | Timeout for the `stop-all` teardown call. |
 | `CHAOS_MAX_TTL` | `600` | Schema ceiling for `ttlSeconds` (matches `chaos.max-ttl-seconds`). |
 | `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; datastores are rejected even if widened. |
 | `CHAOS_DURATION` | `4m` (`DURATION` is accepted as an alias) | Product-load duration. |
 | `CHAOS_VUS` | `20` | Constant load VUs. |
-| `K6_SCENARIOS_DIR` | `code/lab/scenarios` | Host directory mounted at `K6_SCENARIOS_MOUNT`. |
-| `K6_SCENARIOS_MOUNT` | `/chaos-scenarios` | Container path for the scenario JSON. |
+| `K6_SCENARIOS_DIR` | `code/lab/scenarios` | Host directory mounted at `K6_SCENARIOS_MOUNT` (checked/mounted only for `ha-failover`). |
+| `K6_SCENARIOS_MOUNT` | `/chaos-scenarios` | Container path for the scenario JSON (`ha-failover` only). |
 
 Read `chaos_events` in the k6 summary or in Prometheus:
 
