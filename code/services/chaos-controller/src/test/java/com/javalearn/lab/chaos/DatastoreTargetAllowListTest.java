@@ -23,7 +23,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -202,6 +204,71 @@ class DatastoreTargetAllowListTest {
         assertThat(gateway.calls).containsExactly("stop:jl-app-1", "restart:jl-sentinel-1");
     }
 
+    // --- whole-name semantics (mirrors the k6 ^(?:pattern)$ wrapping) --------
+
+    @Test
+    void allowListMatchesTheWholeNameOnlyEvenWhenUnanchored() {
+        // A deliberately unanchored pattern still admits exactly "jl-redis-1":
+        // the rule uses Pattern.matcher(..).matches(), not find(), so neither a
+        // longer name nor a name containing the pattern as a substring slips in.
+        properties.getDatastore().setAllowedTargetPattern("jl-redis-1");
+        ChaosActionService service = newService();
+
+        service.execute("jl-redis-1", new ChaosActionRequest("kill", 30));
+        assertThat(gateway.calls).containsExactly("stop:jl-redis-1");
+
+        for (String near : List.of("jl-redis-10", "jl-redis-1x", "xjl-redis-1",
+                "prefix-jl-redis-1-suffix")) {
+            assertThatThrownBy(() -> service.execute(near, new ChaosActionRequest("kill", 30)))
+                    .as("target %s", near)
+                    .isInstanceOf(ContainerNotAllowedException.class)
+                    .hasMessageContaining("is a datastore and is refused by");
+        }
+        assertThat(gateway.calls).hasSize(1);
+    }
+
+    // --- docker also resolves id-references: check the canonical name --------
+
+    @Test
+    void idReferenceResolvingToADisallowedDatastoreIsRefused() {
+        // "0a1b2c3d" is not datastore-shaped, so the keyword rule cannot see the
+        // fault it addresses; the container it resolves to (jl-mysql) decides.
+        properties.getDatastore().setAllowedTargetPattern(HA_REDIS_ALLOW_LIST);
+        gateway.resolvedNames.put("0a1b2c3d", "jl-mysql");
+        ChaosActionService service = newService();
+
+        assertThatThrownBy(() -> service.execute("0a1b2c3d", new ChaosActionRequest("kill", 30)))
+                .isInstanceOf(ContainerNotAllowedException.class)
+                .hasMessageContaining("container reference \"0a1b2c3d\" resolves to")
+                .hasMessageContaining("target \"jl-mysql\" is a datastore and is refused by")
+                .hasMessageContaining(HA_REDIS_ALLOW_LIST);
+        assertThat(gateway.calls).isEmpty();
+        assertThat(counter("chaos.actions", "action", "kill", "target", "0a1b2c3d",
+                "result", "rejected")).isEqualTo(1.0);
+
+        // closed default behaves the same for id-references
+        properties.getDatastore().setAllowedTargetPattern("");
+        ChaosActionService closed = new ChaosActionService(gateway, NO_ANNOTATIONS, properties,
+                registry, scheduler);
+        assertThatThrownBy(() -> closed.execute("0a1b2c3d", new ChaosActionRequest("kill", 30)))
+                .isInstanceOf(ContainerNotAllowedException.class)
+                .hasMessageContaining("is a datastore; datastore actions are forbidden");
+        assertThat(gateway.calls).isEmpty();
+    }
+
+    @Test
+    void idReferenceResolvingToAnAllowedDatastoreIsAdmitted() {
+        // Same docker container as "jl-redis-1" - the allow-list verdict follows
+        // the canonical name, so an id reference is neither privileged nor
+        // discriminated against.
+        properties.getDatastore().setAllowedTargetPattern(HA_REDIS_ALLOW_LIST);
+        gateway.resolvedNames.put("ff00aa11", "jl-redis-1");
+        ChaosActionService service = newService();
+
+        service.execute("ff00aa11", new ChaosActionRequest("kill", 30));
+        assertThat(gateway.calls).containsExactly("stop:ff00aa11");
+    }
+
     // --- fail fast on a broken regex -----------------------------------------
 
     @Test
@@ -322,6 +389,13 @@ class DatastoreTargetAllowListTest {
                 "jl-mysql-primary", "jl-rabbitmq", "jl-mongo", "jl-postgres");
         final List<String> calls = new CopyOnWriteArrayList<>();
 
+        /**
+         * Docker resolves id-prefixes to the same container as the name; tests put
+         * "0a1b2c3d" -&gt; "jl-mysql" here to simulate an inspect that reports a
+         * canonical name different from the requested reference.
+         */
+        final Map<String, String> resolvedNames = new ConcurrentHashMap<>();
+
         @Override
         public List<ContainerView> listLabContainers() {
             return labContainers.stream()
@@ -336,7 +410,8 @@ class DatastoreTargetAllowListTest {
 
         @Override
         public ContainerView inspectLabContainer(String containerName) {
-            return new ContainerView(containerName, "running", "healthy");
+            return new ContainerView(resolvedNames.getOrDefault(containerName, containerName),
+                    "running", "healthy");
         }
 
         @Override
