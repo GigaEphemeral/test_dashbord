@@ -61,7 +61,7 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                          ObjectMapper objectMapper,
                          MeterRegistry meterRegistry) {
         this.name = name;
-        this.redisKeyPrefix = KEY_PREFIX + name + ":";
+        this.redisKeyPrefix = l2KeyPrefix(name);
         this.valueType = valueType;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
@@ -228,6 +228,15 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
 
     private String redisKey(Object key) {
         return redisKeyPrefix + key;
+    }
+
+    /**
+     * The single source of truth for the L2 key layout. The lab cache seeder and
+     * state reader go through {@link TwoLevelCacheManager#productL2KeyPrefix()}
+     * instead of repeating the format, so they cannot drift away from this cache.
+     */
+    static String l2KeyPrefix(String cacheName) {
+        return KEY_PREFIX + cacheName + ":";
     }
 
     private void countL2Error(String operation, Object key, Exception ex) {

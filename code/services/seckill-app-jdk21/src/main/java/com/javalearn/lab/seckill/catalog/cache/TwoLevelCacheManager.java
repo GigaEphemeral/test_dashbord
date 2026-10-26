@@ -60,6 +60,14 @@ public final class TwoLevelCacheManager implements CacheManager {
         return Collections.unmodifiableSet(caches.keySet());
     }
 
+    /**
+     * L2 Redis key prefix of the product cache, for the lab seeder and state
+     * reader that must write/inspect exactly the keys this cache reads.
+     */
+    public static String productL2KeyPrefix() {
+        return TwoLevelCache.l2KeyPrefix(PRODUCT_CACHE);
+    }
+
     private static Class<?> valueType(String cacheName) {
         if (PRODUCT_CACHE.equals(cacheName)) {
             return ProductResponse.class;
