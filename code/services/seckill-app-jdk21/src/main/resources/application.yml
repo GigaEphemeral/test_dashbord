@@ -165,6 +165,11 @@ app:
       deadlock:
         thread-count: ${LAB_THREAD_DEADLOCK_THREADS:2}
         hold-ms: ${LAB_THREAD_DEADLOCK_HOLD_MS:50}
+        # true = permanent two-monitor inversion: the thread dump reports
+        # "Found one Java-level deadlock" (design 9.1 teaching artefact), but the
+        # deadlocked threads can only be reclaimed by a JVM restart — enable on a
+        # disposable instance only. Default false = drainable BLOCKED contention.
+        true-deadlock: ${LAB_THREAD_DEADLOCK_TRUE:false}
       stuck:
         thread-count: ${LAB_THREAD_STUCK_THREADS:4}
         poll-ms: ${LAB_THREAD_STUCK_POLL_MS:200}

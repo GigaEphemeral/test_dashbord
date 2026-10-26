@@ -38,6 +38,29 @@ final class ThreadLabTestSupport {
                 .collect(Collectors.toSet());
     }
 
+    /**
+     * Polls {@code probe} every 10ms until it returns a non-null value or the
+     * budget runs out. Only used for conditions that are PERMANENT once true
+     * (a formed deadlock cycle, a grown leak counter), never for transitory
+     * states, so the assertion direction stays deterministic.
+     */
+    static <T> T waitFor(String what, Duration budget, java.util.function.Supplier<T> probe) {
+        long deadline = System.nanoTime() + budget.toNanos();
+        T result;
+        while ((result = probe.get()) == null) {
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("Timed out waiting for: " + what);
+            }
+            try {
+                Thread.sleep(10L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted waiting for: " + what, interrupted);
+            }
+        }
+        return result;
+    }
+
     static final class MutableClock extends Clock {
         private Instant instant;
 

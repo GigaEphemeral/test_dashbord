@@ -37,8 +37,11 @@ public class LabThreadProperties {
         requirePositive(defaultTtlSeconds, "app.lab.thread.default-ttl-seconds");
         requirePositive(shutdownJoinTimeoutMs, "app.lab.thread.shutdown-join-timeout-ms");
 
-        requirePositive(deadlock.threadCount, "app.lab.thread.deadlock.thread-count");
+        requireAtLeast(deadlock.threadCount, 2L, "app.lab.thread.deadlock.thread-count");
         requireNonNegative(deadlock.holdMs, "app.lab.thread.deadlock.hold-ms");
+        // deadlock.true-deadlock is a boolean variant gate (see Deadlock javadoc);
+        // its safety rests on the default being false and on operator opt-in only,
+        // so there is no numeric range to validate.
 
         requirePositive(stuck.threadCount, "app.lab.thread.stuck.thread-count");
         requirePositive(stuck.pollMs, "app.lab.thread.stuck.poll-ms");
@@ -70,6 +73,13 @@ public class LabThreadProperties {
     private static void requirePositive(long value, String key) {
         if (value <= 0L) {
             throw new IllegalStateException("Configuration must be positive: " + key);
+        }
+    }
+
+    private static void requireAtLeast(long value, long min, String key) {
+        if (value < min) {
+            throw new IllegalStateException(
+                    "Configuration must be at least " + min + ": " + key);
         }
     }
 
@@ -160,9 +170,18 @@ public class LabThreadProperties {
         }
     }
 
+    /**
+     * Lock-inversion participants. {@code true-deadlock} switches the mode from the
+     * default drainable contention (real BLOCKED windows, fully interruptible) to a
+     * genuine two-monitor inversion whose cycle the JVM can report in a thread
+     * dump ({@code Found one Java-level deadlock}); such threads cannot be
+     * interrupted, so {@code stop()} only unregisters the fault and the deadlocked
+     * daemon threads await a JVM restart — enable it on a disposable instance only.
+     */
     public static class Deadlock {
         private long threadCount;
         private long holdMs;
+        private boolean trueDeadlock;
 
         public long getThreadCount() {
             return threadCount;
@@ -178,6 +197,14 @@ public class LabThreadProperties {
 
         public void setHoldMs(long holdMs) {
             this.holdMs = holdMs;
+        }
+
+        public boolean isTrueDeadlock() {
+            return trueDeadlock;
+        }
+
+        public void setTrueDeadlock(boolean trueDeadlock) {
+            this.trueDeadlock = trueDeadlock;
         }
     }
 

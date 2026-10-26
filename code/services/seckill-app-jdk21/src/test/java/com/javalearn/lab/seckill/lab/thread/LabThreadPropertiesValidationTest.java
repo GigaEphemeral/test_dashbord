@@ -2,6 +2,7 @@ package com.javalearn.lab.seckill.lab.thread;
 
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -51,5 +52,22 @@ class LabThreadPropertiesValidationTest {
         assertThatThrownBy(properties::validate)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("spawn-interval-ms");
+    }
+
+    /** Review finding (real range checks): one thread cannot invert locks. */
+    @Test
+    void deadlockWithFewerThanTwoThreadsIsRejected() {
+        LabThreadProperties properties = TestLabThreadProperties.defaults();
+        properties.getDeadlock().setThreadCount(1L);
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("at least 2")
+                .hasMessageContaining("deadlock.thread-count");
+    }
+
+    /** The unreclaimable-by-stop variant must be opt-in only (like the oom gate). */
+    @Test
+    void trueDeadlockDefaultsToOff() {
+        assertThat(TestLabThreadProperties.defaults().getDeadlock().isTrueDeadlock()).isFalse();
     }
 }

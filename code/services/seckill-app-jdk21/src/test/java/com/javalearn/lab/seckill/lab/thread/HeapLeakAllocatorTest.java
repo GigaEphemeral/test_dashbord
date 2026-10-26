@@ -97,4 +97,31 @@ class HeapLeakAllocatorTest {
         assertThat(allocator.isCapped()).isTrue();
         assertThat(allocator.allocatedBytes()).isZero();
     }
+
+    /**
+     * Review finding #2: the oom sink must be UNBOUNDED. A cap of 100% of max is
+     * not unbounded — the pre-check "used + chunk <= max" refuses the chunk that
+     * would cross the ceiling, so the JVM parks just under the cliff and the
+     * documented heap-cliff / process-exit fingerprint never happens.
+     */
+    @Test
+    void unboundedOomSinkAllocatesPastAnyCeiling() {
+        ScriptedProbe probe = new ScriptedProbe(100L);
+        probe.grow(95L); // past where any percent-cap would refuse
+
+        // The old wiring (100% of max): refuses instead of OOMing.
+        assertThat(new HeapLeakAllocator(probe, 100L, 10L).allocateOnce()).isFalse();
+
+        // The fixed oom wiring: no ceiling at all, allocation just proceeds and
+        // the retained references are what kill the throwaway instance.
+        HeapLeakAllocator allocator = HeapLeakAllocator.unbounded(probe, 10L);
+        for (int i = 0; i < 5; i++) {
+            assertThat(allocator.allocateOnce()).isTrue();
+            probe.grow(10L);
+        }
+        assertThat(allocator.allocatedBytes()).isEqualTo(50L);
+        assertThat(allocator.isCapped()).isFalse();
+        allocator.drain();
+        assertThat(allocator.allocatedBytes()).isZero();
+    }
 }

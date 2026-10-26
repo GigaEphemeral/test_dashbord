@@ -10,7 +10,12 @@ package com.javalearn.lab.seckill.lab.thread;
  *
  * <ul>
  *   <li>{@code deadlock} — two threads acquiring two monitors in opposite order:
- *       the {@code blocked} thread-state fingerprint.</li>
+ *       the {@code blocked} thread-state fingerprint. By default the inversion is
+ *       drainable (no held lock while waiting on the next monitor) so {@code stop()}
+ *       can reclaim every thread; {@code app.lab.thread.deadlock.true-deadlock=true}
+ *       switches to the permanent hold-and-wait cycle a thread dump reports as
+ *       {@code Found one Java-level deadlock} (disposable instances only — those
+ *       threads await a JVM restart).</li>
  *   <li>{@code stuck} — threads parked on a latch that never opens: the
  *       {@code waiting} fingerprint.</li>
  *   <li>{@code cpu-burn} — spinning runnable threads: {@code process_cpu_usage}

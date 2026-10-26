@@ -33,11 +33,15 @@ import java.util.function.Consumer;
  *
  * <p>Every participant thread is a daemon, namespaced {@code thread-lab-<mode>-*},
  * honours the {@code volatile stopped} flag and interrupts, and is registered in
- * {@link #participants}. {@link #stop(String)} is idempotent and terminal: it
+ * {@link #participants}. {@link #stop()} is idempotent and terminal: it
  * cancels the armed TTL timer, flips {@code stopped}, interrupts the leak sink /
  * starvation pool, then joins each thread bounded by
  * {@code shutdown-join-timeout-ms}. This is the acceptance core: after a revert
- * or stop no thread of the action is alive and no leaked memory persists.</p>
+ * or stop no thread of the action is alive and no leaked memory persists —
+ * the one exception is the operator-gated {@code deadlock.true-deadlock} variant
+ * (a real JVM-detected monitor cycle cannot be interrupted; those threads are
+ * reclaimed by the JVM restart of the disposable instance, see
+ * {@link #startTrueDeadlock}).</p>
  *
  * <p>Concurrency: a fault of a given mode may be {@code ACTIVE} or {@code PAUSED}
  * at most once (the service rejects a duplicate); transitions and teardown are
@@ -139,7 +143,9 @@ final class FaultAction {
      */
     void revert(String reason) {
         if (teardown()) {
-            metrics.onRevert(mode, reason);
+            // Identity-based un-publish: if a same-mode restart already replaced
+            // this action, reverting the old one must not blank the new one's gauges.
+            metrics.onRevert(this, reason);
             if (onReverted != null) {
                 onReverted.accept(this);
             }
@@ -186,6 +192,13 @@ final class FaultAction {
                 Thread.currentThread().interrupt();
                 break;
             }
+        }
+        // Final drain after the join: an allocation raced between the first drain
+        // and the worker's stop-flag check may still hold a chunk; this guarantees
+        // the "no memory growth persists after the action" acceptance for good.
+        if (heapAllocator != null) {
+            heapAllocator.drain();
+            heapLeaked.set(0L);
         }
         return true;
     }
@@ -283,12 +296,18 @@ final class FaultAction {
         Deadlock cfg = properties.getDeadlock();
         int total = Math.toIntExact(cfg.getThreadCount());
         long hold = cfg.getHoldMs();
+        if (cfg.isTrueDeadlock()) {
+            startTrueDeadlock(total, hold);
+            return;
+        }
         // The two threads cross over the same two monitors in opposite order. Each
         // holds ONE monitor, sleeps while holding it, then RELEASES it before taking
         // the next: so they contend hard (a real BLOCKED fingerprint) yet never hold
         // two at once, which keeps every iteration drainable by stop(). A permanent
         // intrinsic deadlock could not be interrupted, and the acceptance rule is
         // that no thread may outlive the action — see the step-32 defect note.
+        // For the dump-visible "Found one Java-level deadlock" on a disposable
+        // instance, enable app.lab.thread.deadlock.true-deadlock instead.
         for (int i = 0; i < total; i++) {
             final boolean firstOrder = (i % 2 == 0);
             register(run("worker", () -> {
@@ -300,6 +319,39 @@ final class FaultAction {
                     }
                     synchronized (second) {
                         sleep(hold);
+                    }
+                }
+            }));
+        }
+    }
+
+    /**
+     * The genuine two-monitor inversion of design §9.1: each thread holds its
+     * first monitor while blocking forever on the second, so the JVM deadlock
+     * detector sees the cycle and {@code jstack} prints
+     * {@code Found one Java-level deadlock} — the documented teaching artefact,
+     * proven in tests via {@link java.lang.management.ThreadMXBean#findDeadlockedThreads()},
+     * the same detector the dump is rendered from.
+     *
+     * <p>A blocked {@code synchronized} entry cannot be interrupted, so this
+     * variant deliberately trades cleanup for fidelity and is config-gated
+     * ({@code true-deadlock}, default false) exactly like {@code oom} trades the
+     * shared JVM for a throwaway one: {@code stop()}/TTL revert still cancel the
+     * timer, unregister the fault, zero the gauges and make the mode re-injectable
+     * (the monitors are per-action, so a follow-up fault never touches the old
+     * cycle); the deadlocked daemon threads themselves are reclaimed only when
+     * the disposable instance restarts. Use on a marked throwaway node only.</p>
+     */
+    private void startTrueDeadlock(int total, long hold) {
+        for (int i = 0; i < total; i++) {
+            final boolean firstOrder = (i % 2 == 0);
+            register(run("worker", () -> {
+                Object first = firstOrder ? monitorA : monitorB;
+                Object second = firstOrder ? monitorB : monitorA;
+                synchronized (first) {
+                    sleep(hold);                    // let the peer take `second` first
+                    synchronized (second) {         // BLOCKED forever: the cycle
+                        sleep(Long.MAX_VALUE);
                     }
                 }
             }));
@@ -349,21 +401,23 @@ final class FaultAction {
     }
 
     private void startHeapLeak(boolean unbounded) {
-        long chunkBytes;
         long intervalMs;
-        long capPercent;
         if (unbounded) {
-            Oom cfg = properties.getOom();
-            chunkBytes = cfg.getChunkBytes();
-            intervalMs = cfg.getIntervalMs();
-            capPercent = 100L;
+            // Truly no ceiling: a cap at 100% of max would keep pre-checking
+            // "used + chunk <= max" and pin the heap just under the cliff without
+            // ever throwing OOM — the oom fingerprint (断崖 + ExitOnOutOfMemoryError
+            // process exit) requires the unbounded sink. The safety is the gate in
+            // ThreadFaultService: only a marked throwaway instance ever gets here.
+            Oom oom = properties.getOom();
+            heapAllocator = HeapLeakAllocator.unbounded(HeapLeakAllocator.RUNTIME_PROBE,
+                    oom.getChunkBytes());
+            intervalMs = oom.getIntervalMs();
         } else {
             HeapLeak cfg = properties.getHeapLeak();
-            chunkBytes = cfg.getChunkBytes();
+            heapAllocator = new HeapLeakAllocator(HeapLeakAllocator.RUNTIME_PROBE,
+                    cfg.getCapPercent(), cfg.getChunkBytes());
             intervalMs = cfg.getIntervalMs();
-            capPercent = cfg.getCapPercent();
         }
-        heapAllocator = new HeapLeakAllocator(HeapLeakAllocator.RUNTIME_PROBE, capPercent, chunkBytes);
         register(run("worker", () -> {
             while (!stopped && !Thread.currentThread().isInterrupted()) {
                 heapAllocator.allocateOnce();
@@ -371,7 +425,7 @@ final class FaultAction {
                 // For the capped (heap-leak) mode once the ceiling is hit the
                 // allocator stops growing and the loop just idles: the fingerprint
                 // stays flat and everything is still reclaimable. The unbounded
-                // (oom) variant keeps allocating on a throwaway small-heap instance.
+                // (oom) variant keeps allocating until the throwaway JVM dies.
                 sleep(intervalMs);
             }
         }));

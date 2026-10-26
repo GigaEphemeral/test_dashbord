@@ -74,12 +74,18 @@ public final class ThreadLabMetrics {
         active.put(action.getMode(), action);
     }
 
-    /** Removes the action so its gauges fall back to zero. */
-    void onRevert(FaultMode mode, String reason) {
-        active.remove(mode);
+    /**
+     * Un-publishes {@code action} so its gauges fall back to zero, and counts the
+     * revert. Removal is IDENTITY-based: a concurrent same-mode restart may already
+     * have published a fresh action under the same key, and reverting the old one
+     * must not blank the new fault's metrics (the race ChaosActionService had to
+     * be fixed for twice — the same shape applies here).
+     */
+    void onRevert(FaultAction action, String reason) {
+        active.remove(action.getMode(), action);
         Counter.builder("thread_lab_reverted_total")
                 .description("Faults auto-reverted or stopped, by mode and reason")
-                .tag("mode", mode.key())
+                .tag("mode", action.getMode().key())
                 .tag("reason", reason)
                 .register(registry)
                 .increment();
