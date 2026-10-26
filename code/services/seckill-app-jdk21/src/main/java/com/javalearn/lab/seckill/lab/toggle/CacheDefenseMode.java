@@ -1,7 +1,10 @@
 package com.javalearn.lab.seckill.lab.toggle;
 
 /**
- * The runtime cache-penetration strategies of experiment M4-1.
+ * The runtime cache-defense strategies of experiment M4 (design section 8.4):
+ * M4-1 added the three penetration modes, M4-2 adds the two hot-key breakdown
+ * modes. One switch drives both paths because the read path runs a single guard
+ * per L1+L2 miss.
  *
  * <p>The keys are the public contract of {@code GET/POST /lab/cache/mode} and of
  * the scenario JSON, so they are matched exactly (no trimming or case folding):
@@ -16,13 +19,23 @@ package com.javalearn.lab.seckill.lab.toggle;
  *   <li>{@code bloom} — a Redisson bloom filter over the existing product ids;
  *       a false positive falls back to the database and keeps the normal 404
  *       contract.</li>
+ *   <li>{@code mutex} — a hot key that just expired is rebuilt by exactly one
+ *       request holding a Redisson lock; the others wait and double-check the
+ *       cache before touching the database (design 8.4 击穿 row; costs P99,
+ *       which is the visible trade-off).</li>
+ *   <li>{@code logical-expire} — the guard keeps the last good value with its
+ *       own logical expiry inside a longer physical retention window; a
+ *       logically expired value is served stale immediately while one bounded
+ *       asynchronous refresh rebuilds it (brief staleness is the trade-off).</li>
  * </ul>
  */
 public enum CacheDefenseMode {
 
     OFF("off"),
     NULL_CACHE("null-cache"),
-    BLOOM("bloom");
+    BLOOM("bloom"),
+    MUTEX("mutex"),
+    LOGICAL_EXPIRE("logical-expire");
 
     private final String key;
 

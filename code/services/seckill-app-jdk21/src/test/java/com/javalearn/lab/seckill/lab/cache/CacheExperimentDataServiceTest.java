@@ -84,6 +84,8 @@ class CacheExperimentDataServiceTest {
     private final ProductBloomFilterService bloomFilter = new ProductBloomFilterService(redisson,
             "bloom:product-ids", 10_000L, 0.01D, registry);
     private final CacheDefenseModeService modeService = new CacheDefenseModeService(properties);
+    private final com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense breakdownDefense =
+            mock(com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense.class);
 
     /** The id set the filter was last rebuilt from, to prove its coverage. */
     private Collection<Long> bloomIdsSeen = List.of();
@@ -117,7 +119,7 @@ class CacheExperimentDataServiceTest {
         when(productCache.getNativeCache()).thenReturn(l1);
 
         service = new CacheExperimentDataService(properties, jdbcTemplate, template, objectMapper,
-                bloomFilter, markerStore, modeService,
+                bloomFilter, markerStore, modeService, breakdownDefense,
                 new LabToggleService(toggles()), cacheManager);
     }
 

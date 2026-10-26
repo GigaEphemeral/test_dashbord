@@ -10,6 +10,7 @@ package com.javalearn.lab.seckill.lab.api;
  * the database and the local Caffeine cache instead of failing.</p>
  */
 public record CacheStateResponse(Defense defense,
+                                 Breakdown breakdown,
                                  Dataset dataset,
                                  Keys keys,
                                  Bloom bloom,
@@ -17,6 +18,26 @@ public record CacheStateResponse(Defense defense,
 
     /** The two runtime switches that decide what a product read actually does. */
     public record Defense(String mode, boolean cacheToggleEnabled) {
+    }
+
+    /**
+     * What is protecting the hot key right now: {@code strategy} is the current
+     * mode key ({@code mutex} / {@code logical-expire}, or the penetration mode
+     * when no breakdown defense is active) plus the live guard gauges, so the
+     * console can show the active strategy without guessing from metrics.
+     */
+    public record Breakdown(String strategy,
+                            boolean mutexActive,
+                            boolean logicalExpireActive,
+                            long mutexWaitMs,
+                            long mutexLeaseMs,
+                            String mutexOnLockTimeout,
+                            long logicalTtlSeconds,
+                            long retentionSeconds,
+                            int refreshPoolSize,
+                            int refreshQueueCapacity,
+                            long staleEntriesCached,
+                            long refreshInFlight) {
     }
 
     /** Configuration versus reality for the seeded dataset. */

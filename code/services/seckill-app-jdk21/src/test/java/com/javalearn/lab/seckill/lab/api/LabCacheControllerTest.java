@@ -156,6 +156,8 @@ class LabCacheControllerTest {
     void stateExposesDefenseDatasetKeysBloomAndNullCacheWithoutSecrets() throws Exception {
         when(experimentData.state()).thenReturn(new CacheStateResponse(
                 new CacheStateResponse.Defense("bloom", true),
+                new CacheStateResponse.Breakdown("bloom", false, false, 200L, 2_000L, "db",
+                        30L, 120L, 2, 100, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 1_000L, 0L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(true, 12L, 201L, 200L, true),
                 new CacheStateResponse.Bloom("bloom:product-ids", true, 1_020L, 10_000L, 0.01D),
@@ -165,6 +167,7 @@ class LabCacheControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data", hasKey("defense")))
+                .andExpect(jsonPath("$.data", hasKey("breakdown")))
                 .andExpect(jsonPath("$.data", hasKey("dataset")))
                 .andExpect(jsonPath("$.data", hasKey("keys")))
                 .andExpect(jsonPath("$.data", hasKey("bloom")))
@@ -187,6 +190,8 @@ class LabCacheControllerTest {
     void stateKeepsWorkingWhenRedisIsDown() throws Exception {
         when(experimentData.state()).thenReturn(new CacheStateResponse(
                 new CacheStateResponse.Defense("off", true),
+                new CacheStateResponse.Breakdown("off", false, false, 200L, 2_000L, "db",
+                        30L, 120L, 2, 100, 0L, 0L),
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 0L, 1_000L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(false, 0L, 0L, 0L, false),
                 new CacheStateResponse.Bloom("bloom:product-ids", false, 0L, 10_000L, 0.01D),

@@ -20,6 +20,7 @@ public class LabCacheProperties {
     private final Seed seed = new Seed();
     private final State state = new State();
     private final Penetration penetration = new Penetration();
+    private final Breakdown breakdown = new Breakdown();
 
     @PostConstruct
     void validate() {
@@ -78,6 +79,43 @@ public class LabCacheProperties {
             throw new IllegalStateException("app.lab.cache.penetration.bloom.false-probability"
                     + " must be between 0 and 1 exclusive");
         }
+
+        LabCacheProperties.Mutex mutex = breakdown.getMutex();
+        requireText(mutex.getKeyPrefix(), "app.lab.cache.breakdown.mutex.key-prefix");
+        requirePositive(mutex.getWaitMs(), "app.lab.cache.breakdown.mutex.wait-ms");
+        requirePositive(mutex.getLeaseMs(), "app.lab.cache.breakdown.mutex.lease-ms");
+        if (mutex.getLeaseMs() < mutex.getWaitMs()) {
+            // A lease shorter than the wait would let a waiter "acquire" a lock
+            // whose holder is already gone mid-rebuild, defeating the mutex.
+            throw new IllegalStateException("app.lab.cache.breakdown.mutex.lease-ms must be"
+                    + " at least app.lab.cache.breakdown.mutex.wait-ms");
+        }
+        if (!"db".equals(mutex.getOnLockTimeout()) && !"stale".equals(mutex.getOnLockTimeout())) {
+            throw new IllegalStateException("app.lab.cache.breakdown.mutex.on-lock-timeout"
+                    + " must be db or stale, got: " + mutex.getOnLockTimeout());
+        }
+        LabCacheProperties.LogicalExpire logical = breakdown.getLogicalExpire();
+        requirePositive(logical.getLogicalTtlSeconds(),
+                "app.lab.cache.breakdown.logical-expire.logical-ttl-seconds");
+        requirePositive(logical.getRetentionSeconds(),
+                "app.lab.cache.breakdown.logical-expire.retention-seconds");
+        if (logical.getRetentionSeconds() <= logical.getLogicalTtlSeconds()) {
+            // The physical window must outlive the logical one, otherwise there
+            // is no stale value left to serve as the fallback and the whole
+            // strategy silently degrades to mutex-less DB stampede.
+            throw new IllegalStateException("app.lab.cache.breakdown.logical-expire"
+                    + ".retention-seconds must exceed logical-ttl-seconds");
+        }
+        requirePositive(logical.getMaxEntries(),
+                "app.lab.cache.breakdown.logical-expire.max-entries");
+        requirePositive(logical.getRefreshPoolSize(),
+                "app.lab.cache.breakdown.logical-expire.refresh-pool-size");
+        requirePositive(logical.getRefreshQueueCapacity(),
+                "app.lab.cache.breakdown.logical-expire.refresh-queue-capacity");
+        requirePositive(logical.getKeepAliveSeconds(),
+                "app.lab.cache.breakdown.logical-expire.keep-alive-seconds");
+        requireText(logical.getThreadNamePrefix(),
+                "app.lab.cache.breakdown.logical-expire.thread-name-prefix");
     }
 
     private static void requireText(String value, String key) {
@@ -108,6 +146,10 @@ public class LabCacheProperties {
 
     public Penetration getPenetration() {
         return penetration;
+    }
+
+    public Breakdown getBreakdown() {
+        return breakdown;
     }
 
     /** Size and id range of the generated experiment dataset. */
@@ -315,6 +357,134 @@ public class LabCacheProperties {
 
         public void setFalseProbability(double falseProbability) {
             this.falseProbability = falseProbability;
+        }
+    }
+
+    /** The runtime-switchable hot-key breakdown (击穿) strategies and their parameters. */
+    public static class Breakdown {
+
+        private final Mutex mutex = new Mutex();
+        private final LogicalExpire logicalExpire = new LogicalExpire();
+
+        public Mutex getMutex() {
+            return mutex;
+        }
+
+        public LogicalExpire getLogicalExpire() {
+            return logicalExpire;
+        }
+    }
+
+    /** Redisson lock + double-check: one thread rebuilds the expired hot key. */
+    public static class Mutex {
+
+        private String keyPrefix;
+        private long waitMs;
+        private long leaseMs;
+        /** What a waiter does after the lock wait times out: {@code db} or {@code stale}. */
+        private String onLockTimeout;
+
+        public String getKeyPrefix() {
+            return keyPrefix;
+        }
+
+        public void setKeyPrefix(String keyPrefix) {
+            this.keyPrefix = keyPrefix;
+        }
+
+        public long getWaitMs() {
+            return waitMs;
+        }
+
+        public void setWaitMs(long waitMs) {
+            this.waitMs = waitMs;
+        }
+
+        public long getLeaseMs() {
+            return leaseMs;
+        }
+
+        public void setLeaseMs(long leaseMs) {
+            this.leaseMs = leaseMs;
+        }
+
+        public String getOnLockTimeout() {
+            return onLockTimeout;
+        }
+
+        public void setOnLockTimeout(String onLockTimeout) {
+            this.onLockTimeout = onLockTimeout;
+        }
+    }
+
+    /** Logical expiry inside a longer physical retention + bounded async refresh. */
+    public static class LogicalExpire {
+
+        /** How long a value is considered fresh before it may be served stale. */
+        private long logicalTtlSeconds;
+        /** Physical lifetime of the stored value; must exceed the logical TTL. */
+        private long retentionSeconds;
+        private long maxEntries;
+        private int refreshPoolSize;
+        private int refreshQueueCapacity;
+        /** Idle refresh-thread lifetime; core threads time out too (bounded pool). */
+        private long keepAliveSeconds;
+        private String threadNamePrefix;
+
+        public long getLogicalTtlSeconds() {
+            return logicalTtlSeconds;
+        }
+
+        public void setLogicalTtlSeconds(long logicalTtlSeconds) {
+            this.logicalTtlSeconds = logicalTtlSeconds;
+        }
+
+        public long getRetentionSeconds() {
+            return retentionSeconds;
+        }
+
+        public void setRetentionSeconds(long retentionSeconds) {
+            this.retentionSeconds = retentionSeconds;
+        }
+
+        public long getMaxEntries() {
+            return maxEntries;
+        }
+
+        public void setMaxEntries(long maxEntries) {
+            this.maxEntries = maxEntries;
+        }
+
+        public int getRefreshPoolSize() {
+            return refreshPoolSize;
+        }
+
+        public void setRefreshPoolSize(int refreshPoolSize) {
+            this.refreshPoolSize = refreshPoolSize;
+        }
+
+        public int getRefreshQueueCapacity() {
+            return refreshQueueCapacity;
+        }
+
+        public void setRefreshQueueCapacity(int refreshQueueCapacity) {
+            this.refreshQueueCapacity = refreshQueueCapacity;
+        }
+
+        public long getKeepAliveSeconds() {
+            return keepAliveSeconds;
+        }
+
+        public void setKeepAliveSeconds(long keepAliveSeconds) {
+            this.keepAliveSeconds = keepAliveSeconds;
+        }
+
+        public String getThreadNamePrefix() {
+            return threadNamePrefix;
+        }
+
+        public void setThreadNamePrefix(String threadNamePrefix) {
+            this.threadNamePrefix = threadNamePrefix;
         }
     }
 }

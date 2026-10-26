@@ -135,6 +135,8 @@ app:
       penetration:
         # Startup seed of the runtime mode; POST /lab/cache/mode switches it
         # without a restart. off is the unprotected symptom state the lab starts in.
+        # Since M4-2 this key seeds ALL defense modes: off/null-cache/bloom are
+        # the penetration strategies, mutex/logical-expire the breakdown ones.
         mode: ${LAB_CACHE_DEFENSE_MODE:off}
         null-cache:
           key-prefix: ${LAB_CACHE_NULL_KEY_PREFIX:null:product:}
@@ -148,6 +150,35 @@ app:
           # for growth; re-seeding rebuilds the filter from the real id set.
           expected-insertions: ${LAB_CACHE_BLOOM_EXPECTED_INSERTIONS:10000}
           false-probability: ${LAB_CACHE_BLOOM_FALSE_PROBABILITY:0.01}
+      # 击穿 (hot-key breakdown) defense, design 8.4. Same runtime switch as the
+      # penetration modes; every lock time, TTL, bound and pool number is here.
+      breakdown:
+        mutex:
+          # Redisson lock per key (prefix + id); one holder rebuilds, waiters
+          # double-check L2/stale before touching the DB. lease-ms >= wait-ms
+          # is enforced at startup, or a waiter could lock after the rebuild
+          # lease has already expired.
+          key-prefix: ${LAB_CACHE_MUTEX_KEY_PREFIX:lock:product:}
+          wait-ms: ${LAB_CACHE_MUTEX_WAIT_MS:200}
+          lease-ms: ${LAB_CACHE_MUTEX_LEASE_MS:2000}
+          # What a waiter whose lock wait timed out does: db = honestly query
+          # the database (default), stale = serve the retained value if one
+          # exists, else still db. This is the visible P99 cost knob.
+          on-lock-timeout: ${LAB_CACHE_MUTEX_ON_LOCK_TIMEOUT:db}
+        logical-expire:
+          # Value keeps its own logical TTL; after that it is served stale for
+          # up to retention-seconds (physical window, must be larger) while ONE
+          # async refresh rebuilds it.
+          logical-ttl-seconds: ${LAB_CACHE_LOGICAL_TTL_SECONDS:30}
+          retention-seconds: ${LAB_CACHE_LOGICAL_RETENTION_SECONDS:120}
+          # Per-instance bounded stale store; a key storm cannot grow it.
+          max-entries: ${LAB_CACHE_LOGICAL_MAX_ENTRIES:10000}
+          # Bounded refresh pool; saturation is counted as
+          # cache_breakdown_refresh{result="rejected"} and stale keeps serving.
+          refresh-pool-size: ${LAB_CACHE_LOGICAL_REFRESH_POOL_SIZE:2}
+          refresh-queue-capacity: ${LAB_CACHE_LOGICAL_REFRESH_QUEUE_CAPACITY:100}
+          keep-alive-seconds: ${LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60}
+          thread-name-prefix: ${LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh}
 
     # Fault-thread lab (Task M5-1 / design 9.1). /lab/thread/** injects the seven
     # faulty-thread modes; every thread count, TTL, interval, chunk size, pool size

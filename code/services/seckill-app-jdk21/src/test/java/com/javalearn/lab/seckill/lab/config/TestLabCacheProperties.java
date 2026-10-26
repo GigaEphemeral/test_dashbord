@@ -46,6 +46,20 @@ public final class TestLabCacheProperties {
         penetration.getBloom().setKey("bloom:product-ids");
         penetration.getBloom().setExpectedInsertions(10_000L);
         penetration.getBloom().setFalseProbability(0.01D);
+
+        LabCacheProperties.Breakdown breakdown = properties.getBreakdown();
+        breakdown.getMutex().setKeyPrefix("lock:product:");
+        breakdown.getMutex().setWaitMs(200L);
+        breakdown.getMutex().setLeaseMs(2_000L);
+        breakdown.getMutex().setOnLockTimeout("db");
+        LabCacheProperties.LogicalExpire logical = breakdown.getLogicalExpire();
+        logical.setLogicalTtlSeconds(30L);
+        logical.setRetentionSeconds(120L);
+        logical.setMaxEntries(1_000L);
+        logical.setRefreshPoolSize(2);
+        logical.setRefreshQueueCapacity(100);
+        logical.setKeepAliveSeconds(60L);
+        logical.setThreadNamePrefix("breakdown-refresh");
         return properties;
     }
 }
