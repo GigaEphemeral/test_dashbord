@@ -118,6 +118,15 @@ prometheus_query() {
     "http://prometheus:9090/api/v1/query?query=${encoded_query}" 2>/dev/null || true
 }
 
+# Scalar MySQL query via the compose model (credentials never reach the host
+# command line). Strip CR/LF so values compare cleanly in [[ ]].
+mysql_scalar() {
+  local statement="$1"
+  compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
+    mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
+    -e "$statement" 2>/dev/null | tr -d '\r\n ' || true
+}
+
 dashboard_http_code() {
   local uid="$1"
   curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -237,6 +246,110 @@ else
     "HTTP ${missing_product_code:-000} body: ${missing_product_body:0:160}"
 fi
 
+# 2d. Inventory + idempotent order flow through Nginx (Task 13). The three
+# instances share one database, so the retried POST may hit a different app.
+inventory_rows="$(mysql_scalar 'SELECT COUNT(*) FROM inventory_stock;')"
+if [[ "$inventory_rows" == "20" ]]; then
+  pass "mysql inventory_stock has one row per catalog product (20)"
+else
+  fail "mysql inventory_stock has one row per catalog product (20)" "count='${inventory_rows}'"
+fi
+
+stock_before="$(mysql_scalar 'SELECT available FROM inventory_stock WHERE product_id = 1;')"
+orders_before="$(mysql_scalar 'SELECT COUNT(*) FROM order_order;')"
+if [[ "$stock_before" =~ ^[0-9]+$ && "$orders_before" =~ ^[0-9]+$ ]]; then
+  pass "mysql inventory/order tables are queryable (stock=${stock_before}, orders=${orders_before})"
+else
+  fail "mysql inventory/order tables are queryable (stock=${stock_before}, orders=${orders_before})" \
+    "unexpected scalar values"
+fi
+
+order_key="verify-$(date +%s)-${RANDOM}-$$"
+order_payload='{"userId":"verify-user","productId":1,"quantity":1}'
+order_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+  -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${order_key}" \
+  --data "$order_payload" \
+  http://127.0.0.1:8080/api/orders 2>/dev/null || true)"
+order_http_code="${order_response##*$'\n'}"
+order_body="${order_response%$'\n'*}"
+order_id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$order_body" | head -n 1)"
+order_create_ok=false
+if [[ "$order_http_code" == "200" ]] \
+  && [[ "$order_id" =~ ^[0-9]+$ ]] \
+  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$order_body"; then
+  order_create_ok=true
+  pass "nginx POST /api/orders creates an order (id=${order_id}, key=${order_key})"
+else
+  fail "nginx POST /api/orders creates an order (key=${order_key})" \
+    "HTTP ${order_http_code:-000} body: ${order_body:0:200}"
+fi
+
+if $order_create_ok; then
+  repeat_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+    -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${order_key}" \
+    --data "$order_payload" \
+    http://127.0.0.1:8080/api/orders 2>/dev/null || true)"
+  repeat_http_code="${repeat_response##*$'\n'}"
+  repeat_body="${repeat_response%$'\n'*}"
+  repeat_id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$repeat_body" | head -n 1)"
+  orders_after_repeat="$(mysql_scalar 'SELECT COUNT(*) FROM order_order;')"
+  stock_after_repeat="$(mysql_scalar 'SELECT available FROM inventory_stock WHERE product_id = 1;')"
+  if [[ "$repeat_http_code" == "200" && "$repeat_id" == "$order_id" ]] \
+    && [[ "$orders_after_repeat" == "$((orders_before + 1))" ]] \
+    && [[ "$stock_after_repeat" == "$((stock_before - 1))" ]]; then
+    pass "repeating the same Idempotency-Key returns order ${order_id} with no extra order or stock decrement"
+  else
+    fail "repeating the same Idempotency-Key returns order ${order_id} with no extra order or stock decrement" \
+      "HTTP ${repeat_http_code:-000} id='${repeat_id}' orders='${orders_after_repeat}' stock='${stock_after_repeat}'"
+  fi
+
+  order_get_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+    "http://127.0.0.1:8080/api/orders/${order_id}" 2>/dev/null || true)"
+  order_get_code="${order_get_response##*$'\n'}"
+  order_get_body="${order_get_response%$'\n'*}"
+  order_get_id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$order_get_body" | head -n 1)"
+  if [[ "$order_get_code" == "200" && "$order_get_id" == "$order_id" ]] \
+    && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$order_get_body"; then
+    pass "nginx GET /api/orders/${order_id} returns 200 with the created order"
+  else
+    fail "nginx GET /api/orders/${order_id} returns 200 with the created order" \
+      "HTTP ${order_get_code:-000} id='${order_get_id}' body: ${order_get_body:0:200}"
+  fi
+
+  orders_final="$(mysql_scalar 'SELECT COUNT(*) FROM order_order;')"
+  stock_final="$(mysql_scalar 'SELECT available FROM inventory_stock WHERE product_id = 1;')"
+  min_stock="$(mysql_scalar 'SELECT MIN(available) FROM inventory_stock;')"
+  if [[ "$orders_final" == "$((orders_before + 1))" ]] \
+    && [[ "$stock_final" == "$((stock_before - 1))" ]] \
+    && [[ "$min_stock" =~ ^[0-9]+$ ]]; then
+    pass "inventory for product 1 decreased by exactly one run order (${stock_before} -> ${stock_final}, min=${min_stock}, orders=${orders_final})"
+  else
+    fail "inventory for product 1 decreased by exactly one run order (${stock_before} -> ${stock_final}, min=${min_stock}, orders=${orders_final})" \
+      "unexpected stock/order delta"
+  fi
+
+  # Business counter must advance only for the real insert, not the replay.
+  # Prometheus scrapes the app every 5s; allow a short visibility window.
+  orders_created_body=""
+  for attempt in $(seq 1 30); do
+    orders_created_body="$(prometheus_query 'sum%28orders_created_total%7Bjob%3D%22seckill-app%22%7D%29')"
+    if grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*(\.[0-9]+)?"\]' <<<"$orders_created_body"; then
+      break
+    fi
+    if (( attempt < 30 )); then
+      sleep 2
+    fi
+  done
+  if grep -Eq '"value":\[[0-9.]+,"[1-9][0-9]*(\.[0-9]+)?"\]' <<<"$orders_created_body"; then
+    pass "prometheus has orders_created_total{job=\"seckill-app\"} > 0 after a real insert"
+  else
+    fail "prometheus has orders_created_total{job=\"seckill-app\"} > 0 after a real insert" \
+      "response: ${orders_created_body:0:200}"
+  fi
+else
+  fail "repeat/query/stock checks for POST /api/orders" "order creation failed; dependent checks skipped"
+fi
+
 # 3. RabbitMQ management API.
 rabbit_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
   -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
@@ -270,10 +383,10 @@ flyway_versions="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
   -e 'SELECT GROUP_CONCAT(version ORDER BY installed_rank) FROM flyway_schema_history WHERE success = 1;' \
   2>/dev/null | tr -d '\r\n ')" || true
-if [[ "$flyway_versions" == "1,2" ]]; then
-  pass "flyway applied migrations 1,2 successfully"
+if [[ "$flyway_versions" == "1,2,3" ]]; then
+  pass "flyway applied migrations 1,2,3 successfully"
 else
-  fail "flyway applied migrations 1,2 successfully" "versions='${flyway_versions}'"
+  fail "flyway applied migrations 1,2,3 successfully" "versions='${flyway_versions}'"
 fi
 
 # 5. Redis liveness.

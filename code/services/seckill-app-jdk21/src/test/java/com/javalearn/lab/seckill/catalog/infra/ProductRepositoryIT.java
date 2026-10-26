@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.Optional;
@@ -23,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.env=test",
                 "observability.instance=test-1"
         })
-@Testcontainers
 class ProductRepositoryIT extends MySqlIntegrationTestSupport {
 
     @Autowired
@@ -36,12 +34,12 @@ class ProductRepositoryIT extends MySqlIntegrationTestSupport {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void flywayAppliesBothMigrations() {
+    void flywayAppliesAllMigrations() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2");
+        assertThat(versions).containsExactly("1", "2", "3");
     }
 
     @Test

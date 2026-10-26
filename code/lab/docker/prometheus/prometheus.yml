@@ -17,6 +17,15 @@ scrape_configs:
     scrape_interval: 5s
     static_configs:
       - targets: ["app-1:8080", "app-2:8080", "app-3:8080"]
+    metric_relabel_configs:
+      # The Prometheus Java client rejects OpenMetrics-reserved suffixes such as
+      # _created in meter names. Micrometer's orders_created_total counter is
+      # therefore scraped as orders_total; alias it back at scrape time so D4
+      # dashboards can use the documented business metric name.
+      - source_labels: [__name__]
+        regex: orders_total
+        target_label: __name__
+        replacement: orders_created_total
 
   - job_name: nginx-exporter
     static_configs:
