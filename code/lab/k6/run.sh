@@ -25,10 +25,10 @@ PROM_URL="${PROM_URL:-http://127.0.0.1:8080/prom}"
 K6_REPORT_DIR="${K6_REPORT_DIR:-}"
 K6_SUMMARY_EXPORT="${K6_SUMMARY_EXPORT:-}"
 K6_REPORT_MOUNT="${K6_REPORT_MOUNT:-/reports}"
-# Shared chaos scenario JSON (Task 22a). It is mounted read-only at a root-level
-# container path: /scripts is mounted read-only, so Docker cannot create a
-# nested mount point inside it, and /scripts/scenarios must stay the k6
-# JavaScript directory.
+# Shared chaos scenario JSON (Task 22a), used only by the ha-failover scenario.
+# It is mounted read-only at a root-level container path: /scripts is mounted
+# read-only, so Docker cannot create a nested mount point inside it, and
+# /scripts/scenarios must stay the k6 JavaScript directory.
 K6_SCENARIOS_DIR="${K6_SCENARIOS_DIR:-$SCRIPT_DIR/../scenarios}"
 K6_SCENARIOS_MOUNT="${K6_SCENARIOS_MOUNT:-/chaos-scenarios}"
 
@@ -38,7 +38,8 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$SCENARIO" in
-  smoke|load|stress|spike|soak|ha-failover) ;;
+  smoke|load|stress|spike|soak) IS_CHAOS=0 ;;
+  ha-failover) IS_CHAOS=1 ;;
   *)
     printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|ha-failover).\n' "$SCENARIO" >&2
     exit 2
@@ -92,15 +93,19 @@ host_mount_path() {
 
 K6_MOUNT_DIR="$(host_mount_path "$K6_DIR")"
 
-if [[ ! -d "$K6_SCENARIOS_DIR" ]]; then
-  printf 'ERROR: chaos scenarios directory not found: %s\n' "$K6_SCENARIOS_DIR" >&2
-  exit 2
+# Chaos-specific setup applies to ha-failover only; every other scenario keeps
+# its original mounts, printed lines, forwarded environment and exit codes.
+if [[ "$IS_CHAOS" == "1" ]]; then
+  if [[ ! -d "$K6_SCENARIOS_DIR" ]]; then
+    printf 'ERROR: chaos scenarios directory not found: %s\n' "$K6_SCENARIOS_DIR" >&2
+    exit 2
+  fi
+  K6_SCENARIOS_DIR="$(cd "$K6_SCENARIOS_DIR" && pwd)"
+  K6_SCENARIOS_MOUNT_DIR="$(host_mount_path "$K6_SCENARIOS_DIR")"
+  # Inside the container the scenario JSON lives at the mount point unless the
+  # caller pins another directory (e.g. a host k6 binary run).
+  CHAOS_SCENARIO_DIR="${CHAOS_SCENARIO_DIR:-$K6_SCENARIOS_MOUNT}"
 fi
-K6_SCENARIOS_DIR="$(cd "$K6_SCENARIOS_DIR" && pwd)"
-K6_SCENARIOS_MOUNT_DIR="$(host_mount_path "$K6_SCENARIOS_DIR")"
-# Inside the container the scenario JSON lives at the mount point unless the
-# caller pins another directory (e.g. a host k6 binary run).
-CHAOS_SCENARIO_DIR="${CHAOS_SCENARIO_DIR:-$K6_SCENARIOS_MOUNT}"
 
 if [[ -n "$K6_SUMMARY_EXPORT" && -z "$K6_REPORT_DIR" ]]; then
   printf 'ERROR: K6_SUMMARY_EXPORT requires K6_REPORT_DIR (the host directory mounted at %s).\n' \
@@ -132,11 +137,18 @@ CONFIG_VARS=(
   SECKILL_POLL_ATTEMPTS SECKILL_POLL_INTERVAL
   SUMMARY_TREND_STATS SUMMARY_TIME_UNIT
   GRACEFUL_STOP GRACEFUL_RAMP_DOWN
-  CHAOS_CONTROLLER_URL LAB_TOKEN
-  CHAOS_SCENARIO_FILE CHAOS_SCENARIO_DIR CHAOS_START_OFFSET CHAOS_HTTP_TIMEOUT CHAOS_TEARDOWN_TIMEOUT
-  CHAOS_MAX_TTL CHAOS_TARGET_PATTERN CHAOS_DURATION CHAOS_VUS DURATION
   K6_PROMETHEUS_RW_SERVER_URL K6_PROMETHEUS_RW_TREND_STATS K6_PROMETHEUS_RW_PUSH_INTERVAL
 )
+
+# Chaos-controller variables (Task 22a). Forwarded only for ha-failover so the
+# lab token and CHAOS_* settings never reach unrelated scenario containers.
+if [[ "$IS_CHAOS" == "1" ]]; then
+  CONFIG_VARS+=(
+    CHAOS_CONTROLLER_URL LAB_TOKEN
+    CHAOS_SCENARIO_FILE CHAOS_SCENARIO_DIR CHAOS_START_OFFSET CHAOS_HTTP_TIMEOUT CHAOS_TEARDOWN_TIMEOUT
+    CHAOS_MAX_TTL CHAOS_TARGET_PATTERN CHAOS_DURATION CHAOS_VUS DURATION
+  )
+fi
 
 # Additional names requested by a caller (bench.sh) so arbitrary scenario
 # overrides reach the container without hardcoding them here. Names are
@@ -156,9 +168,11 @@ docker_args=(
   run --rm
   --network "$K6_NETWORK"
   -v "$K6_MOUNT_DIR:/scripts:ro"
-  -v "$K6_SCENARIOS_MOUNT_DIR:$K6_SCENARIOS_MOUNT:ro"
   -w /scripts
 )
+if [[ "$IS_CHAOS" == "1" ]]; then
+  docker_args+=(-v "$K6_SCENARIOS_MOUNT_DIR:$K6_SCENARIOS_MOUNT:ro")
+fi
 if [[ -n "$K6_REPORT_DIR" ]]; then
   docker_args+=(-v "$K6_REPORT_MOUNT_DIR:$K6_REPORT_MOUNT")
 fi
@@ -194,8 +208,8 @@ printf 'base_url    : %s\n' "$BASE_URL"
 printf 'network     : %s\n' "$K6_NETWORK"
 printf 'image       : %s\n' "$K6_IMAGE"
 printf 'remote write: %s\n' "$K6_PROMETHEUS_RW_SERVER_URL"
-printf 'scenarios   : %s -> %s\n' "$K6_SCENARIOS_DIR" "$K6_SCENARIOS_MOUNT"
-if [[ "$SCENARIO" == "ha-failover" ]]; then
+if [[ "$IS_CHAOS" == "1" ]]; then
+  printf 'scenarios   : %s -> %s\n' "$K6_SCENARIOS_DIR" "$K6_SCENARIOS_MOUNT"
   printf 'chaos ctl   : %s\n' "${CHAOS_CONTROLLER_URL:-http://chaos-controller:8081}"
   printf 'chaos file  : %s (dir %s)\n' \
     "${CHAOS_SCENARIO_FILE:-ha-app-failover.json}" "$CHAOS_SCENARIO_DIR"
