@@ -312,6 +312,30 @@ else
   fail "redis TTL for a cache:product:* key is positive" "no cache key to inspect"
 fi
 
+# The compose app healthcheck gates on the "app" health group, which must be
+# live, UP, and must exclude redis (best-effort L2; design §8.2 failover demos
+# require the app tier to stay healthy during a Redis outage). A regression
+# here would otherwise only surface ~100s later as "unhealthy" containers.
+for app_container in jl-app-1 jl-app-2 jl-app-3; do
+  gate_body="$(docker exec "$app_container" \
+    wget -qO- http://127.0.0.1:8080/actuator/health/app 2>/dev/null | tr -d '\r\n' || true)"
+  if grep -q '"status":"UP"' <<<"$gate_body" && ! grep -q '"redis"' <<<"$gate_body"; then
+    pass "$app_container /actuator/health/app is UP and excludes redis (container gate)"
+  else
+    fail "$app_container /actuator/health/app is UP and excludes redis (container gate)" \
+      "body: ${gate_body:0:160}"
+  fi
+done
+
+# The L2 error counter must be exported even at zero, so outage dashboards and
+# alerts can bind to it (a typo'd meter name fails here, not in M3).
+if docker exec jl-app-1 wget -qO- http://127.0.0.1:8080/actuator/prometheus 2>/dev/null \
+  | grep -q '^cache_l2_errors_total'; then
+  pass "app-1 exposes cache_l2_errors_total on /actuator/prometheus"
+else
+  fail "app-1 exposes cache_l2_errors_total on /actuator/prometheus" "series missing"
+fi
+
 # 2d. Inventory + idempotent order flow through Nginx (Task 13). The three
 # instances share one database, so the retried POST may hit a different app.
 inventory_rows="$(mysql_scalar 'SELECT COUNT(*) FROM inventory_stock;')"

@@ -29,7 +29,11 @@ x-app-common: &app-common
     otel-collector:
       condition: service_started
   healthcheck:
-    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+    # The app group is the container gate: every health contributor except
+    # Redis (product cache L2 is best-effort; with Redis down, reads degrade
+    # to MySQL and the instance must stay healthy for the §8.2 failover
+    # demos). Root /actuator/health still reports Redis honestly.
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health/app | grep -q '\"status\":\"UP\"'"]
     interval: 5s
     timeout: 3s
     retries: 20

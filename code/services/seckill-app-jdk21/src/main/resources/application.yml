@@ -41,3 +41,15 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        # Container health gate (compose healthcheck hits /actuator/health/app).
+        # Empty include + exclude=redis means "every contributor except Redis"
+        # (Spring Boot IncludeExcludeGroupMemberPredicate). Redis is the
+        # best-effort product cache L2: during a Redis outage reads degrade to
+        # MySQL and the instance must stay healthy for Docker and for the
+        # design §8.2 / §15 scenario 8 failover demos. The root
+        # /actuator/health still reports Redis honestly (DOWN -> 503), so this
+        # does not hide the failure, it only scopes the container gate.
+        app:
+          exclude:
+            - redis
