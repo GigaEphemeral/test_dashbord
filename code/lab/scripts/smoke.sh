@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Full-stack smoke test for the java-learn-lab HTTP surface.
 #
-# Flow: login -> product read -> idempotent order create/replay/read -> async
-# seckill accept/poll. Only the public Nginx entry is used; the script never
-# touches MySQL/Redis/RabbitMQ directly.
+# Flow: login -> product read -> idempotent order create/replay/read -> seckill
+# order (async 202 ACCEPTED + poll, or 200/202 synchronous CREATED when the mq
+# toggle is off or the seckillBackend circuit is open). Only the public Nginx
+# entry is used; the script never touches MySQL/Redis/RabbitMQ directly.
 #
 # Every value below can be overridden from the environment or from the lab
 # .env file (environment wins). Paths and timeouts are never hardcoded outside
@@ -212,21 +213,46 @@ else
   fail "GET /api/orders returns the created order" "order creation failed; skipped"
 fi
 
-# --- 4. Async seckill accept + poll ---------------------------------------
+# --- 4. Seckill order ------------------------------------------------------
+# Two success shapes are accepted, mirroring the server contract:
+#   a) async admission: HTTP 202 + status=ACCEPTED + requestId -> poll until CREATED;
+#   b) synchronous terminal order: HTTP 200 (mq toggle off) or HTTP 202 with the
+#      seckillBackend circuit OPEN (Task 16/48d45fb degradation keeps 202 but the
+#      body is status=CREATED + orderId, requestId=null) -> no polling possible.
+# 409/429 are deliberate business outcomes and fail the smoke with a clear reason.
 seckill_key="smoke-seckill-${run_id}"
 seckill_payload="{\"userId\":\"${SMOKE_USER}\",\"productId\":${SMOKE_SECKILL_PRODUCT_ID},\"quantity\":1}"
 http_request POST /api/seckill/orders "$seckill_payload" "Idempotency-Key: ${seckill_key}"
 request_id="$(json_string requestId "$LAST_BODY")"
+seckill_status="$(json_string status "$LAST_BODY")"
+seckill_order_id="$(json_number orderId "$LAST_BODY")"
+seckill_code0=false
+if grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$LAST_BODY"; then
+  seckill_code0=true
+fi
 accepted=false
-if [[ "$LAST_CODE" == "202" ]] \
-  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$LAST_BODY" \
-  && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ACCEPTED"' <<<"$LAST_BODY" \
-  && [[ -n "$request_id" ]]; then
+terminated=false
+if $seckill_code0 && [[ "$LAST_CODE" == "202" ]] \
+  && [[ "$seckill_status" == "ACCEPTED" ]] && [[ -n "$request_id" ]]; then
   accepted=true
-  pass "POST /api/seckill/orders accepted (requestId=${request_id})"
+  pass "POST /api/seckill/orders accepted asynchronously (requestId=${request_id})"
+elif $seckill_code0 && [[ "$LAST_CODE" =~ ^(200|202)$ ]] \
+  && [[ "$seckill_status" == "CREATED" ]] && [[ "$seckill_order_id" =~ ^[0-9]+$ ]]; then
+  terminated=true
+  if [[ "$LAST_CODE" == "202" ]]; then
+    pass "POST /api/seckill/orders served synchronously under degradation (orderId=${seckill_order_id})"
+  else
+    pass "POST /api/seckill/orders served synchronously, mq toggle off (orderId=${seckill_order_id})"
+  fi
+elif [[ "$LAST_CODE" == "409" ]]; then
+  fail "POST /api/seckill/orders placed an order" \
+    "HTTP 409 business conflict: sold out or seckill lock timeout"
+elif [[ "$LAST_CODE" == "429" ]]; then
+  fail "POST /api/seckill/orders placed an order" \
+    "HTTP 429 rate limited by the seckill limiter"
 else
-  fail "POST /api/seckill/orders accepted with requestId" \
-    "HTTP ${LAST_CODE:-000} (async path expected; 200 CREATED means the mq toggle is off)"
+  fail "POST /api/seckill/orders placed an order" \
+    "HTTP ${LAST_CODE:-000} status='${seckill_status}' (expected 202 ACCEPTED+requestId, or 200/202 CREATED+orderId when degraded)"
 fi
 
 poll_status=""
@@ -253,6 +279,8 @@ if $accepted; then
     fail "GET /api/seckill/orders/${request_id} reaches CREATED" \
       "HTTP ${LAST_CODE:-000} status='${poll_status}' orderId='${poll_order_id}' after ${SMOKE_POLL_RETRIES} polls"
   fi
+elif $terminated; then
+  pass "seckill order already CREATED without polling (degradation path; no requestId to poll)"
 else
   fail "GET /api/seckill/orders reaches CREATED" "accept failed; poll skipped"
 fi
