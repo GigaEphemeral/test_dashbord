@@ -1,0 +1,74 @@
+# 图 9 · 压测与观测数据流
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[09-load-and-observability-flow.mmd](09-load-and-observability-flow.mmd) · 类型：`flowchart LR`
+
+k6 remote write、应用 Actuator 抓取、各类 exporter、OTLP → OTel Collector → Tempo、Tempo 指标回写 Prometheus，以及 Grafana D1–D11 的消费关系。
+
+读图要点：Prometheus 无宿主端口，只经 Nginx `/prom/` 查询；`jl-traffic` 不做 remote write；D5/D7/D8 没有独立 dashboard JSON，标 `待补`。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 9 · 压测与观测数据流
+%% 依据：code/lab/k6/run.sh、code/lab/docker/prometheus/prometheus.yml、compose.base.yml、otel-collector/otel-collector.yaml、tempo/tempo.yaml、grafana/dashboards/ha-d*.json
+flowchart LR
+  subgraph LOAD["压测侧"]
+    K6["k6 run.sh<br/>smoke / load / stress / spike / soak / ha-failover<br/>全局 tags: run_id / flow"]
+    TRAFFIC["jl-traffic（profile traffic）<br/>constant-vus 背景读<br/>不做 remote write"]
+  end
+
+  subgraph APP["应用侧"]
+    A["app-1/2/3<br/>Micrometer + Boot 自动指标"]
+    ACT["GET /actuator/prometheus<br/>文本格式，5s 抓取"]
+    AGENT["OTel Java Agent<br/>OTEL_METRICS_EXPORTER=none<br/>只导出 traces"]
+  end
+
+  subgraph EXPORTERS["抓取目标"]
+    E1["nginx-exporter :9113"]
+    E2["redis-exporter :9121<br/>仅 dev 单机"]
+    E3["mysqld-exporter :9104<br/>dev 单机"]
+    E4["mysqld-exporter-ha<br/>mysql-1/2/3-exporter，带 member 标签"]
+    E5["rabbitmq :15692<br/>含 /metrics/detailed 队列指标"]
+    E6["cadvisor :8080"]
+    E7["chaos-controller :8081<br/>chaos_actions_total / chaos_reverts_total /<br/>mysql_cluster_* 探针"]
+  end
+
+  PROM["jl-prometheus :9090<br/>scrape 5s / 10s，保留 7d<br/>--web.enable-remote-write-receiver"]
+  OTEL["jl-otel-collector :4317"]
+  TEMPO["jl-tempo :3200 / :4317"]
+  GRAF["jl-grafana :3000<br/>datasource: prometheus + tempo"]
+
+  K6 -->|"experimental-prometheus-rw<br/>POST /api/v1/write<br/>p95 / p99 / max"| PROM
+  TRAFFIC -->|"经 Nginx 读 /api/"| A
+  A --> ACT
+  ACT -->|"scrape job=seckill-app"| PROM
+  E1 --> PROM
+  E2 --> PROM
+  E3 --> PROM
+  E4 --> PROM
+  E5 --> PROM
+  E6 --> PROM
+  E7 --> PROM
+  A -->|"OTLP gRPC 4317"| AGENT
+  AGENT --> OTEL
+  OTEL -->|"OTLP 4317"| TEMPO
+  TEMPO -.->|"metrics_generator<br/>service-graphs / span-metrics<br/>remote write"| PROM
+  PROM --> GRAF
+  TEMPO -->|"Tempo datasource"| GRAF
+  E7 -.->|"POST /api/annotations<br/>chaos 动作时间线"| GRAF
+
+  GRAF --> D1["D1 应用总览"]
+  GRAF --> D2["D2 JVM 与线程"]
+  GRAF --> D3["D3 资源与网络"]
+  GRAF --> D4["D4 业务与高可用"]
+  GRAF --> D5["D5 链路<br/>Tempo service graph / trace 查询<br/>无独立 dashboard JSON（待补）"]
+  GRAF --> D6["D6 线程实验室"]
+  GRAF --> D7["D7 JDK 对比<br/>未实现（待补）"]
+  GRAF --> D8["D8 调优实验<br/>未实现（待补）"]
+  GRAF --> D9["D9 压测"]
+  GRAF --> D10["D10 缓存实验室"]
+  GRAF --> D11["D11 数据库高可用"]
+
+  NOTE["口径<br/>1. Prometheus 不发布宿主端口，只经 Nginx /prom/ 查询<br/>2. jl-traffic 只是背景 HTTP 流量，指标不落 Prometheus<br/>3. D11 的 Redis 面板只反映 dev 单机，不代表 Sentinel 拓扑<br/>4. 应用快照注解默认关闭（grafana-url 为空）"]
+  GRAF -.-> NOTE
+```

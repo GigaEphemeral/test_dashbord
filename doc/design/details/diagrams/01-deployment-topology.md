@@ -1,0 +1,169 @@
+# 图 1 · 系统部署与网络拓扑
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[01-deployment-topology.mmd](01-deployment-topology.mmd) · 类型：`flowchart TB`
+
+展示宿主回环端口、`jl-net` / `jl-sentinel-net` 两个网络、按 compose profile 分组的容器，以及 Nginx 后的三个应用实例。实线为默认接线，虚线为选中对应 profile 才存在或改道。
+
+读图要点：默认 16 服务；`ha` 追加 9 个 Sentinel 服务；`db-ha` 追加 9 个 MySQL/Router 服务；`chaos-proxy` 追加 2 个且只叠加在 dev 上；`ha`+`db-ha` 为 34，但没有脚本组合两者。
+
+```mermaid
+%% 代码基线：504fc74
+%% 图 1 · 系统部署与网络拓扑
+%% 依据：code/lab/docker/compose.base.yml、compose.dev.yml、compose.ha.yml、compose.mysql.yml、compose.toxiproxy.yml、nginx/conf.d/default.conf
+%% 实线=默认已接线；虚线=仅选中对应 profile 时存在或改道
+%% 渲染计数：dev 16 / ha 25 / db-ha 25 / chaos-proxy 18；ha+db-ha 为 34，但没有脚本把两者组合
+flowchart TB
+  subgraph HOST["宿主机 Windows 10 + Docker Desktop（WSL2）· 发布端口全部绑定 127.0.0.1"]
+    H8080["8080<br/>Nginx 入口"]
+    H3000["3000<br/>Grafana"]
+    H15672["15672<br/>RabbitMQ 管理台"]
+    H3306["3306<br/>dev 单机 MySQL"]
+    H6379["6379<br/>dev 单机 Redis"]
+    H6446["6446<br/>Router 读写"]
+    H6447["6447<br/>Router 只读"]
+    H8474["8474<br/>Toxiproxy 控制 API"]
+  end
+
+  K6RUN["scripts/bench.sh / k6 run.sh<br/>临时 k6 容器（非 compose 服务）"]
+
+  subgraph JLNET["jl-net（bridge，Compose 项目 java-learn-lab）"]
+    subgraph DEFAULT["默认 dev 栈 · 16 个 compose 服务 + 操作台静态文件（base + dev）"]
+      NG["jl-nginx<br/>容器内 :80<br/>upstream seckill_backend<br/>轮询 / max_fails=2 / fail_timeout=5s"]
+      A1["jl-app-1<br/>seckill-app:jdk21"]
+      A2["jl-app-2<br/>seckill-app:jdk21"]
+      A3["jl-app-3<br/>seckill-app:jdk21"]
+      CONSOLE["Vue 操作台 /lab/<br/>Nginx 静态文件，无独立容器"]
+      MYSQL["jl-mysql<br/>dev 单机 MySQL 8.4"]
+      REDIS["jl-redis<br/>dev 单机 Redis"]
+      MQ["jl-rabbitmq<br/>管理插件 + Prometheus 插件"]
+      CC["jl-chaos-controller<br/>:8081 /lab-api"]
+      EXP["jl-redis-exporter :9121<br/>jl-mysqld-exporter :9104<br/>jl-nginx-exporter :9113"]
+      PROM["jl-prometheus :9090<br/>remote-write receiver"]
+      GRAF["jl-grafana :3000"]
+      TEMPO["jl-tempo :3200 / :4317"]
+      OTEL["jl-otel-collector :4317"]
+      CADV["jl-cadvisor :8080"]
+    end
+
+    subgraph TRAFFIC["profile traffic 追加 1 服务"]
+      TRAFFICBOX["jl-traffic<br/>k6 constant-vus 背景读"]
+    end
+
+    subgraph HAREDIS["profile ha 追加 9 服务（compose.ha.yml）"]
+      R1["jl-redis-1<br/>jl-sentinel-net .11<br/>初始主"]
+      R2["jl-redis-2<br/>jl-sentinel-net .12<br/>从"]
+      R3["jl-redis-3<br/>jl-sentinel-net .13<br/>从"]
+      S1["jl-sentinel-1<br/>jl-sentinel-net .21"]
+      S2["jl-sentinel-2<br/>jl-sentinel-net .22"]
+      S3["jl-sentinel-3<br/>jl-sentinel-net .23"]
+      RE1["jl-redis-1-exporter<br/>未进 Prometheus 抓取"]
+      RE2["jl-redis-2-exporter<br/>未进 Prometheus 抓取"]
+      RE3["jl-redis-3-exporter<br/>未进 Prometheus 抓取"]
+    end
+
+    subgraph HAMYSQL["profile db-ha 追加 9 服务（compose.mysql.yml；ha 也可选中）"]
+      M1["jl-mysql-1"]
+      M2["jl-mysql-2"]
+      M3["jl-mysql-3"]
+      MINIT["jl-mysql-cluster-init<br/>一次性 createCluster"]
+      RINIT["jl-mysql-router-init<br/>一次性 bootstrap"]
+      ROUTER["jl-mysql-router<br/>:6446 RW / :6447 RO"]
+      ME1["jl-mysql-1-exporter"]
+      ME2["jl-mysql-2-exporter"]
+      ME3["jl-mysql-3-exporter"]
+    end
+
+    subgraph CHAOSPROXY["profile chaos-proxy 追加 2 服务（仅 dev 叠加，不与 ha / db-ha 组合）"]
+      TOX["jl-toxiproxy<br/>控制 API :8474<br/>16379→jl-redis:6379<br/>13306→jl-mysql:3306"]
+      TOXI["jl-toxiproxy-init<br/>一次性 create-or-update"]
+    end
+
+    SOCK["/var/run/docker.sock<br/>读写挂载"]
+  end
+
+  SNET["jl-sentinel-net<br/>172.28.190.0/24（仅 ha；ha 下 app 也加入）"]
+
+  H8080 --> NG
+  H3000 --> GRAF
+  H15672 --> MQ
+  H3306 --> MYSQL
+  H6379 --> REDIS
+  H6446 --> ROUTER
+  H6447 --> ROUTER
+  H8474 --> TOX
+
+  K6RUN -->|"压测"| NG
+  TRAFFICBOX -.->|"背景流量"| NG
+  NG -->|"/api/ 轮询"| A1
+  NG -->|"/api/ 轮询"| A2
+  NG -->|"/api/ 轮询"| A3
+  NG -->|"/lab/ 静态"| CONSOLE
+  NG -->|"/lab-api/"| CC
+  NG -.->|"/prom/ 查询代理"| PROM
+
+  A1 -->|"L2 / 锁 / 幂等 / Lua"| REDIS
+  A2 --> REDIS
+  A3 --> REDIS
+  A1 -->|"发布 / 消费"| MQ
+  A2 --> MQ
+  A3 --> MQ
+  A1 -->|"standalone 读写池"| MYSQL
+  A2 --> MYSQL
+  A3 --> MYSQL
+  A1 -.->|"router 模式"| ROUTER
+  A2 -.-> ROUTER
+  A3 -.-> ROUTER
+  A1 -.->|"OTLP gRPC"| OTEL
+  A2 -.-> OTEL
+  A3 -.-> OTEL
+
+  PROM -.->|"scrape /actuator/prometheus 5s"| A1
+  PROM -.-> A2
+  PROM -.-> A3
+  PROM -.->|"scrape exporters / cAdvisor / controller"| EXP
+  PROM -.-> CADV
+  PROM --> GRAF
+  OTEL -->|"OTLP"| TEMPO
+  TEMPO -->|"Tempo datasource"| GRAF
+  TEMPO -.->|"service-graphs / span-metrics<br/>remote write"| PROM
+  CC -->|"Docker API"| SOCK
+  CC -.->|"annotation"| GRAF
+
+  R1 -->|"异步复制"| R2
+  R1 -->|"异步复制"| R3
+  S1 -->|"监控 mymaster"| R1
+  S2 --> R1
+  S3 --> R1
+  R1 -.-> SNET
+  R2 -.-> SNET
+  R3 -.-> SNET
+  S1 -.-> SNET
+  S2 -.-> SNET
+  S3 -.-> SNET
+  A1 -.-> SNET
+  A2 -.-> SNET
+  A3 -.-> SNET
+
+  M1 --> MINIT
+  M2 --> MINIT
+  M3 --> MINIT
+  MINIT -->|"completed"| RINIT
+  RINIT -->|"completed"| ROUTER
+  ROUTER -->|"6446 跟随 PRIMARY"| M1
+  ROUTER --> M2
+  ROUTER --> M3
+  M1 --> ME1
+  M2 --> ME2
+  M3 --> ME3
+  PROM -.->|"scrape mysqld-exporter-ha"| ME1
+  PROM -.-> ME2
+  PROM -.-> ME3
+
+  TOXI --> TOX
+  TOX -.->|"代理"| REDIS
+  TOX -.->|"代理"| MYSQL
+  A1 -.->|"chaos-proxy 时改道"| TOX
+  A2 -.-> TOX
+  A3 -.-> TOX
+```
