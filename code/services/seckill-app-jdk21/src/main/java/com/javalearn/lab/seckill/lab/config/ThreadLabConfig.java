@@ -3,6 +3,10 @@ package com.javalearn.lab.seckill.lab.config;
 import com.javalearn.lab.seckill.lab.thread.ExecutorFaultTtlScheduler;
 import com.javalearn.lab.seckill.lab.thread.FaultTtlScheduler;
 import com.javalearn.lab.seckill.lab.thread.LabThreadProperties;
+import com.javalearn.lab.seckill.lab.thread.LifecycleDemoMetrics;
+import com.javalearn.lab.seckill.lab.thread.LifecycleDemoService;
+import com.javalearn.lab.seckill.lab.thread.LifecycleSnapshotSink;
+import com.javalearn.lab.seckill.lab.thread.LoggingLifecycleSnapshotSink;
 import com.javalearn.lab.seckill.lab.thread.ThreadFaultService;
 import com.javalearn.lab.seckill.lab.thread.ThreadLabMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -40,5 +44,32 @@ public class ThreadLabConfig {
                                                  FaultTtlScheduler scheduler,
                                                  ThreadLabMetrics metrics) {
         return new ThreadFaultService(properties, Clock.systemUTC(), scheduler, metrics);
+    }
+
+    /** Placeholder capture seam; the snapshot task replaces this with jcmd. */
+    @Bean
+    public LifecycleSnapshotSink lifecycleSnapshotSink() {
+        return new LoggingLifecycleSnapshotSink();
+    }
+
+    @Bean
+    public LifecycleDemoMetrics lifecycleDemoMetrics(MeterRegistry meterRegistry) {
+        return new LifecycleDemoMetrics(meterRegistry);
+    }
+
+    /**
+     * The single-thread lifecycle demo (design §9.2). It reuses the fault lab's
+     * daemon scheduler for auto-advance, and is bound to its metrics after
+     * construction because the gauges read the live thread through the service.
+     */
+    @Bean
+    public LifecycleDemoService lifecycleDemoService(LabThreadProperties properties,
+                                                     FaultTtlScheduler scheduler,
+                                                     LifecycleDemoMetrics metrics,
+                                                     LifecycleSnapshotSink snapshotSink) {
+        LifecycleDemoService service = new LifecycleDemoService(
+                properties, Clock.systemUTC(), scheduler, metrics, snapshotSink);
+        metrics.bind(service);
+        return service;
     }
 }

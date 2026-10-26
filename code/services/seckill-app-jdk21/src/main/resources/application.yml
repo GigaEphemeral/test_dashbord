@@ -224,6 +224,26 @@ app:
         queue-capacity: ${LAB_THREAD_STARVATION_QUEUE_CAPACITY:50}
         submit-count: ${LAB_THREAD_STARVATION_SUBMIT_COUNT:100}
         task-block-ms: ${LAB_THREAD_STARVATION_TASK_BLOCK_MS:30000}
+      # Single-thread lifecycle demo (Task #33 / design 9.2): one dedicated thread
+      # really walks NEW -> RUNNABLE -> BLOCKED -> WAITING -> TIMED_WAITING ->
+      # TERMINATED. auto-advance-interval-ms paces the automatic walk (freeze stops
+      # it, resume re-arms from the frozen step); monitor-hold-ms is the real
+      # BLOCKED window created by a helper thread; timed-wait-ms is the sleep of
+      # the TIMED_WAITING stage. Naming: its gauge is thread_lab_demo_state_code
+      # (0-5). thread_lab_lifecycle_state_code stays the FAULT action lifecycle
+      # (0 stopped / 1 active / 2 paused) and is unchanged.
+      lifecycle:
+        enabled: ${LAB_THREAD_LIFECYCLE_ENABLED:true}
+        thread-name: ${LAB_THREAD_LIFECYCLE_THREAD_NAME:thread-lab-demo}
+        monitor-thread-name: ${LAB_THREAD_LIFECYCLE_MONITOR_THREAD_NAME:thread-lab-demo-monitor}
+        auto-advance-interval-ms: ${LAB_THREAD_LIFECYCLE_AUTO_ADVANCE_INTERVAL_MS:2000}
+        monitor-hold-ms: ${LAB_THREAD_LIFECYCLE_MONITOR_HOLD_MS:1200}
+        monitor-acquire-timeout-ms: ${LAB_THREAD_LIFECYCLE_MONITOR_ACQUIRE_TIMEOUT_MS:5000}
+        timed-wait-ms: ${LAB_THREAD_LIFECYCLE_TIMED_WAIT_MS:1500}
+        # At least 4 (the advances needed to reach TERMINATED); reset to run again.
+        max-steps: ${LAB_THREAD_LIFECYCLE_MAX_STEPS:6}
+        # reset() joins the demo thread; must exceed monitor-hold-ms (startup guard).
+        shutdown-join-timeout-ms: ${LAB_THREAD_LIFECYCLE_SHUTDOWN_JOIN_TIMEOUT_MS:3000}
 
   # Runtime experiment toggles (Task 17). Per-instance, in-memory and mutable
   # through POST /lab/toggles; the chaos-controller will broadcast later.
