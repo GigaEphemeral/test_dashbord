@@ -52,11 +52,21 @@ spring:
         # requeue it in an infinite loop.
         default-requeue-rejected: false
 
-# Explicit write/read datasource pair (Task 15). In dev both URLs point at the
-# same MySQL; DB_WRITE_URL/DB_READ_URL are the M3 hooks for MySQL Router
-# 6446 (read-write) and 6447 (read-only). The primary DataSource is a lazy
-# proxy over the routing datasource, so JPA, Flyway and health checks all use
-# the write pool unless a read-only transaction is active.
+# Explicit write/read datasource pair (Task 15). The endpoints are selected by
+# ONE mode switch (app.datasource.mode, env MYSQL_MODE, design §3.3/§8.3),
+# name-aligned with REDIS_MODE; the image never changes:
+#   standalone (default) - both pools use the single-node dev MySQL exactly as
+#                          before (the jdbc-url keys below);
+#   router               - write pool -> MySQL Router 6446 (read-write, follows
+#                          the current primary), read pool -> Router 6447
+#                          (read-only, load-balanced over the secondaries).
+# The Router URLs are separate keys and are consulted ONLY in router mode.
+# Missing URLs in router mode fail startup instead of silently falling back to
+# the dev MySQL (same philosophy as REDIS_MODE=sentinel), and setting DB_*_URL
+# without MYSQL_MODE=router is ignored: the mode, not key presence, switches.
+# The primary DataSource is a lazy proxy over the routing datasource, so JPA,
+# Flyway and health checks all use the write pool unless a read-only transaction
+# is active.
 app:
   # Redis client mode switch (Task M3-1b, design §3.3): standalone = dev
   # single-node jl-redis, sentinel = the ha-profile Sentinel group. ONE env var
@@ -75,15 +85,25 @@ app:
       discovery-report-interval-ms: ${REDIS_DISCOVERY_REPORT_INTERVAL_MS:5000}
 
   datasource:
+    # MYSQL_MODE=standalone|router (design §3.3/§8.3). Unknown values fail
+    # startup with a message naming MYSQL_MODE.
+    mode: ${MYSQL_MODE:standalone}
+    router:
+      # MySQL Router endpoints on jl-net (compose.mysql.yml). Deliberately
+      # empty by default: a router-mode start without them must fail, never
+      # fall back to the dev MySQL below.
+      write-url: ${DB_WRITE_URL:}
+      read-url: ${DB_READ_URL:}
+    # Standalone (dev) endpoints: used by BOTH pools when MYSQL_MODE=standalone.
     write:
-      jdbc-url: ${DB_WRITE_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+      jdbc-url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
       username: ${MYSQL_USER:seckill}
       password: ${MYSQL_PASSWORD:seckill}
       maximum-pool-size: 10
       minimum-idle: 2
       pool-name: write-pool
     read:
-      jdbc-url: ${DB_READ_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+      jdbc-url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/${MYSQL_DATABASE:seckill}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
       username: ${MYSQL_USER:seckill}
       password: ${MYSQL_PASSWORD:seckill}
       maximum-pool-size: 10
