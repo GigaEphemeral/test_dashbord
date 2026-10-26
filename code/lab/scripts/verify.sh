@@ -1136,7 +1136,7 @@ else
   fail "grafana Prometheus datasource health is OK" "HTTP ${ds_code:-000} body: ${ds_body:0:160}"
 fi
 
-for uid in ha-d1 ha-d2 ha-d3 ha-d4 ha-d9; do
+for uid in ha-d1 ha-d2 ha-d3 ha-d4 ha-d7 ha-d9; do
   dash_code=""
   for attempt in $(seq 1 10); do
     dash_code="$(dashboard_http_code "$uid")"
