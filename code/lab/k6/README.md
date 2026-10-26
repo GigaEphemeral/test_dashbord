@@ -337,6 +337,7 @@ run manifest are deferred to Task 21/22 (chaos).
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
 | `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
 | `traffic.js` | `TRAFFIC_VUS=50` constant for `TRAFFIC_DURATION=30m` | login → product read only (no stock consumed) | errors < 1%, product P95/P99 from Task 19; started/stopped from the console |
+| `d7.js` | identical to `load.js` (same stages/thresholds) | product reads only, **no login** | errors < 1%, product P95 < 300ms, P99 < 800ms |
 
 Smoke uses `per-vu-iterations` with `SMOKE_ITERATIONS=1` so one run creates
 exactly one order and one seckill attempt. It does not loop for the full 30s;
@@ -349,6 +350,22 @@ Load stages are derived from the single `LOAD_DURATION` value:
 - the remaining 60% holds `LOAD_VUS`.
 
 The acceptance run `LOAD_DURATION=2m` therefore uses 24s / 24s / 72s stages.
+
+### D7 dual-JDK scenario
+
+`d7.js` exists because the JDK 8 shell has no `POST /api/login`: every other
+base scenario calls `ensureLogin()` first, which would record one failed login
+per VU per iteration and flood `flow_errors` on the JDK 8 target. `d7.js` keeps
+the load-test VU and threshold shape but calls only `product()`.
+
+```bash
+# JDK 21 tier through Nginx
+LOAD_DURATION=2m bash code/lab/k6/run.sh d7
+
+# JDK 8 shell directly on jl-net (compose profile dual-jdk must be up)
+BASE_URL=http://seckill-app-jdk8:8080 LOAD_DURATION=2m \
+  bash code/lab/k6/run.sh d7
+```
 
 `load`, `stress` and `soak` never create orders, so they do not drain stock.
 `smoke` creates one order and one seckill attempt. `spike` may consume the
@@ -462,6 +479,10 @@ SPIKE_BASELINE_DURATION=5s SPIKE_RAMP_UP=5s SPIKE_DURATION=20s SPIKE_RAMP_DOWN=5
 
 # Soak: short acceptance variant
 SOAK_DURATION=2m SOAK_VUS=100 bash code/lab/k6/run.sh soak
+
+# D7 dual-JDK: read-only, no login; run once per target
+LOAD_DURATION=1m bash code/lab/k6/run.sh d7
+BASE_URL=http://seckill-app-jdk8:8080 LOAD_DURATION=1m bash code/lab/k6/run.sh d7
 
 # Chaos timeline: short live check on jl-app-3 only
 LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
