@@ -5,6 +5,7 @@ import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import com.javalearn.lab.seckill.lab.thread.LifecycleDemoService;
 import com.javalearn.lab.seckill.lab.thread.ThreadFaultService;
+import com.javalearn.lab.seckill.lab.thread.ThreadSnapshotService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,10 +32,13 @@ public class LabThreadController {
 
     private final ThreadFaultService service;
     private final LifecycleDemoService lifecycle;
+    private final ThreadSnapshotService snapshots;
 
-    public LabThreadController(ThreadFaultService service, LifecycleDemoService lifecycle) {
+    public LabThreadController(ThreadFaultService service, LifecycleDemoService lifecycle,
+                               ThreadSnapshotService snapshots) {
         this.service = Objects.requireNonNull(service, "service");
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
+        this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
     }
 
     @GetMapping("/state")
@@ -104,5 +108,18 @@ public class LabThreadController {
     @PostMapping("/lifecycle/reset")
     public Result<LifecycleDemoView> lifecycleReset() {
         return Result.success(lifecycle.reset());
+    }
+
+    // ------------------------------------------------------- snapshots (§9.3)
+
+    /**
+     * Captures a snapshot bundle on demand, without freezing anything. Works while
+     * the demo is in NEW too (the bundle is JVM-wide; the demo fields then report
+     * NEW / threadId 0). A failed or disabled capture still answers 200 with
+     * {@code captured=false} and an {@code error}, never a 5xx.
+     */
+    @PostMapping("/snapshot")
+    public Result<ThreadSnapshotView> snapshot() {
+        return Result.success(snapshots.capture(lifecycle.snapshot("manual")));
     }
 }

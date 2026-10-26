@@ -18,7 +18,11 @@ RUN curl -fsSL --retry 3 -o /opt/opentelemetry-javaagent.jar \
       "https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/${OTEL_AGENT_VERSION}/opentelemetry-javaagent-${OTEL_AGENT_VERSION}.jar" \
     && test -s /opt/opentelemetry-javaagent.jar
 
-FROM eclipse-temurin:21-jre-alpine
+# JDK (not JRE): the thread-lab snapshot bundle (design 9.3) runs
+# `jcmd Thread.print -l`, `GC.heap_info` and `GC.class_histogram` inside the
+# container, and `docker exec jl-app-N jcmd 1 Thread.print -l` is the teaching
+# command. The cost is image size (~+180 MB), accepted for the local lab.
+FROM eclipse-temurin:21-jdk-alpine
 
 ARG OTEL_AGENT_VERSION=2.10.0
 LABEL org.opencontainers.image.title="java-learn-lab seckill-app (JDK 21)" \

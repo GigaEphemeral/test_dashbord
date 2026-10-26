@@ -64,6 +64,23 @@ final class TestLabThreadProperties {
         lifecycle.setMaxSteps(6L);
         lifecycle.setShutdownJoinTimeoutMs(2_000L);
 
+        LabThreadProperties.Snapshot snapshot = properties.getSnapshot();
+        snapshot.setEnabled(true);
+        // Tests point this at @TempDir; the value only has to be non-blank to validate.
+        snapshot.setRootDir("target/test-snapshots");
+        snapshot.setMaxCount(5L);
+        snapshot.setMaxAgeSeconds(3_600L);
+        snapshot.setCommandTimeoutMs(2_000L);
+        snapshot.setJcmdPath("jcmd");
+
+        LabThreadProperties.Snapshot.Annotation annotation = snapshot.getAnnotation();
+        annotation.setEnabled(true);
+        annotation.setGrafanaUrl("");
+        annotation.setUser("");
+        annotation.setPassword("");
+        annotation.setTimeoutSeconds(1L);
+        annotation.setTags("");
+
         return properties;
     }
 }

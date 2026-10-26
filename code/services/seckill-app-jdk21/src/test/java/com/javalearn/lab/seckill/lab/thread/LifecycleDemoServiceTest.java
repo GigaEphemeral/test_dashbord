@@ -148,6 +148,47 @@ class LifecycleDemoServiceTest {
     }
 
     @Test
+    void snapshotBuildsAnObservationWithoutChangingTheMachine() {
+        service.start();
+        awaitState(DemoState.RUNNABLE);
+
+        LifecycleSnapshot observation = service.snapshot("manual");
+
+        assertThat(observation.reason()).isEqualTo("manual");
+        assertThat(observation.state()).isEqualTo("RUNNABLE");
+        assertThat(observation.stateCode()).isEqualTo(1);
+        assertThat(observation.step()).isZero();
+        assertThat(observation.threadName()).isEqualTo("thread-lab-demo-test");
+        assertThat(observation.threadId()).isEqualTo(service.view().threadId());
+        assertThat(observation.capturedAtEpochMs()).isEqualTo(1_000L);
+        assertThat(service.isFrozen()).as("an observation is not a freeze").isFalse();
+        assertThat(scheduler.pendingCount()).as("auto-advance stays armed").isEqualTo(1);
+    }
+
+    @Test
+    void aFailingSinkCannotUndoTheFreeze() {
+        LifecycleDemoService broken = new LifecycleDemoService(properties, clock, scheduler,
+                new LifecycleDemoMetrics(registry), snapshot -> {
+                    throw new IllegalStateException("snapshot backend down");
+                });
+        try {
+            broken.start();
+            ThreadLabTestSupport.waitFor("demo state RUNNABLE", Duration.ofSeconds(5),
+                    () -> broken.liveState() == DemoState.RUNNABLE ? Boolean.TRUE : null);
+
+            LifecycleDemoView frozen = broken.freeze();
+
+            assertThat(frozen.frozen()).isTrue();
+            assertThat(broken.isFrozen()).isTrue();
+            assertThat(registry.get("thread_lab_demo_snapshot_requests_total").counter().count())
+                    .as("a failed capture is still one snapshot request")
+                    .isEqualTo(1D);
+        } finally {
+            broken.reset();
+        }
+    }
+
+    @Test
     void resetTearsDownAThreadBlockedOnAMonitorAndReturnsToNew() {
         service.start();
         service.step();

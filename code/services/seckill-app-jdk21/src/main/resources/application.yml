@@ -305,6 +305,32 @@ app:
         max-steps: ${LAB_THREAD_LIFECYCLE_MAX_STEPS:6}
         # reset() joins the demo thread; must exceed monitor-hold-ms (startup guard).
         shutdown-join-timeout-ms: ${LAB_THREAD_LIFECYCLE_SHUTDOWN_JOIN_TIMEOUT_MS:3000}
+      # Snapshot bundle (design 9.3). freeze and POST /lab/thread/snapshot write
+      # `jcmd Thread.print -l`, `GC.heap_info` and `GC.class_histogram` into
+      # <root-dir>/<UTC timestamp>_<instance>/ with metadata.json and a copy of
+      # the analysis template. jcmd runs inside the app container against this
+      # JVM's own pid; the runtime image is a JDK, so the tools exist. Retention
+      # is bounded by max-count and max-age-seconds (0 disables the age rule).
+      # The Grafana annotation is best-effort and OFF while grafana-url is empty.
+      snapshot:
+        enabled: ${LAB_THREAD_SNAPSHOT_ENABLED:true}
+        # Runtime path; inside the container this is /app/doc/process/snapshots
+        # (in-container filesystem until a compose volume is added).
+        root-dir: ${LAB_THREAD_SNAPSHOT_DIR:doc/process/snapshots}
+        max-count: ${LAB_THREAD_SNAPSHOT_MAX_COUNT:20}
+        max-age-seconds: ${LAB_THREAD_SNAPSHOT_MAX_AGE_SECONDS:604800}
+        command-timeout-ms: ${LAB_THREAD_SNAPSHOT_COMMAND_TIMEOUT_MS:5000}
+        jcmd-path: ${LAB_THREAD_SNAPSHOT_JCMD:jcmd}
+        annotation:
+          enabled: ${LAB_THREAD_SNAPSHOT_ANNOTATION_ENABLED:true}
+          # Empty means OFF (the snapshot is still written and the skip counted).
+          # Compose currently passes Grafana credentials to the chaos-controller
+          # only; wire these variables for the app tier in a later step.
+          grafana-url: ${LAB_THREAD_SNAPSHOT_GRAFANA_URL:}
+          user: ${GRAFANA_ADMIN_USER:}
+          password: ${GRAFANA_ADMIN_PASSWORD:}
+          timeout-seconds: ${LAB_THREAD_SNAPSHOT_ANNOTATION_TIMEOUT_SECONDS:3}
+          tags: ${LAB_THREAD_SNAPSHOT_ANNOTATION_TAGS:}
 
   # Runtime experiment toggles (Task 17). Per-instance, in-memory and mutable
   # through POST /lab/toggles; the chaos-controller will broadcast later.
