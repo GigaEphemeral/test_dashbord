@@ -7,8 +7,12 @@ import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
+import com.javalearn.lab.chaos.error.InvalidToxiproxyRequestException;
 import com.javalearn.lab.chaos.error.LabErrorCode;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
+import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
+import com.javalearn.lab.chaos.error.ToxiproxyNotFoundException;
+import com.javalearn.lab.chaos.error.ToxiproxyUnavailableException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import org.slf4j.Logger;
@@ -83,6 +87,31 @@ public class LabExceptionHandler {
     @ExceptionHandler(DockerUnavailableException.class)
     public ResponseEntity<Result<Void>> handleDockerUnavailable(DockerUnavailableException ex) {
         log.warn("Docker operation failed: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Result.failure(CommonErrorCode.SERVICE_UNAVAILABLE, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidToxiproxyRequestException.class)
+    public ResponseEntity<Result<Void>> handleInvalidToxiproxy(InvalidToxiproxyRequestException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(ToxiproxyNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleToxiproxyNotFound(ToxiproxyNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    @ExceptionHandler(ToxiproxyConflictException.class)
+    public ResponseEntity<Result<Void>> handleToxiproxyConflict(ToxiproxyConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(CommonErrorCode.CONFLICT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(ToxiproxyUnavailableException.class)
+    public ResponseEntity<Result<Void>> handleToxiproxyUnavailable(ToxiproxyUnavailableException ex) {
+        log.warn("Toxiproxy operation failed: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Result.failure(CommonErrorCode.SERVICE_UNAVAILABLE, ex.getMessage()));
     }

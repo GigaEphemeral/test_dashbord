@@ -3,8 +3,11 @@ package com.javalearn.lab.chaos.config;
 import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -17,6 +20,7 @@ public class ChaosProperties {
 
     private static final Pattern CONTAINER_NAME = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9_.-]*");
     private static final Pattern ENV_VARIABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern PROXY_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,63}");
     private static final int MAX_MEMBERS = 16;
 
     /** TTL applied when kill/freeze does not send one. */
@@ -53,12 +57,15 @@ public class ChaosProperties {
 
     private final MysqlCluster mysqlCluster = new MysqlCluster();
 
+    private final Toxiproxy toxiproxy = new Toxiproxy();
+
     /**
      * Fails the context fast on a nonsensical probe configuration instead of
      * surfacing it as a recurring probe failure at runtime.
      */
     @PostConstruct
     public void validate() {
+        toxiproxy.validate();
         mysqlCluster.validate();
     }
 
@@ -144,6 +151,257 @@ public class ChaosProperties {
 
     public MysqlCluster getMysqlCluster() {
         return mysqlCluster;
+    }
+
+    public Toxiproxy getToxiproxy() {
+        return toxiproxy;
+    }
+
+    /**
+     * Toxiproxy network-fault layer (design §11.3). The controller is only a
+     * client: the proxy topology lives in the {@code chaos-proxy} compose
+     * overlay and applications are restarted to use it (design §3.3), so this
+     * block holds no topology, only the control URL, timeouts, an allow-list of
+     * proxy names and the bounds a toxic request may use.
+     *
+     * <p>Enabled by default so the capability is present when the overlay is
+     * up; without Toxiproxy the endpoints answer 503/50301 and stop-all reports
+     * a failed network cleanup instead of hanging or NPE-ing. Set
+     * {@code CHAOS_TOXIPROXY_ENABLED=false} on stacks that never run the
+     * {@code chaos-proxy} profile.</p>
+     */
+    public static class Toxiproxy {
+
+        /** False disables every /chaos/toxiproxy endpoint and the stop-all hook. */
+        private boolean enabled = true;
+
+        /** Toxiproxy control API base URL; never contains credentials. */
+        private String url = "http://toxiproxy:8474";
+
+        /** TCP connect timeout for control calls. */
+        private int connectTimeoutSeconds = 2;
+
+        /** Whole-request timeout for control calls (toxics are tiny JSON). */
+        private int requestTimeoutSeconds = 5;
+
+        /** Proxy names this controller may touch; anything else is a 404. */
+        private List<String> proxies = new ArrayList<>(List.of("redis", "mysql"));
+
+        /** Latency used when the request omits latencyMs. */
+        private int defaultLatencyMs = 500;
+
+        /** Upper bound accepted for latencyMs. */
+        private int maxLatencyMs = 30000;
+
+        /** Jitter used when the request omits jitterMs. */
+        private int defaultJitterMs = 50;
+
+        /** Upper bound accepted for jitterMs. */
+        private int maxJitterMs = 5000;
+
+        /** Bandwidth used when the request omits rateKbps (KB/s). */
+        private int defaultBandwidthKbps = 100;
+
+        /** Upper bound accepted for rateKbps. */
+        private int maxBandwidthKbps = 10240;
+
+        /** Network-cut timeout used when the request omits timeoutMs. */
+        private int defaultTimeoutMs = 1000;
+
+        /** Upper bound accepted for timeoutMs. */
+        private int maxTimeoutMs = 60000;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public int getConnectTimeoutSeconds() {
+            return connectTimeoutSeconds;
+        }
+
+        public void setConnectTimeoutSeconds(int connectTimeoutSeconds) {
+            this.connectTimeoutSeconds = connectTimeoutSeconds;
+        }
+
+        public int getRequestTimeoutSeconds() {
+            return requestTimeoutSeconds;
+        }
+
+        public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
+            this.requestTimeoutSeconds = requestTimeoutSeconds;
+        }
+
+        public List<String> getProxies() {
+            return proxies;
+        }
+
+        public void setProxies(List<String> proxies) {
+            this.proxies = proxies;
+        }
+
+        public int getDefaultLatencyMs() {
+            return defaultLatencyMs;
+        }
+
+        public void setDefaultLatencyMs(int defaultLatencyMs) {
+            this.defaultLatencyMs = defaultLatencyMs;
+        }
+
+        public int getMaxLatencyMs() {
+            return maxLatencyMs;
+        }
+
+        public void setMaxLatencyMs(int maxLatencyMs) {
+            this.maxLatencyMs = maxLatencyMs;
+        }
+
+        public int getDefaultJitterMs() {
+            return defaultJitterMs;
+        }
+
+        public void setDefaultJitterMs(int defaultJitterMs) {
+            this.defaultJitterMs = defaultJitterMs;
+        }
+
+        public int getMaxJitterMs() {
+            return maxJitterMs;
+        }
+
+        public void setMaxJitterMs(int maxJitterMs) {
+            this.maxJitterMs = maxJitterMs;
+        }
+
+        public int getDefaultBandwidthKbps() {
+            return defaultBandwidthKbps;
+        }
+
+        public void setDefaultBandwidthKbps(int defaultBandwidthKbps) {
+            this.defaultBandwidthKbps = defaultBandwidthKbps;
+        }
+
+        public int getMaxBandwidthKbps() {
+            return maxBandwidthKbps;
+        }
+
+        public void setMaxBandwidthKbps(int maxBandwidthKbps) {
+            this.maxBandwidthKbps = maxBandwidthKbps;
+        }
+
+        public int getDefaultTimeoutMs() {
+            return defaultTimeoutMs;
+        }
+
+        public void setDefaultTimeoutMs(int defaultTimeoutMs) {
+            this.defaultTimeoutMs = defaultTimeoutMs;
+        }
+
+        public int getMaxTimeoutMs() {
+            return maxTimeoutMs;
+        }
+
+        public void setMaxTimeoutMs(int maxTimeoutMs) {
+            this.maxTimeoutMs = maxTimeoutMs;
+        }
+
+        /**
+         * Typed startup validation. An invalid value fails the context with the
+         * property path and env variable, exactly like the mysql-cluster probe.
+         */
+        public void validate() {
+            if (maxLatencyMs < 1 || maxLatencyMs > 600_000) {
+                throw new IllegalStateException("chaos.toxiproxy.max-latency-ms must be between 1 and 600000 (was "
+                        + maxLatencyMs + "); env CHAOS_TOXIPROXY_MAX_LATENCY_MS");
+            }
+            if (defaultLatencyMs < 0 || defaultLatencyMs > maxLatencyMs) {
+                throw new IllegalStateException("chaos.toxiproxy.default-latency-ms must be between 0 and max-latency-ms ("
+                        + maxLatencyMs + "), was " + defaultLatencyMs + "; env CHAOS_TOXIPROXY_DEFAULT_LATENCY_MS");
+            }
+            if (maxJitterMs < 0 || maxJitterMs > 600_000) {
+                throw new IllegalStateException("chaos.toxiproxy.max-jitter-ms must be between 0 and 600000 (was "
+                        + maxJitterMs + "); env CHAOS_TOXIPROXY_MAX_JITTER_MS");
+            }
+            if (defaultJitterMs < 0 || defaultJitterMs > maxJitterMs) {
+                throw new IllegalStateException("chaos.toxiproxy.default-jitter-ms must be between 0 and max-jitter-ms ("
+                        + maxJitterMs + "), was " + defaultJitterMs + "; env CHAOS_TOXIPROXY_DEFAULT_JITTER_MS");
+            }
+            if (maxBandwidthKbps < 1 || maxBandwidthKbps > 1_000_000) {
+                throw new IllegalStateException("chaos.toxiproxy.max-bandwidth-kbps must be between 1 and 1000000 (was "
+                        + maxBandwidthKbps + "); env CHAOS_TOXIPROXY_MAX_BANDWIDTH_KBPS");
+            }
+            if (defaultBandwidthKbps < 1 || defaultBandwidthKbps > maxBandwidthKbps) {
+                throw new IllegalStateException("chaos.toxiproxy.default-bandwidth-kbps must be between 1 and "
+                        + "max-bandwidth-kbps (" + maxBandwidthKbps + "), was " + defaultBandwidthKbps
+                        + "; env CHAOS_TOXIPROXY_DEFAULT_BANDWIDTH_KBPS");
+            }
+            if (maxTimeoutMs < 1 || maxTimeoutMs > 600_000) {
+                throw new IllegalStateException("chaos.toxiproxy.max-timeout-ms must be between 1 and 600000 (was "
+                        + maxTimeoutMs + "); env CHAOS_TOXIPROXY_MAX_TIMEOUT_MS");
+            }
+            if (defaultTimeoutMs < 1 || defaultTimeoutMs > maxTimeoutMs) {
+                throw new IllegalStateException("chaos.toxiproxy.default-timeout-ms must be between 1 and max-timeout-ms ("
+                        + maxTimeoutMs + "), was " + defaultTimeoutMs + "; env CHAOS_TOXIPROXY_DEFAULT_TIMEOUT_MS");
+            }
+            if (connectTimeoutSeconds < 1 || connectTimeoutSeconds > 60) {
+                throw new IllegalStateException("chaos.toxiproxy.connect-timeout-seconds must be between 1 and 60 (was "
+                        + connectTimeoutSeconds + "); env CHAOS_TOXIPROXY_CONNECT_TIMEOUT_SECONDS");
+            }
+            if (requestTimeoutSeconds < 1 || requestTimeoutSeconds > 60) {
+                throw new IllegalStateException("chaos.toxiproxy.request-timeout-seconds must be between 1 and 60 (was "
+                        + requestTimeoutSeconds + "); env CHAOS_TOXIPROXY_REQUEST_TIMEOUT_SECONDS");
+            }
+            if (proxies == null) {
+                throw new IllegalStateException("chaos.toxiproxy.proxies must not be null");
+            }
+            Set<String> seen = new HashSet<>();
+            for (String proxy : proxies) {
+                if (proxy == null || !PROXY_NAME.matcher(proxy).matches()) {
+                    throw new IllegalStateException("chaos.toxiproxy.proxies contains an invalid proxy name '"
+                            + proxy + "' (expected " + PROXY_NAME.pattern() + ")");
+                }
+                if (!seen.add(proxy)) {
+                    throw new IllegalStateException("chaos.toxiproxy.proxies contains duplicate proxy '" + proxy + "'");
+                }
+            }
+            if (enabled && proxies.isEmpty()) {
+                throw new IllegalStateException("chaos.toxiproxy.proxies must list at least one proxy while "
+                        + "chaos.toxiproxy.enabled=true (set CHAOS_TOXIPROXY_ENABLED=false to disable the layer)");
+            }
+            String configuredUrl = url == null ? "" : url.trim();
+            if (enabled && configuredUrl.isEmpty()) {
+                throw new IllegalStateException(
+                        "chaos.toxiproxy.url is required while enabled; env CHAOS_TOXIPROXY_URL");
+            }
+            if (!configuredUrl.isEmpty()) {
+                validateUrl(configuredUrl);
+            }
+        }
+
+        private static void validateUrl(String configuredUrl) {
+            URI uri;
+            try {
+                uri = URI.create(configuredUrl);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException("chaos.toxiproxy.url is not a valid URI: " + configuredUrl, e);
+            }
+            if (uri.getScheme() == null
+                    || !("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null) {
+                throw new IllegalStateException("chaos.toxiproxy.url must be an absolute http(s) URL with a host: "
+                        + configuredUrl);
+            }
+        }
     }
 
     /**

@@ -80,6 +80,30 @@ chaos:
     timeout-seconds: ${CHAOS_ANNOTATION_TIMEOUT_SECONDS:3}
     # Optional extra comma-separated tags; mandatory tags are added in code.
     tags: ${CHAOS_ANNOTATION_TAGS:}
+  # Toxiproxy network faults (design §11.3). The proxies themselves live in the
+  # chaos-proxy compose overlay; this controller only talks to the control API.
+  # Applications must be restarted with the proxy wiring (design §3.3), so these
+  # faults belong to the demo preparation phase.
+  toxiproxy:
+    # Enabled by default so the capability is present when the overlay is up.
+    # Without the chaos-proxy profile the endpoints answer 503/50301 and
+    # stop-all reports a failed network cleanup; set false on stacks that never
+    # run that profile.
+    enabled: ${CHAOS_TOXIPROXY_ENABLED:true}
+    url: ${CHAOS_TOXIPROXY_URL:http://toxiproxy:8474}
+    connect-timeout-seconds: ${CHAOS_TOXIPROXY_CONNECT_TIMEOUT_SECONDS:2}
+    request-timeout-seconds: ${CHAOS_TOXIPROXY_REQUEST_TIMEOUT_SECONDS:5}
+    # Allow-list of control-plane proxy names; anything else is a 404.
+    proxies: ${CHAOS_TOXIPROXY_PROXIES:redis,mysql}
+    # Request bounds; defaults are used when a toxic request omits a parameter.
+    default-latency-ms: ${CHAOS_TOXIPROXY_DEFAULT_LATENCY_MS:500}
+    max-latency-ms: ${CHAOS_TOXIPROXY_MAX_LATENCY_MS:30000}
+    default-jitter-ms: ${CHAOS_TOXIPROXY_DEFAULT_JITTER_MS:50}
+    max-jitter-ms: ${CHAOS_TOXIPROXY_MAX_JITTER_MS:5000}
+    default-bandwidth-kbps: ${CHAOS_TOXIPROXY_DEFAULT_BANDWIDTH_KBPS:100}
+    max-bandwidth-kbps: ${CHAOS_TOXIPROXY_MAX_BANDWIDTH_KBPS:10240}
+    default-timeout-ms: ${CHAOS_TOXIPROXY_DEFAULT_TIMEOUT_MS:1000}
+    max-timeout-ms: ${CHAOS_TOXIPROXY_MAX_TIMEOUT_MS:60000}
   # MySQL InnoDB Cluster membership metrics for panel D11 (design §8.3).
   # Read-only: one SELECT every interval through `docker exec` into one node.
   # Enabled by default so the db-ha stack exposes the metrics without extra
