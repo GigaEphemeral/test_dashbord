@@ -18,6 +18,11 @@ K6_NETWORK="${K6_NETWORK:-jl-net}"
 K6_DIR="${K6_DIR:-$SCRIPT_DIR}"
 SCENARIO="${SCENARIO:-smoke}"
 PROM_URL="${PROM_URL:-http://127.0.0.1:8080/prom}"
+# Optional archive support (Task 20a): mount a host report directory at
+# /reports and let k6 write its summary JSON into it. Both are off by default.
+K6_REPORT_DIR="${K6_REPORT_DIR:-}"
+K6_SUMMARY_EXPORT="${K6_SUMMARY_EXPORT:-}"
+K6_REPORT_MOUNT="${K6_REPORT_MOUNT:-/reports}"
 
 if [[ $# -gt 0 && "$1" != -* ]]; then
   SCENARIO="$1"
@@ -69,9 +74,25 @@ fi
 
 # Docker Desktop on Windows needs a Windows-style source path; Git Bash's
 # cygpath -m produces one. Linux/macOS keep the absolute path unchanged.
-K6_MOUNT_DIR="$K6_DIR"
-if command -v cygpath >/dev/null 2>&1; then
-  K6_MOUNT_DIR="$(cygpath -m "$K6_DIR")"
+host_mount_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+K6_MOUNT_DIR="$(host_mount_path "$K6_DIR")"
+
+if [[ -n "$K6_SUMMARY_EXPORT" && -z "$K6_REPORT_DIR" ]]; then
+  printf 'ERROR: K6_SUMMARY_EXPORT requires K6_REPORT_DIR (the host directory mounted at %s).\n' \
+    "$K6_REPORT_MOUNT" >&2
+  exit 2
+fi
+if [[ -n "$K6_REPORT_DIR" ]]; then
+  mkdir -p "$K6_REPORT_DIR"
+  K6_REPORT_DIR="$(cd "$K6_REPORT_DIR" && pwd)"
+  K6_REPORT_MOUNT_DIR="$(host_mount_path "$K6_REPORT_DIR")"
 fi
 
 # Config names are passed only when set; otherwise lib/config.js keeps the
@@ -96,12 +117,29 @@ CONFIG_VARS=(
   K6_PROMETHEUS_RW_SERVER_URL K6_PROMETHEUS_RW_TREND_STATS K6_PROMETHEUS_RW_PUSH_INTERVAL
 )
 
+# Additional names requested by a caller (bench.sh) so arbitrary scenario
+# overrides reach the container without hardcoding them here. Names are
+# validated: only plain environment variable identifiers are forwarded.
+if [[ -n "${K6_FORWARD_ENV:-}" ]]; then
+  IFS=',' read -r -a extra_names <<<"$K6_FORWARD_ENV"
+  for name in "${extra_names[@]}"; do
+    if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf 'ERROR: K6_FORWARD_ENV contains an invalid name "%s".\n' "$name" >&2
+      exit 2
+    fi
+    CONFIG_VARS+=("$name")
+  done
+fi
+
 docker_args=(
   run --rm
   --network "$K6_NETWORK"
   -v "$K6_MOUNT_DIR:/scripts:ro"
   -w /scripts
 )
+if [[ -n "$K6_REPORT_DIR" ]]; then
+  docker_args+=(-v "$K6_REPORT_MOUNT_DIR:$K6_REPORT_MOUNT")
+fi
 for name in "${CONFIG_VARS[@]}"; do
   value="${!name:-}"
   if [[ -n "$value" ]]; then
@@ -123,12 +161,20 @@ urlencode() {
 prom_query="k6_http_reqs_total{run_id=\"$RUN_ID\"}"
 graph_url="${PROM_URL%/}/graph?g0.expr=$(urlencode "$prom_query")&g0.tab=0"
 
+k6_flags=()
+if [[ -n "$K6_SUMMARY_EXPORT" ]]; then
+  k6_flags+=("--summary-export=$K6_SUMMARY_EXPORT")
+fi
+
 printf 'k6 scenario : %s\n' "$SCENARIO"
 printf 'run_id      : %s\n' "$RUN_ID"
 printf 'base_url    : %s\n' "$BASE_URL"
 printf 'network     : %s\n' "$K6_NETWORK"
 printf 'image       : %s\n' "$K6_IMAGE"
 printf 'remote write: %s\n' "$K6_PROMETHEUS_RW_SERVER_URL"
+if [[ -n "$K6_SUMMARY_EXPORT" ]]; then
+  printf 'summary     : %s (host dir %s)\n' "$K6_SUMMARY_EXPORT" "$K6_REPORT_DIR"
+fi
 printf 'PromQL      : %s\n' "$prom_query"
 printf 'Graph URL   : %s\n' "$graph_url"
 printf '\n'
@@ -137,7 +183,7 @@ set +e
 # MSYS_NO_PATHCONV keeps Git Bash from rewriting the container-side paths
 # (e.g. -w /scripts) into Windows paths. It is ignored on Linux/macOS.
 MSYS_NO_PATHCONV=1 docker "${docker_args[@]}" "$K6_IMAGE" \
-  run -o experimental-prometheus-rw "$@" "scenarios/$SCENARIO.js"
+  run -o experimental-prometheus-rw "${k6_flags[@]}" "$@" "scenarios/$SCENARIO.js"
 status=$?
 set -e
 

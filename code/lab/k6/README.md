@@ -1,24 +1,27 @@
-# k6 base scenarios (M2-1)
+# k6 base scenarios (M2-1) and bench runner (M2-2a)
 
 This directory is the load-testing foundation for the HA lab: one shared
 config/HTTP/flow library, five base scenarios, a dockerized single-scenario
-runner and Prometheus remote write. Report archiving, bench/compare, chaos
-timelines and D9 are Task 20 and are intentionally **not** here.
+runner and Prometheus remote write. Task 20a adds the lab reset, the
+`bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Compare/D9
+remains Task 20b; chaos timelines remain Task 22.
 
 ## Layout
 
 ```
-code/lab/k6/
-├── lib/config.js          # env defaults, derived stages, thresholds, run_id
-├── lib/http.js            # HTTP wrapper, expected statuses, custom metrics
-├── lib/flow.js            # login, product, order(+replay), seckill(+poll)
-├── scenarios/smoke.js
-├── scenarios/load.js
-├── scenarios/stress.js
-├── scenarios/spike.js
-├── scenarios/soak.js
-├── run.sh                 # dockerized scenario runner
-└── README.md
+code/lab/
+├── k6/
+│   ├── lib/config.js          # env defaults, derived stages, thresholds, run_id
+│   ├── lib/http.js            # HTTP wrapper, expected statuses, custom metrics
+│   ├── lib/flow.js            # login, product, order(+replay), seckill(+poll)
+│   ├── scenarios/{smoke,load,stress,spike,soak}.js
+│   ├── run.sh                 # dockerized scenario runner (+ summary export)
+│   ├── reports/<run_id>/      # generated archives (gitignored)
+│   └── README.md
+└── scripts/
+    ├── reset-lab.sh           # deterministic lab data reset
+    ├── bench.sh               # preflight -> reset -> k6 -> verdict -> archive
+    └── bench-report.js        # manifest.json + report.html + result doc
 ```
 
 ## Prerequisites
@@ -53,6 +56,74 @@ bash code/lab/k6/run.sh smoke
 The runner prints the generated `run_id`, the target, the remote-write URL,
 a PromQL query and a Prometheus graph URL, then prints k6's normal summary.
 The shell exit code is k6's exit code.
+
+## Bench runner and lab reset (M2-2a)
+
+`bench.sh` is the repeatable entry point: it checks the stack (16 compose
+services running/healthy, Prometheus ready, k6 image and scenario present),
+resets the lab data, runs one k6 scenario, and archives the result. It never
+starts the stack.
+
+```bash
+# Full archive + result doc under doc/process/benchmark/
+bash code/lab/scripts/bench.sh smoke
+
+# Short load: k6 env overrides after "--"
+bash code/lab/scripts/bench.sh load -- LOAD_DURATION=1m
+
+# Skip the reset (baseline is recorded as not reset)
+bash code/lab/scripts/bench.sh smoke --no-reset
+
+# Negative test: impossible threshold -> exit 99, archive still written
+bash code/lab/scripts/bench.sh smoke --run-id neg-1 -- ERROR_RATE=0
+```
+
+Each run creates `code/lab/k6/reports/<run_id>/` (gitignored) with:
+
+| File | Content |
+|---|---|
+| `summary.json` | k6 `--summary-export` output |
+| `k6.log` | full k6 stdout/stderr |
+| `manifest.json` | scenario, run id, start/end, duration, k6 image/exit, git commit/branch, reset baseline, thresholds, verdict |
+| `report.html` | self-contained report (key metrics + threshold verdicts) |
+| `reset.log` | reset-lab.sh output when the reset ran |
+
+and `doc/process/benchmark/<date>-<scenario>-<run_id>.md` with key metrics,
+threshold verdicts, Grafana time window, manifest summary and reset info.
+
+`bench.sh` exits with k6's code when it is non-zero (a crossed threshold is
+99) after writing the archive; otherwise it exits non-zero only for an
+internal/report failure.
+
+`reset-lab.sh` restores a repeatable data baseline without removing volumes:
+
+```bash
+bash code/lab/scripts/reset-lab.sh --dry-run   # print the plan and current state
+bash code/lab/scripts/reset-lab.sh --yes       # truncate orders, stock=100, FLUSHDB, purge queue
+```
+
+It stops app-1/2/3 first (no consumer can write during the reset), truncates
+`order_order`, sets every `inventory_stock` row to `RESET_BASELINE_STOCK`
+(default 100, `reserved=0`), flushes the lab-only Redis DB, purges
+`RABBITMQ_QUEUE` (default `seckill.order.queue`) through the management API,
+starts the app tier again and waits for health. The startup seeder then
+repopulates `seckill:stock:<id>` from MySQL. Flyway history, catalog seeds and
+all named volumes are untouched. The compose project is pinned to
+`java-learn-lab` and every container is checked against that project label.
+
+Reset-specific overrides: `RESET_BASELINE_STOCK`, `RESET_APP_SERVICES`,
+`RESET_MYSQL_SERVICE`/`RESET_MYSQL_CONTAINER`,
+`RESET_REDIS_SERVICE`/`RESET_REDIS_CONTAINER`,
+`RESET_RABBITMQ_SERVICE`/`RESET_RABBITMQ_CONTAINER`, `RABBITMQ_QUEUE`,
+`RABBITMQ_MANAGEMENT_URL`, `RESET_APP_HEALTH_TIMEOUT_SECONDS`,
+`RESET_APP_HEALTH_INTERVAL_SECONDS`, `RESET_VERIFY_RETRIES`,
+`RESET_ENV_FILE`, `RESET_COMPOSE_PROJECT`.
+
+Bench-specific overrides: `BENCH_REPORTS_DIR`, `BENCH_DOC_DIR`,
+`BENCH_GRAFANA_URL`, `BENCH_GRAFANA_DASHBOARD_UID`, `BENCH_READY_TIMEOUT_SECONDS`,
+`BENCH_READY_INTERVAL_SECONDS`, `BENCH_REQUIRED_SERVICES` (default: every
+compose service). Credentials for the reset come from the lab `.env`; they are
+never passed on a command line, written to an archive or committed.
 
 ## Scenarios
 
@@ -161,6 +232,9 @@ Every runtime value is environment-overridable. Defaults below live in
 | `K6_PROMETHEUS_RW_SERVER_URL` | `http://prometheus:9090/api/v1/write` | Remote-write endpoint. |
 | `K6_PROMETHEUS_RW_TREND_STATS` | `p(95),p(99),max` | Trend statistics exported by the remote-write output. |
 | `K6_PROMETHEUS_RW_PUSH_INTERVAL` | `5s` | Remote-write push interval. |
+| `K6_REPORT_DIR` | unset | Host directory mounted at `K6_REPORT_MOUNT` (default `/reports`). |
+| `K6_SUMMARY_EXPORT` | unset | Container path for `--summary-export`; requires `K6_REPORT_DIR`. |
+| `K6_FORWARD_ENV` | unset | Comma-separated extra variable names forwarded to the k6 container (bench uses it for `--` overrides). |
 
 Validation is fail-fast: a malformed duration, non-integer VU/id, fraction
 outside `[0,1)`, or invalid status list stops k6 during init with a
@@ -342,14 +416,15 @@ The acceptance run used three ids (smoke, load, spike); see
 - If remote write returns 404, the receiver flag is missing. If k6 prints a
   remote-write connection error, verify `K6_PROMETHEUS_RW_SERVER_URL` and that
   k6 is on `jl-net`.
-- Smoke and spike consume finite product stock. There is no one-click reset
-  yet (see the stage handover); re-seed product 20 before repeating the
-  acceptance spike.
+- Smoke and spike consume finite product stock. Run
+  `bash code/lab/scripts/reset-lab.sh --yes` (or let `bench.sh` do it) before a
+  repeat that expects fresh seckill stock; product 20 is restored to 100.
 
 ## Related
 
 - Design: `doc/design/2026-10-26-ha-concurrency-lab-design.md` §11.1
 - Existing HTTP smoke: `code/lab/scripts/smoke.sh`
 - Task 19 handover: `doc/process/step-19-k6-base.md`
-- Task 20 will add bench orchestration, report archiving, compare and D9; this
-  directory intentionally has no report output yet.
+- Task 20a handover (reset/bench/archive): `doc/process/step-20a-bench-reset.md`
+- Task 20b will add bench compare and D9; this directory intentionally has no
+  compare output yet.
