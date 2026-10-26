@@ -63,6 +63,11 @@
 
 # 存在缺陷项&TODO
 
+- **评审修订（M3-1c review，2026-10-27，fix/test/docs 三提交）**：
+  1. 白名单按"关键字命中输入名"判定，但 Docker 引用可以是**容器 ID/ID 前缀**（如 `POST /chaos/instances/0a1b2c3d/actions`），关键字规则看不见 ID 背后的真实容器。已修复：`DockerContainerGateway.inspectLabContainer` 现回报 inspect 的规范名，`execute()` 在 lab 标签校验后用规范名**二次套用同一 allow-list**（拒绝消息 `container reference "…" resolves to target "…" …`，零 Docker 变更调用）；`DatastoreTargetAllowListTest` 钉住"ID→jl-mysql 拒 / ID→jl-redis-1 放行"。k6 JS 侧是预检、非边界，不改。
+  2. Java 侧补"整名匹配"语义测试（不设锚的 `jl-redis-1` 不放行 `jl-redis-10`/`xjl-redis-1`，`matches()` 而非 `find()`），与 JS 的 `^(?:pattern)$` 包裹对齐；上文"没有专门测试"一条在 Java 侧已补齐（正则层面仍无法禁止未锚定写法，靠 README 口径）。
+  3. 修 `ChaosActionService` 类注释被本步改坏的半句话（"…max-revert-attempts}. Every attempts. Every Docker call…"）。
+  4. 复核确认：**compose 未接线属 Important、部署阻塞项**（下第 2 条），本评审未修（`code/lab/docker/**` 归另一代理所有）；接线前活体默认值=空=全拒，方向安全、只是演示跑不起来。
 - **活体验收未做（本步明确不声明任何实测结果）**：无 Docker、无 `verify.sh`/`smoke.sh`、无真实 k6、无真实 failover 观测。所有"预期/阈值"是**待验证**口径，见附录 runbook；主会话执行后请把实际秒数、日志行与截图时间线补进 24d。
 - **compose 尚未接线新 env**：`compose.base.yml` 的 `chaos-controller` 段没有 `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN`（本步禁改 `code/lab/docker/**`）。**没有这两行，容器内该属性恒为空、Sentinel 场景无法驱动**，这是活体验收的第一道阻塞项。
 - 场景第一步仍写死 `jl-redis-1`；主漂移后"按原样执行"会停到副本（README 与 `description` 已告警，但没有机器校验）。可选后续：驱动端读 `sentinel-status.sh` 输出替换 target（需新机制，勿加 action）。
