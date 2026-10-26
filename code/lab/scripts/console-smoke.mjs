@@ -146,8 +146,12 @@ async function main() {
     // and jl-traffic leaves the rollup only once its name is known.
     await expectCondition('every always-on container is running', async () => {
       const text = ((await rollup.textContent()) || '').trim();
-      const [up, total] = text.split('/');
-      return { ok: up === total, detail: text };
+      // "0/0" is the first render (containers not fetched yet) and also the
+      // shape of a failed fetch whose banner was later cleared; up === total
+      // alone would pass on it. Only a positive total can prove the rollup.
+      const [up, total] = text.split('/').map((part) => Number(part));
+      const ok = Number.isInteger(up) && Number.isInteger(total) && total > 0 && up === total;
+      return { ok, detail: text };
     });
     check(
       'reset mode shows the manual default',
