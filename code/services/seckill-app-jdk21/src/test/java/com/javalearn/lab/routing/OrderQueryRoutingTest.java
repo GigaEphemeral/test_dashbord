@@ -43,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringJUnitConfig({DataSourceConfig.class, TransactionTestConfig.class,
         OrderQueryRoutingTest.OrderQueryFixtures.class})
 @TestPropertySource(properties = {
+        "app.datasource.mode=standalone",
         "app.datasource.write.jdbc-url=jdbc:h2:mem:routing_write;DB_CLOSE_DELAY=-1",
         "app.datasource.write.username=sa",
         "app.datasource.write.password=",

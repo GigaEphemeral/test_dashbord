@@ -46,6 +46,16 @@ x-app-env: &app-env
   MYSQL_DATABASE: ${MYSQL_DATABASE}
   MYSQL_USER: ${MYSQL_USER}
   MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+  # MySQL access mode (design §3.3/§8.3). standalone (default) keeps BOTH pools
+  # on the dev single-node `mysql` above, byte-identical to before the switch.
+  # router sends the write pool to DB_WRITE_URL (MySQL Router 6446, read-write,
+  # follows the primary) and the read pool to DB_READ_URL (Router 6447,
+  # read-only, secondaries). The two URLs are empty by default and REQUIRED in
+  # router mode: the app then fails startup instead of silently using the dev
+  # MySQL. Set all three in .env after db-ha-up.sh; no image rebuild is needed.
+  MYSQL_MODE: ${MYSQL_MODE:-standalone}
+  DB_WRITE_URL: ${DB_WRITE_URL:-}
+  DB_READ_URL: ${DB_READ_URL:-}
   # Product cache L2 (Task 14). Redis remains best-effort: failures fall back
   # to MySQL reads and are counted as cache_l2_errors.
   REDIS_HOST: redis
