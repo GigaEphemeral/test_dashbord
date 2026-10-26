@@ -11,15 +11,18 @@ DASHBOARD_DIST_INDEX="$DASHBOARD_DIR/dist/index.html"
 
 usage() {
   cat <<'EOF'
-Usage: up.sh [--profile dev]
+Usage: up.sh [--profile dev|ha]
 
-Start the java-learn-lab dev infrastructure stack.
+Start the java-learn-lab infrastructure stack.
 
 Profiles:
   dev   Nginx, three app instances, MySQL, Redis, RabbitMQ, exporters,
         Prometheus, Grafana, Tempo, OTel Collector and cAdvisor (default)
+  ha    the dev stack plus the Redis Sentinel topology from compose.ha.yml
+        (1 master + 2 replicas + 3 Sentinels + 1 exporter per data node,
+        all gated behind the "ha" compose profile, reachable on jl-net only)
 
-The "ha" profile (MySQL InnoDB Cluster, Redis Sentinel, etc.) is available in M3.
+MySQL InnoDB Cluster (design §8.3) is still a later M3 task.
 EOF
 }
 
@@ -28,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
       if [[ $# -lt 2 ]]; then
-        echo "ERROR: --profile requires a value (dev)." >&2
+        echo "ERROR: --profile requires a value (dev or ha)." >&2
         exit 2
       fi
       PROFILE="$2"
@@ -50,15 +53,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# dev always renders base+dev; ha overlays compose.ha.yml on top of it, so the
+# Sentinel topology is additive and the dev service definitions stay byte-identical.
+COMPOSE_FILES=(-f "$DOCKER_DIR/compose.base.yml" -f "$DOCKER_DIR/compose.dev.yml")
+ACTIVE_PROFILES=()
 case "$PROFILE" in
   dev)
     ;;
   ha)
-    echo "ERROR: profile 'ha' is available in M3. Use --profile dev for the M0 infrastructure." >&2
-    exit 2
+    if [[ ! -f "$DOCKER_DIR/compose.ha.yml" ]]; then
+      echo "ERROR: --profile ha needs $DOCKER_DIR/compose.ha.yml." >&2
+      exit 1
+    fi
+    COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.ha.yml")
+    ACTIVE_PROFILES=(--profile ha)
     ;;
   *)
-    echo "ERROR: unknown profile '$PROFILE'. Only 'dev' is available ('ha' arrives in M3)." >&2
+    echo "ERROR: unknown profile '$PROFILE'. Available: dev, ha." >&2
     exit 2
     ;;
 esac
@@ -109,8 +120,7 @@ compose() {
     --project-name java-learn-lab \
     --project-directory "$DOCKER_DIR" \
     --env-file "$ENV_FILE" \
-    -f "$DOCKER_DIR/compose.base.yml" \
-    -f "$DOCKER_DIR/compose.dev.yml" \
+    "${COMPOSE_FILES[@]}" \
     "$@"
 }
 
@@ -160,7 +170,7 @@ if $needs_dashboard_build; then
 fi
 
 echo "Starting java-learn-lab infrastructure (profile: $PROFILE)..."
-if ! compose up -d --wait --wait-timeout 240; then
+if ! compose "${ACTIVE_PROFILES[@]}" up -d --wait --wait-timeout 240; then
   echo "ERROR: the stack did not become healthy within the timeout." >&2
   print_diagnostics
   exit 1
@@ -199,6 +209,55 @@ if [[ -n "$not_running" ]]; then
   exit 1
 fi
 echo "Post-wait state check passed: all ${#services[@]} containers are running."
+
+# Profile-gated services (the "ha" Redis Sentinel topology) are deliberately absent
+# from the enumeration above, so the dev count and the dev-path output stay exactly
+# as before. Enumerate them explicitly with the profile selected, minus the default
+# set, and check each container the same way.
+if [[ "$PROFILE" == "ha" ]]; then
+  ha_services=()
+  while IFS= read -r service; do
+    if [[ -z "$service" ]]; then
+      continue
+    fi
+    is_default=false
+    for base_service in "${services[@]}"; do
+      if [[ "$base_service" == "$service" ]]; then
+        is_default=true
+        break
+      fi
+    done
+    if [[ "$is_default" == "false" ]]; then
+      ha_services+=("$service")
+    fi
+  done < <(compose --profile ha config --services)
+
+  if (( ${#ha_services[@]} == 0 )); then
+    echo "ERROR: 'docker compose --profile ha config --services' listed no extra services." >&2
+    print_diagnostics
+    exit 1
+  fi
+
+  ha_not_running=""
+  for service in "${ha_services[@]}"; do
+    container="jl-$service"
+    state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
+    if [[ "$state" != "running" ]]; then
+      echo "ERROR: $container is not running (state=${state:-missing})." >&2
+      ha_not_running="$ha_not_running $container"
+    elif [[ "$health" == "unhealthy" ]]; then
+      echo "ERROR: $container is unhealthy after 'compose up --wait'." >&2
+      ha_not_running="$ha_not_running $container"
+    fi
+  done
+  if [[ -n "$ha_not_running" ]]; then
+    echo "ERROR: ha-profile containers not healthy after 'compose up --wait':$ha_not_running" >&2
+    print_diagnostics
+    exit 1
+  fi
+  echo "Post-wait state check passed: all ${#ha_services[@]} ha-profile containers are running."
+fi
 
 # Bind-mounted configs are not part of the Compose service hash, so reused
 # containers would otherwise keep their stale in-memory config (and app DNS).
@@ -245,3 +304,19 @@ echo "  Traffic       : jl-traffic is created but stopped; start it from the con
 echo
 echo "Prometheus, Tempo, OTel Collector, cAdvisor and chaos-controller are internal to jl-net."
 echo "Verify with: bash $SCRIPT_DIR/verify.sh"
+
+# Sentinel topology summary (ha profile only). Nothing here is a dev-path output.
+if [[ "$PROFILE" == "ha" ]]; then
+  echo
+  echo "Redis Sentinel topology (compose profile ha, jl-net + jl-sentinel-net, no host ports):"
+  echo "  master name   : ${REDIS_HA_MASTER_NAME:-mymaster} (initial master ${REDIS_HA_REDIS_1_IP:-172.28.190.11}:${REDIS_HA_NODE_PORT:-6379})"
+  echo "  data nodes    : jl-redis-1 (master), jl-redis-2 + jl-redis-3 (replicas, --replicaof)"
+  echo "  pinned IPs    : nodes ${REDIS_HA_REDIS_1_IP:-172.28.190.11}/.2/.3, sentinels ${REDIS_HA_SENTINEL_1_IP:-172.28.190.21}/.2/.3 on subnet ${REDIS_HA_SUBNET:-172.28.190.0/24}"
+  echo "  sentinels     : jl-sentinel-1, jl-sentinel-2, jl-sentinel-3 on ${REDIS_HA_SENTINEL_PORT:-26379} (quorum ${REDIS_HA_QUORUM:-2})"
+  echo "  failover knobs: down-after ${REDIS_HA_DOWN_AFTER_MS:-5000}ms, failover-timeout ${REDIS_HA_FAILOVER_TIMEOUT_MS:-15000}ms, parallel-syncs ${REDIS_HA_PARALLEL_SYNC:-1}"
+  echo "  exporters     : jl-redis-1-exporter, jl-redis-2-exporter, jl-redis-3-exporter on 9121 (not scraped by prometheus.yml yet)"
+  echo "  dev jl-redis  : untouched - the app still talks to the single-node Redis until M3-1b"
+  echo
+  echo "Read-only topology view : bash $SCRIPT_DIR/sentinel-status.sh"
+  echo "Sentinel verify checks  : REDIS_HA_VERIFY=auto bash $SCRIPT_DIR/verify.sh (skipped while jl-sentinel-1 is absent)"
+fi

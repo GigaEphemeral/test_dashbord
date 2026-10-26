@@ -1,0 +1,287 @@
+# HA overlay: Redis Sentinel topology (1 master + 2 replicas + 3 Sentinels),
+# profile-gated behind "ha" so the default dev stack never pays for it.
+#
+# Design ref: doc/design/2026-10-26-ha-concurrency-lab-design.md §8.2 (Redis
+# Sentinel), §3.1 (resource budget ~800MB), §3.3 (dev = single Redis, ha = Sentinel).
+#
+# Composition: this file is only ever used together with compose.base.yml and
+# compose.dev.yml (see up.sh --profile ha). It adds NEW services only: nothing in
+# compose.base.yml is overridden, so the dev single-node `redis` service and the
+# running dev containers are untouched.
+#
+# Why the default `docker compose config --services` count stays 16: every service
+# here declares `profiles: ["ha"]`, exactly like the `traffic` service in
+# compose.base.yml. Profile-gated services are omitted from the rendered model
+# unless the profile is selected, so verify.sh / bench.sh / reset-lab.sh (all of
+# which enumerate `compose config --services` without a profile) keep seeing the
+# 16 default services.
+#
+# No host ports are published: the topology is reachable on jl-net (and on the
+# Sentinel-only network jl-sentinel-net, see the bottom of this file), which is how
+# the app instances will consume it (Task M3-1b). The commented `ports:` block on
+# redis-1 shows the opt-in recipe for host-side demos.
+#
+# All values are interpolated from code/lab/docker/.env (see .env.example for the
+# documented defaults); nothing operational is hardcoded here.
+
+x-redis-ha-node: &redis-ha-node
+  image: ${REDIS_HA_IMAGE}
+  restart: unless-stopped
+  profiles: ["ha"]
+  mem_limit: ${REDIS_HA_NODE_MEM_LIMIT}
+  # No named volume: the whole topology is disposable demo data (appendonly is off
+  # by default), and tmpfs also gives Sentinel a writable directory. Nothing for
+  # `down.sh --purge` to delete, so the lab's named-volume list is unchanged.
+  tmpfs:
+    - /data:size=${REDIS_HA_TMPFS_SIZE}
+  volumes:
+    - ./redis/redis-node-entrypoint.sh:/usr/local/bin/redis-node-entrypoint.sh:ro
+  # The script assembles `redis-server ... [--replicaof h p] [--requirepass/--masterauth]`
+  # from the environment; a read-only bind mount plus `sh <path>` means neither the
+  # executable bit nor a host-side line-ending can break the start.
+  entrypoint: ["sh", "/usr/local/bin/redis-node-entrypoint.sh"]
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "redis"
+  environment: &redis-ha-node-env
+    TZ: ${TZ}
+    REDIS_HA_NODE_PORT: "${REDIS_HA_NODE_PORT}"
+    REDIS_HA_PROTECTED_MODE: "${REDIS_HA_PROTECTED_MODE}"
+    REDIS_HA_MAXMEMORY: "${REDIS_HA_MAXMEMORY}"
+    REDIS_HA_MAXMEMORY_POLICY: "${REDIS_HA_MAXMEMORY_POLICY}"
+    REDIS_HA_APPENDONLY: "${REDIS_HA_APPENDONLY}"
+    REDIS_HA_IDLE_TIMEOUT_SECONDS: "${REDIS_HA_IDLE_TIMEOUT_SECONDS}"
+    REDIS_HA_TCP_KEEPALIVE_SECONDS: "${REDIS_HA_TCP_KEEPALIVE_SECONDS}"
+    REDIS_HA_REQUIRE_AUTH: "${REDIS_HA_REQUIRE_AUTH}"
+    REDIS_HA_PASSWORD: ${REDIS_HA_PASSWORD}
+    # Each node announces its pinned jl-sentinel-net IP (set per service below), so the
+    # identity Sentinel stores survives a restart. Empty means "announce the real IP",
+    # which is also safe - what must never be used is a hostname (tilt mode).
+    REDIS_HA_ANNOUNCE_IP: "${REDIS_HA_ANNOUNCE_IP:-}"
+    REDIS_HA_ANNOUNCE_PORT: "${REDIS_HA_ANNOUNCE_PORT:-}"
+  healthcheck: &redis-ha-node-healthcheck
+    # REDISCLI_AUTH keeps the password out of the process arguments; the `$$` is
+    # Compose's escape, so the variable is expanded inside the container instead of
+    # being baked into the rendered config.
+    test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_HA_PASSWORD\" redis-cli -p ${REDIS_HA_NODE_PORT} ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 5s
+
+x-redis-ha-sentinel: &redis-ha-sentinel
+  image: ${REDIS_HA_IMAGE}
+  restart: unless-stopped
+  profiles: ["ha"]
+  mem_limit: ${REDIS_HA_SENTINEL_MEM_LIMIT}
+  tmpfs:
+    - /data:size=${REDIS_HA_TMPFS_SIZE}
+  volumes:
+    - ./redis/sentinel-entrypoint.sh:/usr/local/bin/sentinel-entrypoint.sh:ro
+    # Read-only template: the entrypoint renders a writable runtime copy into tmpfs,
+    # because Sentinel rewrites its own config (myid/known-sentinel/known-replica,
+    # epochs and the promoted master).
+    - ./redis/sentinel.conf.tpl:/etc/redis/sentinel.conf.tpl:ro
+  entrypoint: ["sh", "/usr/local/bin/sentinel-entrypoint.sh"]
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "redis-sentinel"
+  environment: &redis-ha-sentinel-env
+    TZ: ${TZ}
+    REDIS_HA_SENTINEL_PORT: "${REDIS_HA_SENTINEL_PORT}"
+    REDIS_HA_SENTINEL_TEMPLATE: ${REDIS_HA_SENTINEL_TEMPLATE}
+    REDIS_HA_SENTINEL_DIR: ${REDIS_HA_SENTINEL_DIR}
+    REDIS_HA_SENTINEL_CONF: ${REDIS_HA_SENTINEL_DIR}/sentinel.conf
+    REDIS_HA_SENTINEL_PROTECTED_MODE: "${REDIS_HA_SENTINEL_PROTECTED_MODE}"
+    REDIS_HA_MASTER_NAME: ${REDIS_HA_MASTER_NAME}
+    REDIS_HA_MASTER_HOST: ${REDIS_HA_REDIS_1_IP}
+    REDIS_HA_MASTER_PORT: "${REDIS_HA_NODE_PORT}"
+    REDIS_HA_QUORUM: "${REDIS_HA_QUORUM}"
+    REDIS_HA_DOWN_AFTER_MS: "${REDIS_HA_DOWN_AFTER_MS}"
+    REDIS_HA_PARALLEL_SYNC: "${REDIS_HA_PARALLEL_SYNC}"
+    REDIS_HA_FAILOVER_TIMEOUT_MS: "${REDIS_HA_FAILOVER_TIMEOUT_MS}"
+    REDIS_HA_RESOLVE_HOSTNAMES: "${REDIS_HA_RESOLVE_HOSTNAMES}"
+    REDIS_HA_ANNOUNCE_HOSTNAMES: "${REDIS_HA_ANNOUNCE_HOSTNAMES}"
+    REDIS_HA_PASSWORD: ${REDIS_HA_PASSWORD}
+  healthcheck: &redis-ha-sentinel-healthcheck
+    # Sentinel's own port is not authenticated (only `sentinel auth-pass` towards the
+    # data nodes is), so read-only demos and verify.sh can query it unauthenticated.
+    test: ["CMD-SHELL", "redis-cli -p ${REDIS_HA_SENTINEL_PORT} ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 5s
+
+x-redis-ha-exporter: &redis-ha-exporter
+  # Reuses the pinned exporter image already used by the dev `redis-exporter`, so the
+  # ha profile adds no new image tag to pull (the local registry mirror cannot always
+  # pull fresh tags).
+  image: ${REDIS_EXPORTER_IMAGE}
+  restart: unless-stopped
+  profiles: ["ha"]
+  mem_limit: ${REDIS_HA_EXPORTER_MEM_LIMIT}
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "exporter"
+  expose:
+    - "9121"
+
+services:
+  # --- 1 master (no REDIS_HA_REPLICAOF_HOST) + 2 replicas -----------------------
+  # Every data node owns a pinned IP on jl-sentinel-net (below) besides its jl-net
+  # address, because Sentinel must monitor an IP that survives `docker stop`.
+  redis-1:
+    <<: *redis-ha-node
+    container_name: jl-redis-1
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_REDIS_1_IP}
+    # Opt-in host publishing for host-side demos (ports 6380/26380 ranges never
+    # collide with dev's 127.0.0.1:6379 or the loopback-only bindings):
+    #   ports:
+    #     - "127.0.0.1:${REDIS_HA_REDIS_1_HOST_PORT:-6380}:${REDIS_HA_NODE_PORT}"
+    # No REDIS_HA_REPLICAOF_HOST here: this node starts as the initial master, and
+    # after a failover Sentinel redirects it with a runtime REPLICAOF.
+    environment:
+      <<: *redis-ha-node-env
+      REDIS_HA_ANNOUNCE_IP: ${REDIS_HA_REDIS_1_IP}
+
+  redis-2:
+    <<: *redis-ha-node
+    container_name: jl-redis-2
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_REDIS_2_IP}
+    environment:
+      <<: *redis-ha-node-env
+      REDIS_HA_ANNOUNCE_IP: ${REDIS_HA_REDIS_2_IP}
+      REDIS_HA_REPLICAOF_HOST: ${REDIS_HA_REDIS_1_IP}
+      REDIS_HA_REPLICAOF_PORT: "${REDIS_HA_NODE_PORT}"
+    depends_on:
+      redis-1:
+        condition: service_healthy
+
+  redis-3:
+    <<: *redis-ha-node
+    container_name: jl-redis-3
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_REDIS_3_IP}
+    environment:
+      <<: *redis-ha-node-env
+      REDIS_HA_ANNOUNCE_IP: ${REDIS_HA_REDIS_3_IP}
+      REDIS_HA_REPLICAOF_HOST: ${REDIS_HA_REDIS_1_IP}
+      REDIS_HA_REPLICAOF_PORT: "${REDIS_HA_NODE_PORT}"
+    depends_on:
+      redis-1:
+        condition: service_healthy
+
+  # --- 3 Sentinels (quorum from REDIS_HA_QUORUM) --------------------------------
+  # The monitored address is redis-1's pinned IP, so a Sentinel only ever talks to
+  # data nodes by IP: no DNS lookup, no tilt mode, real failover.
+  sentinel-1:
+    <<: *redis-ha-sentinel
+    container_name: jl-sentinel-1
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_SENTINEL_1_IP}
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+
+  sentinel-2:
+    <<: *redis-ha-sentinel
+    container_name: jl-sentinel-2
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_SENTINEL_2_IP}
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+
+  sentinel-3:
+    <<: *redis-ha-sentinel
+    container_name: jl-sentinel-3
+    networks:
+      jl-net: {}
+      jl-sentinel-net:
+        ipv4_address: ${REDIS_HA_SENTINEL_3_IP}
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+
+  # --- one exporter per data node (design §8.2 "每个节点独立 redis_exporter") -----
+  # Sentinel-exporter sidecars are intentionally not added here: they would need a
+  # new image tag and 3 more always-on containers for a demo whose Sentinel evidence
+  # comes from `sentinel-status.sh`. See step-24a for the follow-up.
+  redis-1-exporter:
+    <<: *redis-ha-exporter
+    container_name: jl-redis-1-exporter
+    environment:
+      TZ: ${TZ}
+      REDIS_ADDR: redis://redis-1:${REDIS_HA_NODE_PORT}
+      REDIS_PASSWORD: ${REDIS_HA_PASSWORD}
+    depends_on:
+      redis-1:
+        condition: service_healthy
+
+  redis-2-exporter:
+    <<: *redis-ha-exporter
+    container_name: jl-redis-2-exporter
+    environment:
+      TZ: ${TZ}
+      REDIS_ADDR: redis://redis-2:${REDIS_HA_NODE_PORT}
+      REDIS_PASSWORD: ${REDIS_HA_PASSWORD}
+    depends_on:
+      redis-2:
+        condition: service_healthy
+
+  redis-3-exporter:
+    <<: *redis-ha-exporter
+    container_name: jl-redis-3-exporter
+    environment:
+      TZ: ${TZ}
+      REDIS_ADDR: redis://redis-3:${REDIS_HA_NODE_PORT}
+      REDIS_PASSWORD: ${REDIS_HA_PASSWORD}
+    depends_on:
+      redis-3:
+        condition: service_healthy
+
+# --- Sentinel-only network with a pinned subnet ----------------------------------
+# Declared here, not in compose.base.yml: adding it cannot change jl-net, so the dev
+# containers are never recreated by this profile. The subnet is pinned (REDIS_HA_SUBNET)
+# because the data nodes and Sentinels must own fixed IPs - the only identity that
+# survives `docker stop` without dragging Sentinel into #tilt mode. jl-net stays the
+# reachability path for the dev stack (exporters, and from Task M3-1b on the app).
+# 172.28.0.0/16 is free on this machine (bridge=172.17/16, multica_default=172.18/16,
+# jl-net=172.19/16); change REDIS_HA_SUBNET if yours is not.
+networks:
+  jl-sentinel-net:
+    name: jl-sentinel-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${REDIS_HA_SUBNET}

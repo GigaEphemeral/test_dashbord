@@ -43,8 +43,40 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# Sentinel/HA knobs (Task M3-1a) live in .env so compose, sentinel-status.sh and this
+# script share one source of truth. Sourcing .env must not silently replace a value the
+# operator exported for this single run (e.g. REDIS_HA_VERIFY=off to reproduce the plain
+# dev baseline while the ha profile is up), so the pre-source values are snapshotted and
+# restored below. Secrets are deliberately not part of that list.
+HA_OVERRIDE_KEYS=(
+  REDIS_HA_VERIFY
+  REDIS_HA_VERIFY_POLL_RETRIES
+  REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS
+  REDIS_HA_MASTER_NAME
+  REDIS_HA_NODE_PORT
+  REDIS_HA_SENTINEL_PORT
+  REDIS_HA_EXPECTED_SENTINELS
+  REDIS_HA_EXPECTED_REPLICAS
+  SENTINEL_STATUS_DATA_CONTAINERS
+  SENTINEL_STATUS_SENTINEL_CONTAINERS
+  SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS
+)
+HA_OVERRIDES=()
+for ha_key in "${HA_OVERRIDE_KEYS[@]}"; do
+  if [[ -v "$ha_key" ]]; then
+    HA_OVERRIDES+=("$ha_key=${!ha_key}")
+  fi
+done
+
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+
+for ha_assignment in ${HA_OVERRIDES[@]+"${HA_OVERRIDES[@]}"}; do
+  ha_key="${ha_assignment%%=*}"
+  ha_value="${ha_assignment#*=}"
+  printf -v "$ha_key" '%s' "$ha_value"
+done
+
 GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-labadmin}"
 LAB_TOKEN="${LAB_TOKEN:-lab-token}"
@@ -886,6 +918,160 @@ if [[ "$redis_reply" == "PONG" ]]; then
   pass "redis-cli ping returns PONG"
 else
   fail "redis-cli ping returns PONG" "got '${redis_reply}'"
+fi
+
+# 5b. Redis Sentinel topology (compose profile "ha", Task M3-1a).
+# Read-only and profile-gated. Default mode is "auto": the checks run only when the
+# first Sentinel container actually exists, so a plain dev verify prints one SKIP
+# line and its PASS/WARN counts are unchanged (the 97 PASS / 1 WARN baseline).
+# REDIS_HA_VERIFY=on requires the topology, =off always skips it. The container lists,
+# ports and per-command timeout are the same keys sentinel-status.sh and compose.ha.yml
+# use, so the topology has a single source of configuration.
+REDIS_HA_VERIFY="${REDIS_HA_VERIFY:-auto}"
+REDIS_HA_VERIFY_POLL_RETRIES="${REDIS_HA_VERIFY_POLL_RETRIES:-15}"
+REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS="${REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS:-2}"
+REDIS_HA_MASTER_NAME="${REDIS_HA_MASTER_NAME:-mymaster}"
+REDIS_HA_NODE_PORT="${REDIS_HA_NODE_PORT:-6379}"
+REDIS_HA_SENTINEL_PORT="${REDIS_HA_SENTINEL_PORT:-26379}"
+REDIS_HA_EXPECTED_REPLICAS="${REDIS_HA_EXPECTED_REPLICAS:-2}"
+REDIS_HA_EXPECTED_SENTINELS="${REDIS_HA_EXPECTED_SENTINELS:-3}"
+SENTINEL_STATUS_DATA_CONTAINERS="${SENTINEL_STATUS_DATA_CONTAINERS:-jl-redis-1 jl-redis-2 jl-redis-3}"
+SENTINEL_STATUS_SENTINEL_CONTAINERS="${SENTINEL_STATUS_SENTINEL_CONTAINERS:-jl-sentinel-1 jl-sentinel-2 jl-sentinel-3}"
+SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS="${SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS:-5}"
+
+ha_node_cli() {
+  local container="$1"
+  shift
+  # REDISCLI_AUTH keeps the lab password out of the command line and out of output.
+  docker exec -e REDISCLI_AUTH="${REDIS_HA_PASSWORD:-}" "$container" \
+    timeout "$SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS" redis-cli -p "$REDIS_HA_NODE_PORT" --raw "$@" \
+    2>/dev/null | tr -d '\r' || true
+}
+
+ha_sentinel_cli() {
+  local container="$1"
+  shift
+  # Sentinel's own port is unauthenticated (only Sentinel -> data-node traffic uses
+  # sentinel auth-pass), so these INFO/SENTINEL reads need no credentials.
+  docker exec "$container" \
+    timeout "$SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS" redis-cli -p "$REDIS_HA_SENTINEL_PORT" --raw "$@" \
+    2>/dev/null | tr -d '\r' || true
+}
+
+ha_first_sentinel="$(printf '%s' "$SENTINEL_STATUS_SENTINEL_CONTAINERS" | awk '{print $1}')"
+ha_state="$(docker inspect -f '{{.State.Status}}' "$ha_first_sentinel" 2>/dev/null | tr -d '\r' || true)"
+
+if [[ "$REDIS_HA_VERIFY" == "off" ]]; then
+  echo "SKIP: redis sentinel checks skipped (REDIS_HA_VERIFY=off)."
+elif [[ "$ha_state" != "running" && "$REDIS_HA_VERIFY" != "on" ]]; then
+  echo "SKIP: redis sentinel checks require --profile ha ($ha_first_sentinel is ${ha_state:-missing})."
+else
+  echo "--- Redis Sentinel topology checks (profile ha) ---"
+
+  ha_sentinel_list=($SENTINEL_STATUS_SENTINEL_CONTAINERS)
+  ha_node_list=($SENTINEL_STATUS_DATA_CONTAINERS)
+
+  # Discovery is not instantaneous: the Sentinels need a few seconds to gossip the
+  # master, its replicas and each other, and a replica link still settles after the
+  # containers report healthy. All reads below are therefore retried as one round
+  # until the whole topology is green (or the poll budget runs out), then reported.
+  # Everything here is INFO/SENTINEL reads; no failover, no writes.
+  ha_discovery_detail=()
+  ha_masters=0
+  ha_following=0
+  ha_roles=""
+  ha_round_ok=0
+  for attempt in $(seq 1 "$REDIS_HA_VERIFY_POLL_RETRIES"); do
+    ha_round_ok=1
+
+    # 1) every Sentinel answers with the same master address for the monitored name.
+    ha_seen_masters=""
+    ha_answers=0
+    for sentinel_container in "${ha_sentinel_list[@]}"; do
+      ha_addr="$(ha_sentinel_cli "$sentinel_container" sentinel get-master-addr-by-name \
+        "$REDIS_HA_MASTER_NAME" | paste -sd: -)"
+      if [[ -n "$ha_addr" ]]; then
+        ha_seen_masters="$ha_seen_masters $ha_addr"
+        ha_answers=$(( ha_answers + 1 ))
+      fi
+    done
+    if (( ha_answers == ${#ha_sentinel_list[@]} )) \
+      && [[ "$(printf '%s\n' $ha_seen_masters | sort -u | wc -l | tr -d ' ')" == "1" ]]; then
+      ha_sentinel_agreement="$(printf '%s\n' $ha_seen_masters | head -1)"
+    else
+      ha_sentinel_agreement=""
+      ha_round_ok=0
+    fi
+
+    # 2) each Sentinel has discovered every peer Sentinel and both replicas. The
+    # master0 line reads "name=..,status=..,address=..,slaves=N,sentinels=M" where
+    # M counts all Sentinels of this master, itself included.
+    for index in "${!ha_sentinel_list[@]}"; do
+      ha_info="$(ha_sentinel_cli "${ha_sentinel_list[$index]}" info sentinel)"
+      if grep -Eq "^master0:.*slaves=${REDIS_HA_EXPECTED_REPLICAS}(,|$)" <<<"$ha_info" \
+        && grep -Eq "^master0:.*sentinels=${REDIS_HA_EXPECTED_SENTINELS}(,|$)" <<<"$ha_info"; then
+        ha_discovery_detail[$index]=""
+      else
+        ha_discovery_detail[$index]="$(printf '%s' "$ha_info" | tr '\n' ' ' | cut -c1-160)"
+        ha_round_ok=0
+      fi
+    done
+
+    # 3) Roles are read across the whole group instead of asserted per container: after
+    # a failover drill the master is legitimately a different container, so the health
+    # statement to pin is "exactly one master and every other node following it".
+    ha_masters=0
+    ha_following=0
+    ha_roles=""
+    for node_container in "${ha_node_list[@]}"; do
+      ha_repl="$(ha_node_cli "$node_container" info replication)"
+      ha_role="$(grep -m1 '^role:' <<<"$ha_repl" | cut -d: -f2)"
+      ha_roles="$ha_roles $node_container=${ha_role:-unknown}"
+      if [[ "$ha_role" == "master" ]]; then
+        ha_masters=$(( ha_masters + 1 ))
+      elif [[ "$ha_role" == "slave" ]] \
+        && [[ "$(grep -m1 '^master_link_status:' <<<"$ha_repl" | cut -d: -f2)" == "up" ]]; then
+        ha_following=$(( ha_following + 1 ))
+      fi
+    done
+    if (( ha_masters != 1 || ha_following != REDIS_HA_EXPECTED_REPLICAS )); then
+      ha_round_ok=0
+    fi
+
+    if (( ha_round_ok == 1 )); then
+      break
+    fi
+    if (( attempt < REDIS_HA_VERIFY_POLL_RETRIES )); then
+      sleep "$REDIS_HA_VERIFY_POLL_INTERVAL_SECONDS"
+    fi
+  done
+
+  if [[ -n "$ha_sentinel_agreement" ]]; then
+    pass "sentinels agree on the current master of $REDIS_HA_MASTER_NAME ($ha_sentinel_agreement)"
+  else
+    fail "sentinels agree on the current master of $REDIS_HA_MASTER_NAME" \
+      "seen:${ha_seen_masters:- <empty>}"
+  fi
+
+  for index in "${!ha_sentinel_list[@]}"; do
+    if [[ -z "${ha_discovery_detail[$index]}" ]]; then
+      pass "${ha_sentinel_list[$index]} discovers $REDIS_HA_EXPECTED_SENTINELS sentinels and $REDIS_HA_EXPECTED_REPLICAS replicas"
+    else
+      fail "${ha_sentinel_list[$index]} discovers $REDIS_HA_EXPECTED_SENTINELS sentinels and $REDIS_HA_EXPECTED_REPLICAS replicas" \
+        "${ha_discovery_detail[$index]}"
+    fi
+  done
+
+  if (( ha_masters == 1 )); then
+    pass "one writable master in the ha group ($ha_roles)"
+  else
+    fail "one writable master in the ha group" "masters=$ha_masters, roles:$ha_roles"
+  fi
+  if (( ha_following == REDIS_HA_EXPECTED_REPLICAS )); then
+    pass "$REDIS_HA_EXPECTED_REPLICAS replicas report master_link_status up"
+  else
+    fail "$REDIS_HA_EXPECTED_REPLICAS replicas report master_link_status up" "following=$ha_following, roles:$ha_roles"
+  fi
 fi
 
 # 6. Exporter endpoints scraped from inside the Nginx container (compose network).

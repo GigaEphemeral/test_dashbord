@@ -14,10 +14,15 @@ Usage: down.sh [--purge]
 Stop and remove the java-learn-lab containers and network.
 Named volumes are preserved by default so the stack can be restarted for debugging.
 
+Both the on-demand "traffic" and "ha" (Redis Sentinel) compose profiles are included, so
+profile-gated containers such as jl-traffic and jl-redis-1..3 / jl-sentinel-1..3 never
+linger after the stack is down.
+
   --purge   Also remove the named volumes jl-mysql-data, jl-redis-data,
             jl-rabbitmq-data, jl-prometheus-data, jl-grafana-data and
             jl-tempo-data. This deletes all local lab data (databases,
-            metrics, dashboards state and traces).
+            metrics, dashboards state and traces). The Sentinel topology has no
+            named volumes (its /data is tmpfs), so --purge does not add any.
 EOF
 }
 
@@ -50,13 +55,22 @@ if [[ ! -f "$ENV_FILE" ]]; then
   fi
 fi
 
+COMPOSE_FILES=(-f "$DOCKER_DIR/compose.base.yml" -f "$DOCKER_DIR/compose.dev.yml")
+# The Sentinel topology lives in compose.ha.yml behind the "ha" profile. Include the
+# file plus its profile so `down` removes those containers too; if the file is absent
+# (an older checkout) the dev-only behaviour is unchanged.
+HA_PROFILES=()
+if [[ -f "$DOCKER_DIR/compose.ha.yml" ]]; then
+  COMPOSE_FILES+=(-f "$DOCKER_DIR/compose.ha.yml")
+  HA_PROFILES=(--profile ha)
+fi
+
 compose() {
   docker compose \
     --project-name java-learn-lab \
     --project-directory "$DOCKER_DIR" \
     --env-file "$ENV_FILE" \
-    -f "$DOCKER_DIR/compose.base.yml" \
-    -f "$DOCKER_DIR/compose.dev.yml" \
+    "${COMPOSE_FILES[@]}" \
     "$@"
 }
 
@@ -64,11 +78,11 @@ if $PURGE; then
   echo "WARNING: --purge removes the containers, the network AND the named volumes" >&2
   echo "         jl-mysql-data, jl-redis-data, jl-rabbitmq-data, jl-prometheus-data," >&2
   echo "         jl-grafana-data, jl-tempo-data (all local lab data)." >&2
-  compose --profile traffic down -v
+  compose "${HA_PROFILES[@]}" --profile traffic down -v
   echo "java-learn-lab stopped; containers, network and named volumes removed."
 else
   # The traffic profile is included so the created-but-stopped jl-traffic
   # container (Task 23 background traffic) never lingers after the stack is down.
-  compose --profile traffic down
+  compose "${HA_PROFILES[@]}" --profile traffic down
   echo "java-learn-lab stopped; named volumes preserved (use --purge to delete them)."
 fi
