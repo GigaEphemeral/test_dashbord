@@ -13,11 +13,13 @@ import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.RedisSentinelConfiguration;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       present-but-empty master name aborts every startup (dev and all ITs)
  *       with "Sentinel Master Id must not be null or empty" - that is why the
  *       keys are injected per profile instead of defaulted in the yaml.</li>
+ *   <li>REVIEW FIX M3-1b: the custom factory must not silently kill the Boot
+ *       Lettuce tuning keys it now owns — {@code spring.data.redis.timeout}
+ *       and {@code lettuce.shutdown-timeout} reach the active
+ *       {@code LettuceClientConfiguration} in both modes.</li>
  * </ol>
  */
 class RedisModeSwitchTest {
@@ -344,5 +350,49 @@ class RedisModeSwitchTest {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(LettuceConnectionFactory.class);
                 });
+    }
+
+    @Test
+    void bootLettuceTimeoutKeysReachTheClientConfiguration() {
+        // Review finding M3-1b: the custom factory replaces Boot's
+        // RedisLettuceConnectionConfiguration, so spring.data.redis.timeout and
+        // spring.data.redis.lettuce.shutdown-timeout would otherwise be
+        // set-but-silently-dead (工程规约 §1). They must reach the active
+        // LettuceClientConfiguration for BOTH modes.
+        Map<String, Object> env = Map.of(
+                "SPRING_DATA_REDIS_TIMEOUT", "3s",
+                "SPRING_DATA_REDIS_LETTUCE_SHUTDOWN_TIMEOUT", "500ms");
+        RedisProperties redis = bindRedisProperties(env);
+        assertThat(redis.getTimeout()).isEqualTo(Duration.ofSeconds(3));
+        assertThat(redis.getLettuce().getShutdownTimeout()).isEqualTo(Duration.ofMillis(500));
+
+        for (String mode : List.of(RedisAccessProperties.MODE_STANDALONE,
+                RedisAccessProperties.MODE_SENTINEL)) {
+            Map<String, Object> modeEnv = new HashMap<>(env);
+            modeEnv.put("REDIS_MODE", mode);
+            if (RedisAccessProperties.MODE_SENTINEL.equals(mode)) {
+                modeEnv.put("SPRING_DATA_REDIS_SENTINEL_MASTER", "mymaster");
+                modeEnv.put("SPRING_DATA_REDIS_SENTINEL_NODES", SENTINEL_NODES);
+            }
+            LettuceConnectionFactory factory = RedisClientConfig.buildConnectionFactory(
+                    bindRedisProperties(modeEnv), bindAccessProperties(modeEnv));
+            assertThat(factory.getClientConfiguration().getCommandTimeout())
+                    .as("command timeout in " + mode + " mode")
+                    .isEqualTo(Duration.ofSeconds(3));
+            assertThat(factory.getClientConfiguration().getShutdownTimeout())
+                    .as("shutdown timeout in " + mode + " mode")
+                    .isEqualTo(Duration.ofMillis(500));
+        }
+
+        // Unset keys keep the framework defaults - asserted AGAINST the builder
+        // default object, never a Java literal, so the comparison stays honest
+        // when Spring Data changes its own defaults.
+        LettuceClientConfiguration defaults = LettuceClientConfiguration.builder().build();
+        LettuceConnectionFactory untouched = RedisClientConfig.buildConnectionFactory(
+                bindRedisProperties(Map.of()), bindAccessProperties(Map.of()));
+        assertThat(untouched.getClientConfiguration().getCommandTimeout())
+                .isEqualTo(defaults.getCommandTimeout());
+        assertThat(untouched.getClientConfiguration().getShutdownTimeout())
+                .isEqualTo(defaults.getShutdownTimeout());
     }
 }

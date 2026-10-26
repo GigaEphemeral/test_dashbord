@@ -54,7 +54,7 @@
 
 # 存在缺陷项&TODO
 
-- **自定义工厂绕过了 Boot 的 Lettuce 客户端配置**（记录，未改写）：`new LettuceConnectionFactory(RedisConfiguration)` 型构造器不带 `LettuceClientConfiguration`，故 `spring.data.redis.timeout`、`spring.data.redis.lettuce.*`（池/shutdown timeout）将来若被设置会**静默失效**。当前 yaml 未声明这些键，行为与顶掉自动装配前一致；后续如需，应改为在构造器上补 builder。
+- **自定义工厂绕过 Boot 的 Lettuce 客户端调参（评审已修复一半）**：`new LettuceConnectionFactory(RedisConfiguration)` 型构造器不带 `LettuceClientConfiguration`，`spring.data.redis.timeout` / `connect-timeout` / `lettuce.shutdown-timeout` 曾会**静默失效**——违反工程规约 §1（禁死旋钮）且直接挡路 #49"显式设 Lettuce 超时出错误率毛刺"的场景。评审修复后这三个键**按设置生效**（未设置时仍走 Lettuce 默认，与本步演练实测逐字节一致，`RedisModeSwitchTest.bootLettuceTimeoutKeysReachTheClientConfiguration` 钉住两模式）；`spring.data.redis.lettuce.pool.*` 仍未接管（需 commons-pool2 在 classpath，超出本步）。见文末 Fix Report。
 - **Lettuce 哨兵工厂仍暴露残留 vestigial standalone 配置对象**（框架行为）："不回落写死地址"的断言因此打在激活侧（`isRedisSentinelAware()`/`getSentinelConfiguration()`），测试注释已说明。
 - **演练窗口内 2 次请求超时**（本步实测）：停主后 +2.2s/+5.9s 两个 L1-miss 请求在 3s curl 上限内未返回（HTTP 000），+9.5s 恢复 200。Lettuce 命令默认超时远大于请求预算，读路径在 failover 期表现为"个别请求挂起后成功/降级"，不是快失败。#49 若要出"错误率毛刺"曲线需显式设置 Lettuce timeout（见上条），或按当前实测口径讲"用户几乎无感"。
 - **L1 Caffeine 60s TTL（`TwoLevelCache` 常量，M1-3 遗留）会掩盖 L2 切换**：演练需轮换商品 id 或等 L1 过期才能观测 L2 行为；违反工程规约第 1 节的存量项，归 #49/M4-2 处理。
@@ -120,3 +120,12 @@ bash code/lab/scripts/smoke.sh    # 期望 7/7
 - 演练时间线（UTC，T0=17:15:57.25 停 `jl-redis-2`，读循环 20 商品 id 轮换、~0.6s/次）：`+2.25s` HTTP **000**（超时，id=10）、`+5.87s` **000**（id=11）、`+9.48s` 起全部 **200** 直至循环结束（停→恢复 **≈9.5s**，距首个失败 **7.2s**）；`17:16:03.640 +sdown`、`17:16:04.548 +promoted-slave 172.28.190.11`、`17:16:05.027 +switch-master mymaster 172.28.190.12 → 172.28.190.11`；应用免重启证据：三实例 `17:16:05.2x master 172.28.190.12 ... has been changed to 172.28.190.11`（Redisson）与 `17:16:08.8x Reconnected to 172.28.190.11:6379`（Lettuce），期间容器未重建（`Up 24 minutes (healthy)`）。复位：`docker start jl-redis-2` → 15s 后 `role=slave master_host=172.28.190.11 master_link_status=up`。
 - 还原后：三 app `Redis access mode: standalone`、env 无 `REDIS_MODE`/哨兵键、单网 `jl-net`；`verify.sh` 末尾 `VERIFY PASSED: 103 checks passed, 1 warning(s).`；`smoke.sh` `Smoke checks: 7 passed, 0 failed. / SMOKE PASSED.`。
 - compose 不变式：默认 `config --services` = 16、渲染中哨兵键计数 0；`--profile ha` = 25、三 app 各带 `REDIS_MODE: sentinel` 且 `jl-sentinel-net` 生效。
+
+## Fix Report（独立评审，2026-10-27）
+
+评审批次：`1aceafa` + `0cd6298` + `350a2ac`。基线复跑确认：`mvn -pl services/seckill-app-jdk21 -am test`（JDK 21）→ **Tests run: 215, Failures: 0, Errors: 0, Skipped: 0**（surefire 39 个类聚合，含 `ProductCacheIT`/`RedisOutageCacheIT`）。八条审核轴中 1/2/3/5/6/7/8 通过（第 6 轴：应用配置中无任何固定 IP；failover 后新主地址同为 `jl-sentinel-net` pinned IP，app 双网后对任一主都可达，机制健壮）。评审修复两项：
+
+1. **Important——自定义工厂吞掉 Boot 的 Lettuce 超时键**（上文缺陷项第 1 条，按工程规约"发现后同一任务内修复"处理）：`RedisClientConfig` 现经类型化双参构造器传入 `LettuceClientConfiguration`，`spring.data.redis.timeout` 与 `lettuce.shutdown-timeout` **设置即生效**（两模式、含 `#49` 需要的命令超时）；未设置时保持框架默认，与本步演练实测逐字节一致（新测试 `bootLettuceTimeoutKeysReachTheClientConfiguration` 对 builder 默认值断言，不写 Java 字面量）。`connect-timeout`（Boot 在共享 ClientResources/SocketOptions 层注入）与 `lettuce.pool.*`（需 commons-pool2）仍不接管，已在 javadoc 与本文缺陷项如实标注。
+2. **Minor——compose 嵌套插值静默产端口缺失**：实测 `${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT}...}` 在该键未设时渲染为 `sentinel-1:,sentinel-2:,sentinel-3:`（compose 对未定义变量代空串且**不报渲染错误**，靠 app 启动期 host:port 校验兜底）。内层补 `:-26379` 后三种 env 状态（两键全缺 / `REDIS_SENTINEL_NODES` 置空 / 完整 `.env.example`）渲染均为 `sentinel-1:26379,...`。
+
+复验输出（评审者在独立 worktree 实跑）：修复后 `mvn -pl services/seckill-app-jdk21 -am test` → **Tests run: 216, Failures: 0, Errors: 0, Skipped: 0, BUILD SUCCESS**；compose 不变式复跑：dev 渲染 **16** 服务 / 哨兵键 **0**、`--profile ha` **25** 服务、app 双网与 `REDIS_MODE: sentinel` 不变。评审无法在本机复核的存量声明：9.5s 演练时间线与 `Sentinel discovered master` 日志（app 容器已按交接还原为 standalone，旧日志随重建消失；但 `docker logs jl-app-1` 现值 `Redis access mode: standalone` 与单网 `jl-net` 与"已还原"声明一致）、`verify.sh` 103/1 与 `smoke.sh` 7/7（评审禁跑脚本）。

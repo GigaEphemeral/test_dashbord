@@ -153,8 +153,12 @@ x-app-redis-ha-env: &app-redis-ha-env
   SPRING_DATA_REDIS_SENTINEL_MASTER: ${REDIS_HA_MASTER_NAME:-mymaster}
   # Compose cannot interpolate .env into .env, so the default list is built from
   # REDIS_HA_SENTINEL_PORT here (nested substitution works, verified with
-  # `docker compose config`): change the Sentinel port once, not twice.
-  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT},sentinel-2:${REDIS_HA_SENTINEL_PORT},sentinel-3:${REDIS_HA_SENTINEL_PORT}}
+  # `docker compose config`): change the Sentinel port once, not twice. The
+  # inner :-26379 guard matters because compose substitutes an UNSET variable
+  # with the empty string WITHOUT failing the render (measured): without it a
+  # missing REDIS_HA_SENTINEL_PORT would silently produce portless entries
+  # `sentinel-1:` and only be caught later by the app's host:port validation.
+  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-3:${REDIS_HA_SENTINEL_PORT:-26379}}
   SPRING_DATA_REDIS_SENTINEL_PASSWORD: ${REDIS_HA_SENTINEL_PASSWORD:-}
   REDIS_PASSWORD: ${REDIS_HA_PASSWORD:-}
   REDIS_DATABASE: "${REDIS_DATABASE:-0}"

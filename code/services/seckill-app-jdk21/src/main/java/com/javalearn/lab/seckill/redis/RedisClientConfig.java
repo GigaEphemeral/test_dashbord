@@ -7,11 +7,11 @@ import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.RedisConfiguration;
 import org.springframework.data.redis.connection.RedisNode;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisSentinelConfiguration;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.util.StringUtils;
 
@@ -82,19 +82,56 @@ public class RedisClientConfig {
     /**
      * Pure builder, exposed for tests: binds the factory WITHOUT calling
      * afterPropertiesSet, so no network is touched at assertion time. The
-     * type-specific LettuceConnectionFactory constructors are used so the
-     * ACTIVE configuration (isRedisSentinelAware()/getSentinelConfiguration(),
-     * the one the connection provider is built from) always reflects the mode;
-     * note the factory still exposes a vestigial default standalone object in
-     * sentinel mode, which is why tests assert the active side, not that getter.
+     * TYPE-SPECIFIC two-argument LettuceConnectionFactory constructors are used
+     * (the parameter must not be widened to RedisConfiguration, or overload
+     * resolution silently lands on the generic constructor that leaves the
+     * typed getters on their localhost default) so the ACTIVE configuration
+     * (isRedisSentinelAware()/getSentinelConfiguration(), the one the
+     * connection provider is built from) always reflects the mode AND the
+     * spring.data.redis client timeouts; note the factory still exposes a
+     * vestigial default standalone object in sentinel mode, which is why tests
+     * assert the active side, not that getter.
      */
     static LettuceConnectionFactory buildConnectionFactory(RedisProperties redisProperties,
                                                            RedisAccessProperties access) {
         if (access.isSentinel()) {
             return new LettuceConnectionFactory(
-                    sentinelConfiguration(redisProperties, access));
+                    sentinelConfiguration(redisProperties, access),
+                    clientConfiguration(redisProperties));
         }
-        return new LettuceConnectionFactory(standaloneConfiguration(redisProperties));
+        return new LettuceConnectionFactory(
+                standaloneConfiguration(redisProperties),
+                clientConfiguration(redisProperties));
+    }
+
+    /**
+     * Review finding M3-1b: declaring our own factory backs off Boot's
+     * RedisLettuceConnectionConfiguration, which would otherwise translate
+     * {@code spring.data.redis.timeout} and {@code lettuce.shutdown-timeout}
+     * into Lettuce client options. Without this the keys become
+     * set-but-silently-dead (工程规约 §1 forbids dead tuning knobs, and the
+     * M3-1c drill explicitly needs the command timeout to turn failover hangs
+     * into fast-fail errors). Each value is applied ONLY when configured, so
+     * the unset behaviour keeps Lettuce's/SDR's own defaults — byte-for-byte
+     * what the M3-1b sentinel drill measured. Still NOT honoured by this
+     * factory (framework limitation at this scope, tested behaviour unchanged):
+     * {@code spring.data.redis.connect-timeout} (Boot injects it into a shared
+     * ClientResources/SocketOptions we deliberately do not re-create here) and
+     * {@code spring.data.redis.lettuce.pool.*} (needs commons-pool2 wiring).
+     */
+    private static LettuceClientConfiguration clientConfiguration(RedisProperties redisProperties) {
+        LettuceClientConfiguration.LettuceClientConfigurationBuilder builder =
+                LettuceClientConfiguration.builder();
+        if (redisProperties.getTimeout() != null) {
+            builder.commandTimeout(redisProperties.getTimeout());
+        }
+        RedisProperties.Lettuce lettuce = redisProperties.getLettuce();
+        if (lettuce != null && lettuce.getShutdownTimeout() != null
+                && !lettuce.getShutdownTimeout().isZero()) {
+            // Same rule Boot itself applies (RedisLettuceConnectionConfiguration).
+            builder.shutdownTimeout(lettuce.getShutdownTimeout());
+        }
+        return builder.build();
     }
 
     private static RedisStandaloneConfiguration standaloneConfiguration(
