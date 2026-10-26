@@ -4,6 +4,8 @@
 #   bash code/lab/k6/run.sh smoke
 #   LOAD_DURATION=2m bash code/lab/k6/run.sh load
 #   K6_NETWORK=host BASE_URL=http://127.0.0.1:8080 bash code/lab/k6/run.sh smoke
+#   LAB_TOKEN=... CHAOS_SCENARIO_FILE=quick-failover.json \
+#     CHAOS_DURATION=30s bash code/lab/k6/run.sh ha-failover
 #
 # The pinned image (grafana/k6:1.3.0, sha256:3ddc8b1a33a2c3d8edc6e99b6a762ae36cba08788463458f5e6a7703e14eb77d)
 # is resolved on the jl-net network by default, so BASE_URL=http://nginx.
@@ -23,6 +25,12 @@ PROM_URL="${PROM_URL:-http://127.0.0.1:8080/prom}"
 K6_REPORT_DIR="${K6_REPORT_DIR:-}"
 K6_SUMMARY_EXPORT="${K6_SUMMARY_EXPORT:-}"
 K6_REPORT_MOUNT="${K6_REPORT_MOUNT:-/reports}"
+# Shared chaos scenario JSON (Task 22a). It is mounted read-only at a root-level
+# container path: /scripts is mounted read-only, so Docker cannot create a
+# nested mount point inside it, and /scripts/scenarios must stay the k6
+# JavaScript directory.
+K6_SCENARIOS_DIR="${K6_SCENARIOS_DIR:-$SCRIPT_DIR/../scenarios}"
+K6_SCENARIOS_MOUNT="${K6_SCENARIOS_MOUNT:-/chaos-scenarios}"
 
 if [[ $# -gt 0 && "$1" != -* ]]; then
   SCENARIO="$1"
@@ -30,9 +38,9 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$SCENARIO" in
-  smoke|load|stress|spike|soak) ;;
+  smoke|load|stress|spike|soak|ha-failover) ;;
   *)
-    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak).\n' "$SCENARIO" >&2
+    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|ha-failover).\n' "$SCENARIO" >&2
     exit 2
     ;;
 esac
@@ -84,6 +92,16 @@ host_mount_path() {
 
 K6_MOUNT_DIR="$(host_mount_path "$K6_DIR")"
 
+if [[ ! -d "$K6_SCENARIOS_DIR" ]]; then
+  printf 'ERROR: chaos scenarios directory not found: %s\n' "$K6_SCENARIOS_DIR" >&2
+  exit 2
+fi
+K6_SCENARIOS_DIR="$(cd "$K6_SCENARIOS_DIR" && pwd)"
+K6_SCENARIOS_MOUNT_DIR="$(host_mount_path "$K6_SCENARIOS_DIR")"
+# Inside the container the scenario JSON lives at the mount point unless the
+# caller pins another directory (e.g. a host k6 binary run).
+CHAOS_SCENARIO_DIR="${CHAOS_SCENARIO_DIR:-$K6_SCENARIOS_MOUNT}"
+
 if [[ -n "$K6_SUMMARY_EXPORT" && -z "$K6_REPORT_DIR" ]]; then
   printf 'ERROR: K6_SUMMARY_EXPORT requires K6_REPORT_DIR (the host directory mounted at %s).\n' \
     "$K6_REPORT_MOUNT" >&2
@@ -114,6 +132,9 @@ CONFIG_VARS=(
   SECKILL_POLL_ATTEMPTS SECKILL_POLL_INTERVAL
   SUMMARY_TREND_STATS SUMMARY_TIME_UNIT
   GRACEFUL_STOP GRACEFUL_RAMP_DOWN
+  CHAOS_CONTROLLER_URL LAB_TOKEN
+  CHAOS_SCENARIO_FILE CHAOS_SCENARIO_DIR CHAOS_START_OFFSET CHAOS_HTTP_TIMEOUT CHAOS_TEARDOWN_TIMEOUT
+  CHAOS_MAX_TTL CHAOS_TARGET_PATTERN CHAOS_DURATION CHAOS_VUS DURATION
   K6_PROMETHEUS_RW_SERVER_URL K6_PROMETHEUS_RW_TREND_STATS K6_PROMETHEUS_RW_PUSH_INTERVAL
 )
 
@@ -135,6 +156,7 @@ docker_args=(
   run --rm
   --network "$K6_NETWORK"
   -v "$K6_MOUNT_DIR:/scripts:ro"
+  -v "$K6_SCENARIOS_MOUNT_DIR:$K6_SCENARIOS_MOUNT:ro"
   -w /scripts
 )
 if [[ -n "$K6_REPORT_DIR" ]]; then
@@ -172,6 +194,13 @@ printf 'base_url    : %s\n' "$BASE_URL"
 printf 'network     : %s\n' "$K6_NETWORK"
 printf 'image       : %s\n' "$K6_IMAGE"
 printf 'remote write: %s\n' "$K6_PROMETHEUS_RW_SERVER_URL"
+printf 'scenarios   : %s -> %s\n' "$K6_SCENARIOS_DIR" "$K6_SCENARIOS_MOUNT"
+if [[ "$SCENARIO" == "ha-failover" ]]; then
+  printf 'chaos ctl   : %s\n' "${CHAOS_CONTROLLER_URL:-http://chaos-controller:8081}"
+  printf 'chaos file  : %s (dir %s)\n' \
+    "${CHAOS_SCENARIO_FILE:-ha-app-failover.json}" "$CHAOS_SCENARIO_DIR"
+  printf 'chaos offset: %s\n' "${CHAOS_START_OFFSET:-0s}"
+fi
 if [[ -n "$K6_SUMMARY_EXPORT" ]]; then
   printf 'summary     : %s (host dir %s)\n' "$K6_SUMMARY_EXPORT" "$K6_REPORT_DIR"
 fi

@@ -1,10 +1,11 @@
-# k6 base scenarios (M2-1) and bench runner (M2-2a)
+# k6 base scenarios (M2-1), bench runner (M2-2a) and chaos timeline (M2-4a)
 
 This directory is the load-testing foundation for the HA lab: one shared
 config/HTTP/flow library, five base scenarios, a dockerized single-scenario
 runner and Prometheus remote write. Task 20a adds the lab reset, the
-`bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Compare/D9
-remains Task 20b; chaos timelines remain Task 22.
+`bench.sh` orchestrator and per-run archives (`reports/<run_id>/`). Task 22a
+adds the data-driven chaos timeline (`ha-failover.js` + `lib/chaos*.js`) that
+replays `code/lab/scenarios/*.json` against the chaos-controller.
 
 ## Layout
 
@@ -14,10 +15,17 @@ code/lab/
 │   ├── lib/config.js          # env defaults, derived stages, thresholds, run_id
 │   ├── lib/http.js            # HTTP wrapper, expected statuses, custom metrics
 │   ├── lib/flow.js            # login, product, order(+replay), seckill(+poll)
+│   ├── lib/chaos-schema.js    # pure scenario schema v1 validation (Node-runnable)
+│   ├── lib/chaos.js           # controller client, chaos_events counter, loader
 │   ├── scenarios/{smoke,load,stress,spike,soak}.js
+│   ├── scenarios/ha-failover.js  # product load + chaos timeline + teardown
 │   ├── run.sh                 # dockerized scenario runner (+ summary export)
 │   ├── reports/<run_id>/      # generated archives (gitignored)
 │   └── README.md
+├── scenarios/                 # shared chaos timeline JSON (schema v1)
+│   ├── README.md
+│   ├── ha-app-failover.json
+│   └── quick-failover.json
 └── scripts/
     ├── reset-lab.sh           # deterministic lab data reset
     ├── bench.sh               # preflight -> reset -> k6 -> verdict -> archive
@@ -56,6 +64,85 @@ bash code/lab/k6/run.sh smoke
 The runner prints the generated `run_id`, the target, the remote-write URL,
 a PromQL query and a Prometheus graph URL, then prints k6's normal summary.
 The shell exit code is k6's exit code.
+
+## Chaos timeline (M2-4a)
+
+`scenarios/ha-failover.js` runs two k6 scenarios in parallel:
+
+- `load` — constant VUs reading `GET /api/products/{PRODUCT_ID}` for
+  `CHAOS_DURATION` (default `4m`, `CHAOS_VUS=20`).
+- `chaos` — 1 VU, 1 iteration, `exec: 'chaosTimeline'`, starting at
+  `CHAOS_START_OFFSET` (default `0s`). It loads `CHAOS_SCENARIO_FILE`
+  (default `ha-app-failover.json`) from `/chaos-scenarios`, validates it, then
+  sleeps until each `atSeconds` offset and calls
+  `POST /chaos/instances/{target}/actions` with `X-Lab-Token`.
+
+Every applied action increments `chaos_events{action,target,result}` with
+`result=accepted`; the first failed call increments `result=failed`, logs the
+error and stops the remaining timeline events. k6's `teardown` always posts
+`/chaos/stop-all` (best effort) and logs `reverted=` / `failed=`, so an
+aborted timeline never leaves a container stopped or frozen beyond its TTL.
+
+```bash
+# Production demo (dangerous: stops app-1 and freezes app-2) — 4 min
+TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
+LAB_TOKEN="$TOKEN" bash code/lab/k6/run.sh ha-failover
+
+# Short live check: jl-app-3 only, kill at 5s, TTL 15s, 30s load
+LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
+  CHAOS_DURATION=30s CHAOS_VUS=6 \
+  bash code/lab/k6/run.sh ha-failover
+```
+
+`run.sh` mounts `code/lab/scenarios` read-only at `/chaos-scenarios` (not under
+`/scripts`: that mount is already read-only and holds the k6 JS scenarios) and
+forwards `LAB_TOKEN` plus the `CHAOS_*` variables. The token is passed as an
+environment variable only; it is never printed, tagged or written to an
+archive.
+
+Expected actions for the bundled files:
+
+| File | Events | Notes |
+|---|---|---|
+| `ha-app-failover.json` | 60s kill app-1 (TTL 60), 120s freeze app-2 (TTL 30), 150s resume app-2 | 240s hint; Nginx serves from the remaining instances |
+| `quick-failover.json` | 5s kill app-3 (TTL 15) | acceptance only; never targets datastores |
+
+Safety rules: only containers labelled `lab=java-learn` are reachable; the
+schema pattern default `^jl-app-[0-9]+$` plus an explicit datastore denylist
+keeps MySQL/Redis/RabbitMQ out of timelines. `kill` is a Docker stop, never a
+volume removal.
+
+Schema, field semantics and validation rules:
+`code/lab/scenarios/README.md`.
+
+### Chaos environment variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LAB_TOKEN` | unset (required for `ha-failover`) | `X-Lab-Token` value; source it from the lab `.env`, never commit it. |
+| `CHAOS_CONTROLLER_URL` | `http://chaos-controller:8081` | Controller base URL on `jl-net` (host runs: `http://127.0.0.1:8080/lab-api`). |
+| `CHAOS_SCENARIO_FILE` | `ha-app-failover.json` | Bare name under `CHAOS_SCENARIO_DIR`, or an absolute path. |
+| `CHAOS_SCENARIO_DIR` | `/chaos-scenarios` | Container mount point of `code/lab/scenarios` (set by `run.sh`). |
+| `CHAOS_START_OFFSET` | `0s` | Delay before the timeline VU starts (k6 `startTime`). |
+| `CHAOS_HTTP_TIMEOUT` | `5s` | Per-action HTTP timeout. |
+| `CHAOS_TEARDOWN_TIMEOUT` | `10s` | Timeout for the `stop-all` teardown call. |
+| `CHAOS_MAX_TTL` | `600` | Schema ceiling for `ttlSeconds` (matches `chaos.max-ttl-seconds`). |
+| `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; datastores are rejected even if widened. |
+| `CHAOS_DURATION` | `4m` (`DURATION` is accepted as an alias) | Product-load duration. |
+| `CHAOS_VUS` | `20` | Constant load VUs. |
+| `K6_SCENARIOS_DIR` | `code/lab/scenarios` | Host directory mounted at `K6_SCENARIOS_MOUNT`. |
+| `K6_SCENARIOS_MOUNT` | `/chaos-scenarios` | Container path for the scenario JSON. |
+
+Read `chaos_events` in the k6 summary or in Prometheus:
+
+```promql
+sum by (action, target, result) (increase(k6_chaos_events_total{run_id="..."}[5m]))
+```
+
+The controller also exposes `chaos_actions_total{action,target,result}` and
+`chaos_active_actions`; Grafana gets one annotation per action (Task 21).
+`http_req_duration{flow:chaos}` covers controller latency and does not affect
+the product thresholds.
 
 ## Bench runner and lab reset (M2-2a)
 
@@ -134,6 +221,7 @@ never passed on a command line, written to an archive or committed.
 | `stress.js` | staged 50 → 500 VU (`STRESS_STAGES`) | product reads only | no threshold; inspect the knee (errors/latency per stage) |
 | `spike.js` | 50 baseline → 800 VU for 60s, then down | seckill product `SECKILL_PRODUCT_ID` | 5xx/error < 1%; 409/429 are expected and counted |
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
+| `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
 
 Smoke uses `per-vu-iterations` with `SMOKE_ITERATIONS=1` so one run creates
 exactly one order and one seckill attempt. It does not loop for the full 30s;
@@ -259,6 +347,10 @@ SPIKE_BASELINE_DURATION=5s SPIKE_RAMP_UP=5s SPIKE_DURATION=20s SPIKE_RAMP_DOWN=5
 
 # Soak: short acceptance variant
 SOAK_DURATION=2m SOAK_VUS=100 bash code/lab/k6/run.sh soak
+
+# Chaos timeline: short live check on jl-app-3 only
+LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
+  CHAOS_DURATION=30s CHAOS_VUS=6 bash code/lab/k6/run.sh ha-failover
 ```
 
 Extra arguments before the script are passed to `k6 run`, for example
@@ -426,5 +518,6 @@ The acceptance run used three ids (smoke, load, spike); see
 - Existing HTTP smoke: `code/lab/scripts/smoke.sh`
 - Task 19 handover: `doc/process/step-19-k6-base.md`
 - Task 20a handover (reset/bench/archive): `doc/process/step-20a-bench-reset.md`
-- Task 20b will add bench compare and D9; this directory intentionally has no
-  compare output yet.
+- Task 21 handover (chaos actions/TTL): `doc/process/step-21-chaos-actions.md`
+- Task 22a handover (scenario JSON + timeline): `doc/process/step-22a-scenario-timeline.md`
+- Scenario schema: `code/lab/scenarios/README.md`

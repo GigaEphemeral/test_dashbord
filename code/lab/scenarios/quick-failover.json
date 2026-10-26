@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "quick-failover",
+  "name": "快速实例故障转移（验收）",
+  "description": "Short live check: stop jl-app-3 once, with a 15s TTL, while product reads run through Nginx. Only the sandbox instance is touched; no datastore targets.",
+  "durationHintSeconds": 30,
+  "events": [
+    {
+      "atSeconds": 5,
+      "action": "kill",
+      "target": "jl-app-3",
+      "ttlSeconds": 15,
+      "title": "停止 app-3",
+      "text": "jl-app-3 停止 15s，由 app-1 / app-2 继续服务；TTL 到点自动 start。"
+    }
+  ]
+}

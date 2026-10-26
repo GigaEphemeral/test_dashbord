@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "ha-app-failover",
+  "name": "负载均衡与实例故障转移",
+  "description": "Two-step application-tier drill: stop jl-app-1 for 60s, then freeze jl-app-2 for 30s and resume it explicitly at 150s. Product reads keep flowing through Nginx on the remaining instances.",
+  "durationHintSeconds": 240,
+  "events": [
+    {
+      "atSeconds": 60,
+      "action": "kill",
+      "target": "jl-app-1",
+      "ttlSeconds": 60,
+      "title": "停止 app-1",
+      "text": "jl-app-1 停止 60s，Nginx 将流量切到 app-2 / app-3；TTL 到点自动 start。"
+    },
+    {
+      "atSeconds": 120,
+      "action": "freeze",
+      "target": "jl-app-2",
+      "ttlSeconds": 30,
+      "title": "冻结 app-2",
+      "text": "jl-app-2 被 SIGSTOP 冻结 30s，读写请求由 app-1 / app-3 承担；TTL 是恢复保底。"
+    },
+    {
+      "atSeconds": 150,
+      "action": "resume",
+      "target": "jl-app-2",
+      "title": "恢复 app-2",
+      "text": "对 jl-app-2 发送 SIGCONT；即使 TTL 已先触发，resume 仍然幂等。"
+    }
+  ]
+}
