@@ -3,6 +3,8 @@ package com.javalearn.lab.chaos;
 import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionView;
+import com.javalearn.lab.chaos.action.NetworkFaultCleaner;
+import com.javalearn.lab.chaos.action.NetworkResetReport;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.annotation.ChaosAnnotator;
 import com.javalearn.lab.chaos.config.ChaosProperties;
@@ -52,6 +54,7 @@ class ChaosActionServiceTest {
     private ScheduledExecutorService scheduler;
     private FakeGateway gateway;
     private RecordingAnnotator annotator;
+    private RecordingNetworkCleaner networkCleaner;
     private SimpleMeterRegistry registry;
     private ChaosProperties properties;
     private ChaosActionService service;
@@ -61,6 +64,7 @@ class ChaosActionServiceTest {
         scheduler = Executors.newScheduledThreadPool(4);
         gateway = new FakeGateway();
         annotator = new RecordingAnnotator();
+        networkCleaner = new RecordingNetworkCleaner();
         registry = new SimpleMeterRegistry();
         properties = new ChaosProperties();
         properties.setDefaultTtlSeconds(1);
@@ -78,7 +82,8 @@ class ChaosActionServiceTest {
     }
 
     private ChaosActionService newService() {
-        return new ChaosActionService(gateway, annotator, properties, registry, scheduler);
+        return new ChaosActionService(gateway, annotator, properties, registry, scheduler,
+                Clock.systemUTC(), networkCleaner);
     }
 
     @Test
@@ -126,6 +131,33 @@ class ChaosActionServiceTest {
         assertThat(result.reverted()).isEqualTo(1);
         assertThat(result.failed()).isZero();
         assertThat(registry.get("chaos.active.actions").gauge().value()).isZero();
+    }
+
+    @Test
+    void stopAllAlsoResetsNetworkFaults() {
+        networkCleaner.report = new NetworkResetReport(NetworkResetReport.STATUS_RESET, 2, 2, List.of());
+        service.execute(APP, new ChaosActionRequest("kill", 5));
+
+        StopAllResult result = service.stopAll();
+
+        assertThat(networkCleaner.calls).isEqualTo(1);
+        assertThat(result.reverted()).isEqualTo(1);
+        assertThat(result.toxiproxy().status()).isEqualTo(NetworkResetReport.STATUS_RESET);
+        assertThat(result.toxiproxy().proxiesReset()).isEqualTo(2);
+        assertThat(result.toxiproxy().errors()).isEmpty();
+    }
+
+    @Test
+    void stopAllReportsNetworkCleanupFailureWithoutLosingContainerReverts() {
+        networkCleaner.failure = new IllegalStateException("toxiproxy control plane down");
+        service.execute(APP, new ChaosActionRequest("kill", 5));
+
+        StopAllResult result = service.stopAll();
+
+        assertThat(result.reverted()).isEqualTo(1);
+        assertThat(result.toxiproxy().status()).isEqualTo(NetworkResetReport.STATUS_FAILED);
+        assertThat(result.toxiproxy().errors())
+                .anyMatch(error -> error.contains("toxiproxy control plane down"));
     }
 
     @Test
@@ -801,6 +833,22 @@ class ChaosActionServiceTest {
             if (failing.get()) {
                 throw new IllegalStateException("grafana down");
             }
+        }
+    }
+
+    static final class RecordingNetworkCleaner implements NetworkFaultCleaner {
+
+        int calls;
+        NetworkResetReport report = NetworkResetReport.notConfigured();
+        RuntimeException failure;
+
+        @Override
+        public NetworkResetReport resetAll() {
+            calls++;
+            if (failure != null) {
+                throw failure;
+            }
+            return report;
         }
     }
 
