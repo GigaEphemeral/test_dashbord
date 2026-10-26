@@ -110,3 +110,12 @@ curl -i localhost:18081/actuator/health localhost:18081/api/products/1 localhost
 - 商品体（JRE 8 实测，UTF-8 中文与两位小数刻度完好）：`{"code":"0","message":"OK","data":{"id":1,"name":"极客机械键盘","price":299.00,"status":"ON_SALE","description":"87 键热插拔轴体，PBT 键帽"},"success":true}`。
 - 标签（JRE 8 实测）：`jvm_memory_used_bytes{app="seckill-app-jdk8",area="nonheap",env="dev",id="Code Cache",instance="app-jdk8-local",jvm_version="1.8.0_503",}`；`# TYPE jvm_*` 清单为 buffer/classes/gc/memory/threads 五族，**无 `jvm_info`**。
 - 收尾：两次分别 `taskkill` 其 java 进程（PID 39204 / 44316），复核 18081/18082 **无 LISTENING**；`git status --short` 为空（`target/` 未被跟踪、日志只写 `/tmp`、未碰 `.env`）。
+
+## Fix Report（独立评审 · 2026-10-27，worktree agent-Qwen-3.8-5934bd7a）
+
+评审结论：规范符合性成立（标签契约、JSON 契约、种子逐行一致、无 Java 9+ 惯用法、无 Boot 3/jakarta 泄漏、H2 console 未开、actuator 暴露面小于 jdk21 侧）。修了三项、留档两项：
+
+- `fix:` HelloController 注释：Prometheus 默认 honor_labels=false 会用抓取目标覆盖应用 `instance` 标签，"区分两壳的标签是 app 而非 instance"。
+- `test:` ActuatorEndpointsTest 把抓取契约从 2 标签扩到完整 4 标签（app/env/instance/jvm_version 含默认值），与 platform-observability 的 ObservabilityIntegrationTest 钉的集合一一对应。
+- `docs:` 更正本档两处失真陈述：① 现存 D1/D2/D4 面板不按 `app` 过滤、按 `instance=~"$instance"`，`$instance` 来自 `up{job=~"seckill-app.*"}`，故 jdk8 新 job 名必须匹配该正则；② "k6 换壳只需 BASE_URL"对 load/stress/soak/traffic/ha-failover 不成立（ensureLogin 打的 `/api/login` 本壳没有），已列三个处置选项并归 D7 接线任务。
+- 复核证据：`JAVA_HOME=jdk-21.0.12.1` 下 `mvn -pl services/seckill-app-jdk8 -am test` BUILD SUCCESS，模块 Tests run: 11/0/0/0（改前基线同为 11 绿）；JRE 8 重跑最终 jar（SERVER_PORT=18092 APP_PROFILE=demo，PID 25976，已 taskkill、18092 无监听）：health/health-app/health-readiness/products/1/products/20/hello/info/prometheus 全 200、products/9999 404（体 `40401`），抓取含 `app="seckill-app-jdk8",env="dev",instance="app-jdk8-local",jvm_version="1.8.0_503"`、`http_server_requests_seconds_bucket` 198 条、无 `jvm_info`；jar 与实现者构建字节同尺寸（44,030,523 B）。
