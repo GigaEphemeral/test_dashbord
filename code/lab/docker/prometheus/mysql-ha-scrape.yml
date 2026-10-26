@@ -1,0 +1,37 @@
+# DB-HA scrape targets for the MySQL InnoDB Cluster (step 25a).
+#
+# INERT BY DESIGN: this file is not read by Prometheus until the main session wires
+# it, because prometheus.yml must not change in this step (no-file-edit rule).
+# Wiring is two lines in code/lab/docker/prometheus/prometheus.yml, which supports
+# it natively since Prometheus 2.44 / all of 3.x (this lab pins prom/prometheus
+# v3.0.0):
+#
+#   scrape_config_files:
+#     - prometheus/mysql-ha-scrape.yml
+#
+# A file referenced by scrape_config_files holds a bare LIST of scrape_config
+# entries - do not wrap this in `scrape_configs:` (that form is only valid inside
+# the main prometheus.yml).
+#
+# Why one job with three labelled targets instead of three jobs: the D11 panels
+# group by `member`, and a single job keeps the metric family identical across the
+# primary and the secondaries, so `mysql_cluster_member_state` and the per-node
+# replication lag series line up on one axis.
+#
+# COUPLING NOTE: the exporter port is a literal because Prometheus has no variable
+# interpolation. It must equal MYSQL_HA_EXPORTER_PORT (default 9104) from
+# .env.mysql.example; if that key is ever changed, change it here too. Same for the
+# container names, which are jl-<service> with service = mysql-<n>-exporter as
+# declared in compose.mysql.yml, reached by compose DNS name (no jl- prefix inside
+# jl-net).
+- job_name: mysqld-exporter-ha
+  static_configs:
+    - targets: ["mysql-1-exporter:9104"]
+      labels:
+        member: mysql-1
+    - targets: ["mysql-2-exporter:9104"]
+      labels:
+        member: mysql-2
+    - targets: ["mysql-3-exporter:9104"]
+      labels:
+        member: mysql-3

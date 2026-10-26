@@ -1,0 +1,388 @@
+# DB-HA overlay: MySQL InnoDB Cluster - 3 Group Replication nodes (single primary),
+# MySQL Router (6446 read/write, 6447 read-only), one mysqld-exporter per node and
+# two one-shot initialisation jobs. New services only: nothing in compose.base.yml
+# is overridden, so the always-on single-node `mysql` (and the whole dev tier) is
+# untouched.
+#
+# Design refs: doc/design/2026-10-26-ha-concurrency-lab-design.md §8.3 (InnoDB
+# Cluster), §3.1 (budget ~1.8GB), §3.3 (profiles), §8.6 (Router is an accepted
+# single point), doc/design/数据库高可用方案对比.md §2 (方案 A, adopted).
+#
+# Why `docker compose config --services` still reports the same always-on count:
+# every service here declares profiles, exactly like the `traffic` service in
+# compose.base.yml and the Redis Sentinel tier in compose.ha.yml. Profile-gated
+# services are omitted from the rendered model unless a profile is selected, so
+# verify.sh / bench.sh / reset-lab.sh / up.sh keep their existing service counts.
+#
+# Two profiles are declared per service:
+#   "db-ha"  this tier alone (scripts/db-ha-up.sh) - what to use on a machine that
+#            already runs the 16-container dev stack, since the cluster costs
+#            ~2GB and the design's total budget only fits with the app tier idle.
+#   "ha"     the umbrella profile of design §3.3, so `up.sh --profile ha` picks up
+#            Redis Sentinel (compose.ha.yml) *and* this tier in one command.
+# A service is active when ANY of its profiles is selected, so both work.
+#
+# No host port is published for the MySQL nodes (Group Replication traffic stays on
+# jl-net). Only the Router is published, loopback-only, matching the dev tier's
+# "datastores on 127.0.0.1 only" policy.
+#
+# Everything operational is an env placeholder with a default: ports, memory
+# limits, Group Replication ports/timeouts, retry counts, account names, paths and
+# the image tags (工程规约 §1). Defaults are documented in .env.mysql.example.
+
+# --- shared node definition -------------------------------------------------
+# The GR settings live in mysql-cluster/conf/node.cnf.tpl and are rendered per
+# node at container start (mysql-cluster/node-entrypoint.sh), then handed to mysqld
+# through --defaults-extra-file. Reasons: (a) ~25 settings would otherwise be
+# duplicated in three `command:` blocks, (b) MySQL requires --defaults-extra-file
+# to be the first argument, so it can be placed exactly once here, (c) the file
+# path is an env placeholder, so an image whose option files live elsewhere
+# (Debian flavour uses /etc/mysql/conf.d) needs no edit - and the rendered file is
+# written into a directory created at runtime, so no image path is assumed.
+x-mysql-ha-node: &mysql-ha-node
+  image: ${MYSQL_IMAGE:-mysql:8.4.4}
+  restart: unless-stopped
+  profiles: ["db-ha", "ha"]
+  mem_limit: ${MYSQL_HA_NODE_MEM_LIMIT:-640m}
+  entrypoint:
+    - ${MYSQL_HA_SHELL_BIN:-bash}
+    - ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}/node-entrypoint.sh
+  command:
+    - mysqld
+    - --defaults-extra-file=${MYSQL_HA_NODE_CONF_FILE:-/var/lib/mysql-lab/node.cnf}
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "mysql"
+  environment: &mysql-ha-node-env
+    TZ: ${TZ:-UTC}
+    MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    MYSQL_DATABASE: ${MYSQL_DATABASE}
+    MYSQL_USER: ${MYSQL_USER}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    # The image only creates root@'localhost'; the init job and the exporters reach
+    # the nodes across jl-net, i.e. from a container IP, so docker-library's
+    # MYSQL_ROOT_HOST is used to also create root@'<pattern>'. Lab-only: no host
+    # port is published for these nodes, so this account is reachable inside the
+    # Docker network and nowhere else.
+    MYSQL_ROOT_HOST: ${MYSQL_HA_ROOT_HOST:-%}
+    # --- inputs of node-entrypoint.sh / conf/node.cnf.tpl ---
+    MYSQL_HA_ASSET_DIR: ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}
+    MYSQL_HA_NODE_TEMPLATE: ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}/conf/node.cnf.tpl
+    MYSQL_HA_NODE_CONF_FILE: ${MYSQL_HA_NODE_CONF_FILE:-/var/lib/mysql-lab/node.cnf}
+    MYSQL_HA_CLUSTER_GROUP_NAME: ${MYSQL_HA_CLUSTER_GROUP_NAME}
+    MYSQL_HA_NODE_PORT: "${MYSQL_HA_NODE_PORT:-3306}"
+    MYSQL_HA_GR_LOCAL_PORT: "${MYSQL_HA_GR_LOCAL_PORT:-33061}"
+    MYSQL_HA_MYSQL_1_HOST: ${MYSQL_HA_MYSQL_1_HOST:-mysql-1}
+    MYSQL_HA_MYSQL_2_HOST: ${MYSQL_HA_MYSQL_2_HOST:-mysql-2}
+    MYSQL_HA_MYSQL_3_HOST: ${MYSQL_HA_MYSQL_3_HOST:-mysql-3}
+    # Empty means "compose the seeds from the three host keys" inside the renderer;
+    # set it to pin an explicit seed list for a demo.
+    MYSQL_HA_GROUP_SEEDS: "${MYSQL_HA_GROUP_SEEDS:-}"
+    MYSQL_HA_GR_IP_ALLOWLIST: ${MYSQL_HA_GR_IP_ALLOWLIST:-0.0.0.0/0}
+    MYSQL_HA_EXIT_STATE_ACTION: ${MYSQL_HA_EXIT_STATE_ACTION:-READ_ONLY}
+    MYSQL_HA_AUTO_REJOIN_TRIES: "${MYSQL_HA_AUTO_REJOIN_TRIES:-3}"
+    MYSQL_HA_EXPEL_TIMEOUT_SECONDS: "${MYSQL_HA_EXPEL_TIMEOUT_SECONDS:-5}"
+    MYSQL_HA_REPLICA_PARALLEL_WORKERS: "${MYSQL_HA_REPLICA_PARALLEL_WORKERS:-4}"
+    MYSQL_HA_PERFORMANCE_SCHEMA: ${MYSQL_HA_PERFORMANCE_SCHEMA:-ON}
+    MYSQL_HA_INNODB_BUFFER_POOL_SIZE: ${MYSQL_HA_INNODB_BUFFER_POOL_SIZE:-128M}
+    MYSQL_HA_MAX_CONNECTIONS: "${MYSQL_HA_MAX_CONNECTIONS:-200}"
+  volumes:
+    - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+  expose:
+    - "${MYSQL_HA_NODE_PORT:-3306}"
+    - "${MYSQL_HA_GR_LOCAL_PORT:-33061}"
+  healthcheck:
+    # Liveness of mysqld only - deliberately NOT "is this node ONLINE in the group",
+    # because the nodes must be healthy before the group exists or the init job's
+    # depends_on would deadlock. Cluster health is asserted by the init job and by
+    # scripts/db-cluster-status.sh.
+    test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+    interval: ${MYSQL_HA_HEALTHCHECK_INTERVAL_SECONDS:-5}s
+    timeout: ${MYSQL_HA_HEALTHCHECK_TIMEOUT_SECONDS:-5}s
+    retries: ${MYSQL_HA_HEALTHCHECK_RETRIES:-30}
+    start_period: ${MYSQL_HA_HEALTHCHECK_START_PERIOD_SECONDS:-60}s
+
+x-mysql-ha-exporter: &mysql-ha-exporter
+  # Reuses the exporter image already pinned in .env.example, so this profile adds
+  # no new tag to pull - the registry mirror on this machine cannot always pull
+  # fresh tags.
+  image: ${MYSQLD_EXPORTER_IMAGE:-prom/mysqld-exporter:v0.16.0}
+  restart: unless-stopped
+  profiles: ["db-ha", "ha"]
+  mem_limit: ${MYSQL_HA_EXPORTER_MEM_LIMIT:-48m}
+  # v0.15+ removed DATA_SOURCE_NAME: flags for the address/user, password via env.
+  environment:
+    TZ: ${TZ:-UTC}
+    MYSQLD_EXPORTER_PASSWORD: ${MYSQL_HA_EXPORTER_PASSWORD:-${MYSQLD_EXPORTER_PASSWORD}}
+  expose:
+    - "${MYSQL_HA_EXPORTER_PORT:-9104}"
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "exporter"
+
+x-mysql-ha-init: &mysql-ha-init
+  # Transient bootstrap jobs: never restarted, no volumes of their own, exit 0 when
+  # their step is done. The Router tier gates on them.
+  restart: "no"
+  profiles: ["db-ha", "ha"]
+  mem_limit: ${MYSQL_HA_INIT_MEM_LIMIT:-128m}
+  networks:
+    - jl-net
+  labels:
+    lab: "java-learn"
+    lab.role: "mysql-init"
+  volumes:
+    - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+
+services:
+  # --- 3 Group Replication nodes -------------------------------------------
+  # Only the identity triplet differs per node: server_id (also the GTID source id),
+  # report_host (must be the peer-resolvable Compose service name) and the derived
+  # group_replication_local_address. mysql-1 is the initial seed - which is also the
+  # single node dba.createCluster() may ever target once a group exists.
+  mysql-1:
+    <<: *mysql-ha-node
+    container_name: jl-mysql-1
+    hostname: ${MYSQL_HA_MYSQL_1_HOST:-mysql-1}
+    volumes:
+      - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+      - jl-mysql-1-data:/var/lib/mysql
+    environment:
+      <<: *mysql-ha-node-env
+      MYSQL_HA_SERVER_ID: "${MYSQL_HA_MYSQL_1_SERVER_ID:-1}"
+      MYSQL_HA_REPORT_HOST: ${MYSQL_HA_MYSQL_1_HOST:-mysql-1}
+      MYSQL_HA_MEMBER_WEIGHT: "${MYSQL_HA_MYSQL_1_MEMBER_WEIGHT:-100}"
+
+  mysql-2:
+    <<: *mysql-ha-node
+    container_name: jl-mysql-2
+    hostname: ${MYSQL_HA_MYSQL_2_HOST:-mysql-2}
+    volumes:
+      - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+      - jl-mysql-2-data:/var/lib/mysql
+    environment:
+      <<: *mysql-ha-node-env
+      MYSQL_HA_SERVER_ID: "${MYSQL_HA_MYSQL_2_SERVER_ID:-2}"
+      MYSQL_HA_REPORT_HOST: ${MYSQL_HA_MYSQL_2_HOST:-mysql-2}
+      MYSQL_HA_MEMBER_WEIGHT: "${MYSQL_HA_MYSQL_2_MEMBER_WEIGHT:-100}"
+
+  mysql-3:
+    <<: *mysql-ha-node
+    container_name: jl-mysql-3
+    hostname: ${MYSQL_HA_MYSQL_3_HOST:-mysql-3}
+    volumes:
+      - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+      - jl-mysql-3-data:/var/lib/mysql
+    environment:
+      <<: *mysql-ha-node-env
+      MYSQL_HA_SERVER_ID: "${MYSQL_HA_MYSQL_3_SERVER_ID:-3}"
+      MYSQL_HA_REPORT_HOST: ${MYSQL_HA_MYSQL_3_HOST:-mysql-3}
+      MYSQL_HA_MEMBER_WEIGHT: "${MYSQL_HA_MYSQL_3_MEMBER_WEIGHT:-100}"
+
+  # --- initialisation job 1: form the cluster -------------------------------
+  # Uses MYSQL_IMAGE because the 8.4 server image ships MySQL Shell (verified
+  # offline on this machine: `docker history mysql:8.4.4` contains the layer
+  # `microdnf install -y mysql-shell-8.4.4-1.el9; mysqlsh --version`). Override
+  # MYSQL_HA_INIT_IMAGE if a different flavour is used.
+  mysql-cluster-init:
+    <<: *mysql-ha-init
+    image: ${MYSQL_HA_INIT_IMAGE:-${MYSQL_IMAGE:-mysql:8.4.4}}
+    container_name: jl-mysql-cluster-init
+    entrypoint:
+      - ${MYSQL_HA_SHELL_BIN:-bash}
+      - ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}/cluster-init-entrypoint.sh
+    environment:
+      TZ: ${TZ:-UTC}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQLD_EXPORTER_PASSWORD:-exporter}
+      MYSQL_HA_ASSET_DIR: ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}
+      MYSQL_HA_CLUSTER_NAME: ${MYSQL_HA_CLUSTER_NAME:-labCluster}
+      MYSQL_HA_ADMIN_USER: ${MYSQL_HA_ADMIN_USER:-root}
+      MYSQL_HA_NODE_PORT: "${MYSQL_HA_NODE_PORT:-3306}"
+      MYSQL_HA_GR_LOCAL_PORT: "${MYSQL_HA_GR_LOCAL_PORT:-33061}"
+      MYSQL_HA_MYSQL_1_HOST: ${MYSQL_HA_MYSQL_1_HOST:-mysql-1}
+      MYSQL_HA_MYSQL_2_HOST: ${MYSQL_HA_MYSQL_2_HOST:-mysql-2}
+      MYSQL_HA_MYSQL_3_HOST: ${MYSQL_HA_MYSQL_3_HOST:-mysql-3}
+      MYSQL_HA_EXPECTED_MEMBERS: "${MYSQL_HA_EXPECTED_MEMBERS:-3}"
+      MYSQL_HA_ACCOUNT_HOST_PATTERN: ${MYSQL_HA_ACCOUNT_HOST_PATTERN:-%}
+      MYSQL_HA_RECOVERY_METHOD: ${MYSQL_HA_RECOVERY_METHOD:-clone}
+      MYSQL_HA_CONFIGURE_INSTANCES: ${MYSQL_HA_CONFIGURE_INSTANCES:-true}
+      MYSQL_HA_WAIT_SYNC_TIMEOUT_SECONDS: "${MYSQL_HA_WAIT_SYNC_TIMEOUT_SECONDS:-60}"
+      MYSQL_HA_CLUSTER_READY_TIMEOUT_SECONDS: "${MYSQL_HA_CLUSTER_READY_TIMEOUT_SECONDS:-180}"
+      MYSQL_HA_CLUSTER_POLL_INTERVAL_SECONDS: "${MYSQL_HA_CLUSTER_POLL_INTERVAL_SECONDS:-5}"
+      # Empty by design: a `{}` default would put unescaped braces into the
+      # interpolation syntax. create-cluster.js turns an empty value into {}.
+      MYSQL_HA_CREATE_CLUSTER_EXTRA_OPTS_JSON: "${MYSQL_HA_CREATE_CLUSTER_EXTRA_OPTS_JSON:-}"
+      MYSQL_HA_INIT_RETRY_COUNT: "${MYSQL_HA_INIT_RETRY_COUNT:-12}"
+      MYSQL_HA_INIT_RETRY_INTERVAL_SECONDS: "${MYSQL_HA_INIT_RETRY_INTERVAL_SECONDS:-10}"
+      MYSQL_HA_PROBE_TIMEOUT_SECONDS: "${MYSQL_HA_PROBE_TIMEOUT_SECONDS:-5}"
+      MYSQL_HA_INIT_TMP_DIR: ${MYSQL_HA_INIT_TMP_DIR:-/tmp/lab-mysql-cluster}
+      MYSQL_HA_MYSQLSH_BIN: ${MYSQL_HA_MYSQLSH_BIN:-mysqlsh}
+      MYSQL_HA_MYSQL_BIN: ${MYSQL_HA_MYSQL_BIN:-mysql}
+      MYSQL_HA_EXPORTER_USER: ${MYSQL_HA_EXPORTER_USER:-exporter}
+      MYSQL_HA_EXPORTER_PASSWORD: ${MYSQL_HA_EXPORTER_PASSWORD:-${MYSQLD_EXPORTER_PASSWORD:-exporter}}
+      MYSQL_HA_MONITOR_USER: ${MYSQL_HA_MONITOR_USER:-lab_monitor}
+      MYSQL_HA_MONITOR_PASSWORD: ${MYSQL_HA_MONITOR_PASSWORD:-labmonitor}
+    depends_on:
+      mysql-1:
+        condition: service_healthy
+      mysql-2:
+        condition: service_healthy
+      mysql-3:
+        condition: service_healthy
+
+  # --- initialisation job 2: bootstrap the Router (metadata cache) ----------
+  mysql-router-init:
+    <<: *mysql-ha-init
+    image: ${MYSQL_HA_ROUTER_IMAGE:-mysql/mysql-router:8.4.4}
+    container_name: jl-mysql-router-init
+    entrypoint:
+      - ${MYSQL_HA_SHELL_BIN:-bash}
+      - ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}/router-bootstrap-entrypoint.sh
+    environment:
+      TZ: ${TZ:-UTC}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_HA_ASSET_DIR: ${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}
+      MYSQL_HA_ADMIN_USER: ${MYSQL_HA_ADMIN_USER:-root}
+      MYSQL_HA_NODE_PORT: "${MYSQL_HA_NODE_PORT:-3306}"
+      MYSQL_HA_MYSQL_1_HOST: ${MYSQL_HA_MYSQL_1_HOST:-mysql-1}
+      MYSQL_HA_MYSQL_2_HOST: ${MYSQL_HA_MYSQL_2_HOST:-mysql-2}
+      MYSQL_HA_MYSQL_3_HOST: ${MYSQL_HA_MYSQL_3_HOST:-mysql-3}
+      MYSQL_HA_ROUTER_DATA_DIR: ${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}
+      MYSQL_HA_ROUTER_CONF_NAME: ${MYSQL_HA_ROUTER_CONF_NAME:-mysqlrouter.conf}
+      MYSQL_HA_ROUTER_NAME: ${MYSQL_HA_ROUTER_NAME:-lab-router}
+      MYSQL_HA_ROUTER_CONF_SCOPE: ${MYSQL_HA_ROUTER_CONF_SCOPE:-ROUTING}
+      MYSQL_HA_ROUTER_SSL_MODE: ${MYSQL_HA_ROUTER_SSL_MODE:-DISABLED}
+      MYSQL_HA_ROUTER_USER: ${MYSQL_HA_ROUTER_USER:-mysqlrouter}
+      MYSQL_HA_ROUTER_PASSWORD_MODE: ${MYSQL_HA_ROUTER_PASSWORD_MODE:-stdin}
+      MYSQL_HA_ROUTER_FORCE_BOOTSTRAP: ${MYSQL_HA_ROUTER_FORCE_BOOTSTRAP:-false}
+      MYSQL_HA_ROUTER_BOOTSTRAP_EXTRA_OPTS: "${MYSQL_HA_ROUTER_BOOTSTRAP_EXTRA_OPTS:-}"
+      MYSQL_HA_ROUTER_RW_PORT: "${MYSQL_HA_ROUTER_RW_PORT:-6446}"
+      MYSQL_HA_ROUTER_RO_PORT: "${MYSQL_HA_ROUTER_RO_PORT:-6447}"
+      MYSQL_HA_INIT_RETRY_COUNT: "${MYSQL_HA_INIT_RETRY_COUNT:-12}"
+      MYSQL_HA_INIT_RETRY_INTERVAL_SECONDS: "${MYSQL_HA_INIT_RETRY_INTERVAL_SECONDS:-10}"
+      MYSQL_HA_PROBE_TIMEOUT_SECONDS: "${MYSQL_HA_PROBE_TIMEOUT_SECONDS:-5}"
+      MYSQL_HA_MYSQL_BIN: ${MYSQL_HA_MYSQL_BIN:-mysql}
+      MYSQL_HA_MYSQLROUTER_BIN: ${MYSQL_HA_MYSQLROUTER_BIN:-mysqlrouter}
+    volumes:
+      - ./mysql-cluster:${MYSQL_HA_ASSET_DIR:-/lab/mysql-cluster}:ro
+      - jl-mysql-router-data:${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}
+    depends_on:
+      mysql-cluster-init:
+        condition: service_completed_successfully
+
+  # --- Router: the app's only MySQL entry point (design §8.3) ---------------
+  # 6446 read/write always follows the current PRIMARY; 6447 read-only spreads over
+  # ONLINE secondaries. The app never addresses a node directly, which is what makes
+  # the failover invisible to it.
+  mysql-router:
+    image: ${MYSQL_HA_ROUTER_IMAGE:-mysql/mysql-router:8.4.4}
+    container_name: jl-mysql-router
+    restart: unless-stopped
+    profiles: ["db-ha", "ha"]
+    mem_limit: ${MYSQL_HA_ROUTER_MEM_LIMIT:-64m}
+    # Run the binary directly instead of the image entrypoint: the stock entrypoint
+    # wants to bootstrap on every start, and bootstrapping after the metadata exists
+    # is precisely what mysql-router-init already did (idempotently).
+    entrypoint:
+      - ${MYSQL_HA_MYSQLROUTER_BIN:-mysqlrouter}
+    command:
+      - --config
+      - ${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}/${MYSQL_HA_ROUTER_CONF_NAME:-mysqlrouter.conf}
+      # stdout/stderr instead of a log file: `docker logs jl-mysql-router` is the
+      # primary evidence source for the failover demo (backend role flips show up
+      # here as re-routing lines).
+      - --log-to-console
+    environment:
+      TZ: ${TZ:-UTC}
+    ports:
+      - "127.0.0.1:${MYSQL_HA_ROUTER_RW_HOST_PORT:-6446}:${MYSQL_HA_ROUTER_RW_PORT:-6446}"
+      - "127.0.0.1:${MYSQL_HA_ROUTER_RO_HOST_PORT:-6447}:${MYSQL_HA_ROUTER_RO_PORT:-6447}"
+    volumes:
+      - jl-mysql-router-data:${MYSQL_HA_ROUTER_DATA_DIR:-/var/lib/mysqlrouter}
+    expose:
+      - "${MYSQL_HA_ROUTER_RW_PORT:-6446}"
+      - "${MYSQL_HA_ROUTER_RO_PORT:-6447}"
+    networks:
+      - jl-net
+    labels:
+      lab: "java-learn"
+      lab.role: "mysql-router"
+    depends_on:
+      mysql-router-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # Loopback TCP probe on both routes: proves the Router accepted its config and
+      # is listening. bash is invoked explicitly because /dev/tcp redirections are
+      # disabled when bash runs as sh. Override the whole command if an image build
+      # has no bash.
+      test: ["CMD-SHELL", "${MYSQL_HA_ROUTER_HEALTHCHECK_CMD:-bash -c 'exec 3<>/dev/tcp/127.0.0.1/${MYSQL_HA_ROUTER_RW_PORT:-6446}; exec 4<>/dev/tcp/127.0.0.1/${MYSQL_HA_ROUTER_RO_PORT:-6447}'}"]
+      interval: ${MYSQL_HA_ROUTER_HEALTHCHECK_INTERVAL_SECONDS:-10}s
+      timeout: ${MYSQL_HA_ROUTER_HEALTHCHECK_TIMEOUT_SECONDS:-5}s
+      retries: ${MYSQL_HA_ROUTER_HEALTHCHECK_RETRIES:-12}
+      start_period: ${MYSQL_HA_ROUTER_HEALTHCHECK_START_PERIOD_SECONDS:-15}s
+
+  # --- one exporter per node (design §8.3: 每节点 exporter) -----------------
+  # Each exporter pins one node, so D11 can show per-member replication lag and the
+  # primary flip is visible as a change in which target reports read_only=0. Scrape
+  # jobs live in prometheus/mysql-ha-scrape.yml (see the wiring TODO in step-25a).
+  mysql-1-exporter:
+    <<: *mysql-ha-exporter
+    container_name: jl-mysql-1-exporter
+    command:
+      - --mysqld.address=mysql-1:${MYSQL_HA_NODE_PORT:-3306}
+      - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
+      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+    depends_on:
+      mysql-1:
+        condition: service_healthy
+
+  mysql-2-exporter:
+    <<: *mysql-ha-exporter
+    container_name: jl-mysql-2-exporter
+    command:
+      - --mysqld.address=mysql-2:${MYSQL_HA_NODE_PORT:-3306}
+      - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
+      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+    depends_on:
+      mysql-2:
+        condition: service_healthy
+
+  mysql-3-exporter:
+    <<: *mysql-ha-exporter
+    container_name: jl-mysql-3-exporter
+    command:
+      - --mysqld.address=mysql-3:${MYSQL_HA_NODE_PORT:-3306}
+      - --mysqld.username=${MYSQL_HA_EXPORTER_USER:-exporter}
+      - --telemetry.addr=:${MYSQL_HA_EXPORTER_PORT:-9104}
+    depends_on:
+      mysql-3:
+        condition: service_healthy
+
+volumes:
+  # Own volumes, never jl-mysql-data: gtid_mode=ON is mandatory for these nodes, and
+  # the dev volume was initialised without it - reusing it would refuse to start (or
+  # worse, silently re-write history).
+  jl-mysql-1-data:
+    name: jl-mysql-1-data
+  jl-mysql-2-data:
+    name: jl-mysql-2-data
+  jl-mysql-3-data:
+    name: jl-mysql-3-data
+  jl-mysql-router-data:
+    name: jl-mysql-router-data
+
+networks:
+  # Reuses base.yml's jl-net, exactly as compose.ha.yml does for the Redis tier: no
+  # new network is needed because GR peers resolve each other by Compose service
+  # name through Docker DNS.
+  jl-net:
+    name: jl-net
+    driver: bridge
