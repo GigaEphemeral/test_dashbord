@@ -55,8 +55,12 @@ class ActuatorEndpointsTest {
         String scrape = restTemplate.getForObject("/actuator/prometheus", String.class);
         assertThat(scrape).isNotNull();
         assertThat(scrape).contains("jvm_memory_used_bytes");
-        // app / env / instance / jvm_version: the label set the D7 queries filter on.
+        // app / env / instance / jvm_version: the exact four-tag contract the
+        // JDK 21 shell emits via platform-observability commonTags (pinned in
+        // its own ObservabilityIntegrationTest), asserted here by name AND default value.
         assertThat(scrape).contains("app=\"seckill-app-jdk8\"");
+        assertThat(scrape).contains("env=\"dev\"");
+        assertThat(scrape).contains("instance=\"app-jdk8-local\"");
         assertThat(scrape).contains("jvm_version=\"");
         assertThat(scrape).contains("http_server_requests_seconds_count");
         // percentile histogram, so histogram_quantile(... p99 ...) works on both shells.
