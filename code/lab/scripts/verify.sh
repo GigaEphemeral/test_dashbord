@@ -49,6 +49,15 @@ GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-labadmin}"
 LAB_TOKEN="${LAB_TOKEN:-lab-token}"
 
+# Async seckill verify settings (Task 16). Product 20 is reserved for this path;
+# product 1 stays dedicated to the synchronous order checks above.
+SECKILL_PRODUCT_ID="${SECKILL_PRODUCT_ID:-20}"
+SECKILL_POLL_RETRIES="${SECKILL_POLL_RETRIES:-30}"
+SECKILL_POLL_INTERVAL_SECONDS="${SECKILL_POLL_INTERVAL_SECONDS:-1}"
+SECKILL_QUEUE_NAME="${SECKILL_QUEUE_NAME:-seckill.order.queue}"
+SECKILL_STOCK_KEY_PREFIX="${SECKILL_STOCK_KEY_PREFIX:-seckill:stock:}"
+RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://127.0.0.1:15672}"
+
 compose() {
   docker compose \
     --project-name java-learn-lab \
@@ -475,6 +484,147 @@ if $order_create_ok; then
   fi
 else
   fail "repeat/query/stock checks for POST /api/orders" "order creation failed; dependent checks skipped"
+fi
+
+# 2e. Async seckill admission path (Task 16): product 20 only, so the
+# synchronous order checks above (product 1) and this path never share stock.
+seckill_stock_key="${SECKILL_STOCK_KEY_PREFIX}${SECKILL_PRODUCT_ID}"
+seckill_db_before="$(mysql_scalar "SELECT available FROM inventory_stock WHERE product_id = ${SECKILL_PRODUCT_ID};")"
+seckill_redis_before="$(docker exec jl-redis redis-cli get "$seckill_stock_key" 2>/dev/null \
+  | tr -d '\r\n' || true)"
+if [[ "$seckill_db_before" =~ ^[0-9]+$ ]] && [[ "$seckill_redis_before" =~ ^[0-9]+$ ]]; then
+  pass "seckill stock for product ${SECKILL_PRODUCT_ID} exists (mysql=${seckill_db_before}, redis=${seckill_redis_before})"
+else
+  fail "seckill stock for product ${SECKILL_PRODUCT_ID} exists" \
+    "mysql='${seckill_db_before}' redis='${seckill_redis_before}'"
+fi
+
+seckill_key="verify-seckill-$(date +%s)-${RANDOM}-$$"
+seckill_payload="{\"userId\":\"verify-seckill-user\",\"productId\":${SECKILL_PRODUCT_ID},\"quantity\":1}"
+seckill_accept_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+  -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${seckill_key}" \
+  --data "$seckill_payload" \
+  http://127.0.0.1:8080/api/seckill/orders 2>/dev/null || true)"
+seckill_accept_code="${seckill_accept_response##*$'\n'}"
+seckill_accept_body="${seckill_accept_response%$'\n'*}"
+seckill_request_id="$(sed -n 's/.*"requestId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  <<<"$seckill_accept_body" | head -n 1)"
+if [[ "$seckill_accept_code" == "202" ]] \
+  && grep -Eq '"code"[[:space:]]*:[[:space:]]*"0"' <<<"$seckill_accept_body" \
+  && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ACCEPTED"' <<<"$seckill_accept_body" \
+  && [[ -n "$seckill_request_id" ]]; then
+  pass "nginx POST /api/seckill/orders returns 202 ACCEPTED with requestId=${seckill_request_id}"
+else
+  fail "nginx POST /api/seckill/orders returns 202 ACCEPTED with requestId" \
+    "HTTP ${seckill_accept_code:-000} body: ${seckill_accept_body:0:240}"
+fi
+
+seckill_poll_code=""
+seckill_poll_status=""
+seckill_order_id=""
+if [[ -n "$seckill_request_id" ]]; then
+  for attempt in $(seq 1 "$SECKILL_POLL_RETRIES"); do
+    seckill_poll_response="$(curl -sS -w $'\n%{http_code}' --max-time 5 \
+      "http://127.0.0.1:8080/api/seckill/orders/${seckill_request_id}" 2>/dev/null || true)"
+    seckill_poll_code="${seckill_poll_response##*$'\n'}"
+    seckill_poll_body="${seckill_poll_response%$'\n'*}"
+    seckill_poll_status="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      <<<"$seckill_poll_body" | head -n 1)"
+    seckill_order_id="$(sed -n 's/.*"orderId"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+      <<<"$seckill_poll_body" | head -n 1)"
+    if [[ "$seckill_poll_code" == "200" ]] \
+      && [[ "$seckill_poll_status" == "CREATED" ]] \
+      && [[ "$seckill_order_id" =~ ^[0-9]+$ ]]; then
+      break
+    fi
+    if (( attempt < SECKILL_POLL_RETRIES )); then
+      sleep "$SECKILL_POLL_INTERVAL_SECONDS"
+    fi
+  done
+fi
+if [[ "$seckill_poll_code" == "200" ]] \
+  && [[ "$seckill_poll_status" == "CREATED" ]] \
+  && [[ "$seckill_order_id" =~ ^[0-9]+$ ]]; then
+  pass "GET /api/seckill/orders/${seckill_request_id} reaches CREATED (orderId=${seckill_order_id})"
+else
+  fail "GET /api/seckill/orders/${seckill_request_id:-unknown} reaches CREATED" \
+    "HTTP ${seckill_poll_code:-000} status='${seckill_poll_status}' orderId='${seckill_order_id}'"
+fi
+
+if [[ -n "$seckill_request_id" && -n "$seckill_order_id" ]]; then
+  seckill_repeat_response="$(curl -sS -w $'\n%{http_code}' --max-time 10 \
+    -X POST -H 'Content-Type: application/json' -H "Idempotency-Key: ${seckill_key}" \
+    --data "$seckill_payload" \
+    http://127.0.0.1:8080/api/seckill/orders 2>/dev/null || true)"
+  seckill_repeat_code="${seckill_repeat_response##*$'\n'}"
+  seckill_repeat_body="${seckill_repeat_response%$'\n'*}"
+  seckill_repeat_request_id="$(sed -n 's/.*"requestId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    <<<"$seckill_repeat_body" | head -n 1)"
+  seckill_repeat_order_id="$(sed -n 's/.*"orderId"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    <<<"$seckill_repeat_body" | head -n 1)"
+  if [[ "$seckill_repeat_code" == "202" ]] \
+    && [[ "$seckill_repeat_request_id" == "$seckill_request_id" ]] \
+    && [[ "$seckill_repeat_order_id" == "$seckill_order_id" ]] \
+    && grep -Eq '"status"[[:space:]]*:[[:space:]]*"CREATED"' <<<"$seckill_repeat_body"; then
+    pass "repeating the seckill Idempotency-Key returns request ${seckill_request_id}/order ${seckill_order_id}"
+  else
+    fail "repeating the seckill Idempotency-Key returns the same request/order" \
+      "HTTP ${seckill_repeat_code:-000} requestId='${seckill_repeat_request_id}' orderId='${seckill_repeat_order_id}'"
+  fi
+else
+  fail "repeating the seckill Idempotency-Key returns the same request/order" \
+    "accept/poll did not yield a request/order id"
+fi
+
+seckill_db_after="$(mysql_scalar "SELECT available FROM inventory_stock WHERE product_id = ${SECKILL_PRODUCT_ID};")"
+seckill_redis_after="$(docker exec jl-redis redis-cli get "$seckill_stock_key" 2>/dev/null \
+  | tr -d '\r\n' || true)"
+seckill_order_rows="$(mysql_scalar "SELECT COUNT(*) FROM order_order WHERE idempotency_key = '${seckill_key}';")"
+if [[ "$seckill_db_before" =~ ^[0-9]+$ ]] \
+  && [[ "$seckill_redis_before" =~ ^[0-9]+$ ]] \
+  && [[ "$seckill_db_after" == "$((seckill_db_before - 1))" ]] \
+  && [[ "$seckill_redis_after" == "$((seckill_redis_before - 1))" ]] \
+  && [[ "$seckill_order_rows" == "1" ]]; then
+  pass "seckill product ${SECKILL_PRODUCT_ID} decreased exactly one in mysql (${seckill_db_before} -> ${seckill_db_after}) and redis (${seckill_redis_before} -> ${seckill_redis_after}) with one order"
+else
+  fail "seckill product ${SECKILL_PRODUCT_ID} decreased exactly one in mysql and redis with one order" \
+    "mysql '${seckill_db_before}'->'${seckill_db_after}' redis '${seckill_redis_before}'->'${seckill_redis_after}' orders='${seckill_order_rows}'"
+fi
+
+seckill_queue_exists=false
+seckill_queue_ready=""
+for attempt in $(seq 1 "$SECKILL_POLL_RETRIES"); do
+  seckill_queue_json="$(curl -sS --max-time 10 \
+    -u "${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}" \
+    "${RABBITMQ_MANAGEMENT_URL}/api/queues/%2F/${SECKILL_QUEUE_NAME}" 2>/dev/null || true)"
+  if grep -q "\"name\":\"${SECKILL_QUEUE_NAME}\"" <<<"$seckill_queue_json"; then
+    seckill_queue_exists=true
+    seckill_queue_ready="$(sed -n 's/.*"messages_ready"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+      <<<"$seckill_queue_json" | head -n 1)"
+    if [[ "$seckill_queue_ready" == "0" ]]; then
+      break
+    fi
+  fi
+  if (( attempt < SECKILL_POLL_RETRIES )); then
+    sleep "$SECKILL_POLL_INTERVAL_SECONDS"
+  fi
+done
+if $seckill_queue_exists && [[ "$seckill_queue_ready" == "0" ]]; then
+  pass "rabbitmq queue ${SECKILL_QUEUE_NAME} exists and messages_ready returned to 0"
+else
+  fail "rabbitmq queue ${SECKILL_QUEUE_NAME} exists and messages_ready returned to 0" \
+    "exists=${seckill_queue_exists} messages_ready='${seckill_queue_ready}'"
+fi
+
+seckill_metrics="$(docker exec jl-app-1 wget -qO- http://127.0.0.1:8080/actuator/prometheus \
+  2>/dev/null || true)"
+if grep -q '^seckill_attempts_total' <<<"$seckill_metrics" \
+  && grep -q '^order_accept_seconds_count' <<<"$seckill_metrics" \
+  && grep -q '^order_consumer_processed_total' <<<"$seckill_metrics" \
+  && grep -q '^stock_oversold_total' <<<"$seckill_metrics"; then
+  pass "app-1 exposes seckill_attempts/order_accept_seconds/order_consumer_processed/stock_oversold metrics"
+else
+  fail "app-1 exposes seckill metrics" "one or more seckill metric families are missing"
 fi
 
 # 3. RabbitMQ management API.

@@ -1,6 +1,6 @@
 package com.javalearn.lab.seckill.catalog.cache;
 
-import com.javalearn.lab.seckill.MySqlIntegrationTestSupport;
+import com.javalearn.lab.seckill.MySqlRabbitIntegrationTestSupport;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "management.endpoint.health.show-details=always"
         })
 @Testcontainers
-class RedisOutageCacheIT extends MySqlIntegrationTestSupport {
+class RedisOutageCacheIT extends MySqlRabbitIntegrationTestSupport {
 
     /** Port of a socket we opened and closed; connecting to it is refused. */
     private static final int DEAD_REDIS_PORT = findClosedPort();

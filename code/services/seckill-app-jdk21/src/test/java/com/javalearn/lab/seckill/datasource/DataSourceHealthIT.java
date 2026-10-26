@@ -1,6 +1,6 @@
 package com.javalearn.lab.seckill.datasource;
 
-import com.javalearn.lab.seckill.MySqlIntegrationTestSupport;
+import com.javalearn.lab.seckill.MySqlRabbitIntegrationTestSupport;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.env=test",
                 "observability.instance=datasource-health-it"
         })
-class DataSourceHealthIT extends MySqlIntegrationTestSupport {
+class DataSourceHealthIT extends MySqlRabbitIntegrationTestSupport {
 
     @Autowired
     private ApplicationContext context;

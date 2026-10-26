@@ -50,6 +50,12 @@ x-app-env: &app-env
   # to MySQL reads and are counted as cache_l2_errors.
   REDIS_HOST: redis
   REDIS_PORT: "6379"
+  # Async seckill order queue (Task 16). The app consumes/ publishes with the
+  # same lab broker credentials; values are interpolated, never duplicated.
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+  RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
   OTEL_SERVICE_NAME: seckill-app
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc

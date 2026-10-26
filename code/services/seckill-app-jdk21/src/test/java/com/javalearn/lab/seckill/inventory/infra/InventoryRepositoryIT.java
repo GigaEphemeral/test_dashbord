@@ -1,6 +1,6 @@
 package com.javalearn.lab.seckill.inventory.infra;
 
-import com.javalearn.lab.seckill.MySqlIntegrationTestSupport;
+import com.javalearn.lab.seckill.MySqlRabbitIntegrationTestSupport;
 import com.javalearn.lab.seckill.inventory.domain.InventoryRepository;
 import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderRepository;
@@ -39,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
                 "observability.env=test",
                 "observability.instance=test-1"
         })
-class InventoryRepositoryIT extends MySqlIntegrationTestSupport {
+class InventoryRepositoryIT extends MySqlRabbitIntegrationTestSupport {
 
     private static final long PRODUCT_ID = 1L;
 

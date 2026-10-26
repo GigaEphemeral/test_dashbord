@@ -17,6 +17,23 @@ spring:
       host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
 
+  # Async seckill order queue (Task 16). The listener starts with the context,
+  # so every full-context test needs a broker
+  # (see MySqlRabbitIntegrationTestSupport).
+  rabbitmq:
+    host: ${RABBITMQ_HOST:rabbitmq}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:${RABBITMQ_DEFAULT_USER:lab}}
+    password: ${RABBITMQ_PASSWORD:${RABBITMQ_DEFAULT_PASS:lab}}
+    listener:
+      simple:
+        concurrency: ${RABBITMQ_CONSUMER_CONCURRENCY:2}
+        max-concurrency: ${RABBITMQ_CONSUMER_MAX_CONCURRENCY:4}
+        prefetch: ${RABBITMQ_CONSUMER_PREFETCH:20}
+        # A failed seckill message is compensated and marked FAILED; never
+        # requeue it in an infinite loop.
+        default-requeue-rejected: false
+
 # Explicit write/read datasource pair (Task 15). In dev both URLs point at the
 # same MySQL; DB_WRITE_URL/DB_READ_URL are the M3 hooks for MySQL Router
 # 6446 (read-write) and 6447 (read-only). The primary DataSource is a lazy
@@ -38,6 +55,42 @@ app:
       maximum-pool-size: 10
       minimum-idle: 2
       pool-name: read-pool
+
+  # Async seckill admission (Task 16). Every path, timeout, TTL, key prefix,
+  # queue/exchange name, pacing delay and pool size is externalized here and
+  # overridable through the environment; no runtime value is hardcoded in Java.
+  seckill:
+    async-enabled: ${SECKILL_ASYNC_ENABLED:true}
+    lock:
+      key-prefix: ${SECKILL_LOCK_KEY_PREFIX:lock:seckill:}
+      wait-ms: ${SECKILL_LOCK_WAIT_MS:500}
+      lease-ms: ${SECKILL_LOCK_LEASE_MS:3000}
+    stock:
+      key-prefix: ${SECKILL_STOCK_KEY_PREFIX:seckill:stock:}
+      seed-on-startup: ${SECKILL_STOCK_SEED_ON_STARTUP:true}
+      lua-path: ${SECKILL_STOCK_LUA_PATH:lua/seckill_stock.lua}
+    request:
+      key-prefix: ${SECKILL_REQUEST_KEY_PREFIX:seckill:request:}
+      ttl-seconds: ${SECKILL_REQUEST_TTL_SECONDS:1800}
+    idempotency:
+      key-prefix: ${SECKILL_IDEMPOTENCY_KEY_PREFIX:seckill:idem:}
+      ttl-seconds: ${SECKILL_IDEMPOTENCY_TTL_SECONDS:1800}
+    mq:
+      exchange: ${SECKILL_MQ_EXCHANGE:seckill.order.exchange}
+      queue: ${SECKILL_MQ_QUEUE:seckill.order.queue}
+      routing-key: ${SECKILL_MQ_ROUTING_KEY:seckill.order.requested}
+    consumer:
+      delay-ms: ${SECKILL_CONSUMER_DELAY_MS:20}
+    redisson:
+      connect-timeout-ms: ${SECKILL_REDISSON_CONNECT_TIMEOUT_MS:3000}
+      timeout-ms: ${SECKILL_REDISSON_TIMEOUT_MS:3000}
+      retry-attempts: ${SECKILL_REDISSON_RETRY_ATTEMPTS:3}
+      retry-interval-ms: ${SECKILL_REDISSON_RETRY_INTERVAL_MS:1000}
+      connection-minimum-idle-size: ${SECKILL_REDISSON_MIN_IDLE:2}
+      connection-pool-size: ${SECKILL_REDISSON_POOL_SIZE:8}
+      # No Redis connection at startup: a Redis outage must not block boot
+      # (Task 14 health/degradation contract) and RedisOutageCacheIT proves it.
+      lazy-initialization: ${SECKILL_REDISSON_LAZY_INIT:true}
 
 server:
   port: 8080

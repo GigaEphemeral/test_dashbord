@@ -1,6 +1,6 @@
 package com.javalearn.lab.seckill.catalog.infra;
 
-import com.javalearn.lab.seckill.MySqlIntegrationTestSupport;
+import com.javalearn.lab.seckill.MySqlRabbitIntegrationTestSupport;
 import com.javalearn.lab.seckill.catalog.domain.Product;
 import com.javalearn.lab.seckill.catalog.domain.ProductRepository;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.env=test",
                 "observability.instance=test-1"
         })
-class ProductRepositoryIT extends MySqlIntegrationTestSupport {
+class ProductRepositoryIT extends MySqlRabbitIntegrationTestSupport {
 
     @Autowired
     private ProductRepository productRepository;

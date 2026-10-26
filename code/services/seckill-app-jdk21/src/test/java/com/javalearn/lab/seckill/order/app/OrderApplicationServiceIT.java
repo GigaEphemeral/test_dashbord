@@ -1,7 +1,7 @@
 package com.javalearn.lab.seckill.order.app;
 
 import com.javalearn.lab.common.BizException;
-import com.javalearn.lab.seckill.MySqlIntegrationTestSupport;
+import com.javalearn.lab.seckill.MySqlRabbitIntegrationTestSupport;
 import com.javalearn.lab.seckill.order.api.CreateOrderCommand;
 import com.javalearn.lab.seckill.order.domain.Order;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -39,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "observability.env=test",
                 "observability.instance=test-1"
         })
-class OrderApplicationServiceIT extends MySqlIntegrationTestSupport {
+class OrderApplicationServiceIT extends MySqlRabbitIntegrationTestSupport {
 
     private static final long PRODUCT_ID = 1L;
 
