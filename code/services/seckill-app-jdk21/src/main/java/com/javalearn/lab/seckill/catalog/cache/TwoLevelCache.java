@@ -6,6 +6,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.CacheLoader;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -42,7 +43,12 @@ import java.util.concurrent.Callable;
  * <p>Counters are created once per cache instance (never per request):
  * {@code cache_l1_requests{result}}, {@code cache_l2_requests{result}},
  * {@code cache_db_fallbacks{reason=miss}} and {@code cache_l2_errors}. The
- * {@code cache_l1_hit_ratio} gauge is derived from the L1 hit/miss counters.</p>
+ * {@code cache_l1_hit_ratio} gauge is derived from the L1 hit/miss counters.
+ * Since B0-03 the Caffeine-native {@code recordStats()} snapshot is exported as
+ * a second, source-labelled view ({@code cache_l1_caffeine_requests},
+ * {@code cache_l1_caffeine_hit_ratio}, {@code cache_l1_caffeine_evictions}) plus
+ * the {@code cache_l1_estimated_size} gauge, gated by
+ * {@link TwoLevelCacheSettings#micrometerStatsEnabled()}.</p>
  */
 public final class TwoLevelCache implements org.springframework.cache.Cache {
 
@@ -121,6 +127,73 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                 .register(meterRegistry);
         Gauge.builder("cache_l1_hit_ratio", this, TwoLevelCache::l1HitRatio)
                 .description("L1 hit ratio derived from cache_l1_requests")
+                .tag("cache", name)
+                .register(meterRegistry);
+        if (settings.micrometerStatsEnabled()) {
+            registerCaffeineStats(meterRegistry);
+        }
+    }
+
+    /**
+     * B0-03: export the Caffeine-native L1 statistics (the {@code recordStats()}
+     * snapshot plus {@code estimatedSize()}) as real Micrometer series, so the
+     * dashboard no longer depends on the in-app aggregation only.
+     *
+     * <ul>
+     *   <li>{@code cache_l1_caffeine_requests} FunctionCounters tagged
+     *       {@code result=hit|miss} — exported as
+     *       {@code cache_l1_caffeine_requests_total}. Deliberately NOT named like
+     *       {@code cache_l1_requests}: one Spring-cache hit performs two Caffeine
+     *       reads ({@code getIfPresent} + refresh trigger), so the Caffeine stats
+     *       are a different, source-labelled view of the same L1.</li>
+     *   <li>{@code cache_l1_caffeine_hit_ratio} gauge — Caffeine's own
+     *       {@code stats().hitRate()} (0..1) of the cumulative snapshot.</li>
+     *   <li>{@code cache_l1_caffeine_evictions} FunctionCounter — cumulative
+     *       eviction count (size, expiry and refresh removals all included).</li>
+     *   <li>{@code cache_l1_estimated_size} gauge — {@code estimatedSize()},
+     *       "estimated" is in the metric name AND the help text: Caffeine
+     *       maintains the size lazily, so it is never an exact count and must
+     *       not be read as one.</li>
+     * </ul>
+     *
+     * <p>Only the low-cardinality {@code cache} tag is added; the per-instance
+     * dimension comes from the scrape target (Prometheus {@code instance} /
+     * relabelled {@code exported_instance}), never from a Java-side tag. The
+     * FunctionCounters read the monotonically growing cumulative stats, which is
+     * exactly what a counter binding requires. When the lab {@code cache} toggle
+     * is off no TwoLevelCache exists at all, so these series are absent — that
+     * absence IS the "L1 not applicable" signal; a fake zero is never published.</p>
+     */
+    private void registerCaffeineStats(MeterRegistry meterRegistry) {
+        // The state object is the cache itself: stats() must be re-evaluated on
+        // every read (a captured CacheStats snapshot would freeze at zero).
+        FunctionCounter.builder("cache_l1_caffeine_requests", l1,
+                cache -> cache.stats().hitCount())
+                .description("L1 requests counted by Caffeine's own stats (source=caffeine; "
+                        + "cache_l1_requests counts the application path)")
+                .tag("cache", name).tag("result", "hit")
+                .register(meterRegistry);
+        FunctionCounter.builder("cache_l1_caffeine_requests", l1,
+                cache -> cache.stats().missCount())
+                .description("L1 requests counted by Caffeine's own stats (source=caffeine; "
+                        + "cache_l1_requests counts the application path)")
+                .tag("cache", name).tag("result", "miss")
+                .register(meterRegistry);
+        Gauge.builder("cache_l1_caffeine_hit_ratio", l1,
+                cache -> cache.stats().hitRate())
+                .description("L1 hit ratio (0..1) from Caffeine's own cumulative stats")
+                .tag("cache", name)
+                .register(meterRegistry);
+        FunctionCounter.builder("cache_l1_caffeine_evictions", l1,
+                cache -> cache.stats().evictionCount())
+                .description("Cumulative L1 evictions reported by Caffeine stats")
+                .tag("cache", name)
+                .register(meterRegistry);
+        Gauge.builder("cache_l1_estimated_size", l1,
+                cache -> cache.estimatedSize())
+                .description("Estimated (not exact!) current number of L1 entries "
+                        + "from Caffeine estimatedSize; absence of this series means "
+                        + "L1 is disabled, never a real zero")
                 .tag("cache", name)
                 .register(meterRegistry);
     }
