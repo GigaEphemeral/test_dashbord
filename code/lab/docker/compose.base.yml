@@ -347,6 +347,22 @@ services:
       LAB_RESET_MODE: ${LAB_RESET_MODE:-manual}
       CHAOS_TRAFFIC_CONTAINER: ${CHAOS_TRAFFIC_CONTAINER:-jl-traffic}
       CHAOS_TRAFFIC_STOP_GRACE_SECONDS: ${CHAOS_TRAFFIC_STOP_GRACE_SECONDS:-5}
+      # MySQL InnoDB Cluster probe (design §8.3 / D11). Each key maps 1:1 to
+      # chaos.mysql-cluster.* in application.yml; the SQL and argv stay in the
+      # YAML image config. The code default target is jl-mysql-1, but the LAB
+      # default here is jl-mysql-3: jl-mysql-1 is the usual failover-drill kill
+      # target, and a probe running on the killed node freezes every
+      # mysql_cluster_* series instead of reporting the failover (step-47).
+      # The probe also WARNs if its target later becomes PRIMARY.
+      CHAOS_MYSQL_CLUSTER_ENABLED: ${CHAOS_MYSQL_CLUSTER_ENABLED:-true}
+      CHAOS_MYSQL_CLUSTER_INTERVAL_SECONDS: ${CHAOS_MYSQL_CLUSTER_INTERVAL_SECONDS:-10}
+      CHAOS_MYSQL_CLUSTER_CONTAINER: ${CHAOS_MYSQL_CLUSTER_CONTAINER:-jl-mysql-3}
+      CHAOS_MYSQL_CLUSTER_ADMIN_USER: ${CHAOS_MYSQL_CLUSTER_ADMIN_USER:-root}
+      CHAOS_MYSQL_CLUSTER_PASSWORD_ENV_VAR: ${CHAOS_MYSQL_CLUSTER_PASSWORD_ENV_VAR:-MYSQL_ROOT_PASSWORD}
+      CHAOS_MYSQL_CLUSTER_EXEC_TIMEOUT_SECONDS: ${CHAOS_MYSQL_CLUSTER_EXEC_TIMEOUT_SECONDS:-6}
+      CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:-3}
+      CHAOS_MYSQL_CLUSTER_THREAD_NAME: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:-mysql-cluster-probe}
+      CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS: ${CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS:-5}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.

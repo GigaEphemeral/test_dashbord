@@ -48,6 +48,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * membership change, never once per tick: repeated failures and an unchanged
  * topology log at DEBUG.</p>
  *
+ * <p><b>Self-detection.</b> The probe execs into a fixed node, but Group
+ * Replication can elect any member as PRIMARY after a failover. When a
+ * successful probe sees its own target as the primary, one WARN is logged per
+ * state change: a drill that kills that node also kills the probe, and every
+ * {@code mysql_cluster_*} series freezes until the node is resumed. Membership
+ * reports {@code MEMBER_HOST} ({@code mysql-N}), while the probe target is the
+ * container name ({@code jl-mysql-N}); the mapping is an explicit prefix strip,
+ * never a substring/contains guess.</p>
+ *
  * <p><b>Secrets.</b> The controller never holds the MySQL password. The
  * default command runs a bash script inside the node that expands
  * {@code MYSQL_PWD} from the container's own environment (the variable name is
@@ -76,6 +85,8 @@ public class MysqlClusterMonitor implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(MysqlClusterMonitor.class);
     private static final int MAX_REASON = 200;
+    /** Lab container prefix; membership reports the bare {@code mysql-N} host. */
+    private static final String CONTAINER_PREFIX = "jl-";
 
     private final ContainerGateway gateway;
     private final ChaosProperties.MysqlCluster config;
@@ -93,6 +104,8 @@ public class MysqlClusterMonitor implements AutoCloseable {
     private Map<String, Observation> lastMembers = Map.of();
     private int lastWarnedMemberCount = -1;
     private long lastPrimaryCount = -1;
+    /** Last observed "probe target is PRIMARY"; null until the first successful probe. */
+    private Boolean lastSelfPrimary;
 
     /** Production constructor: owns and starts a dedicated single-thread scheduler. */
     public MysqlClusterMonitor(ContainerGateway gateway, ChaosProperties properties, MeterRegistry registry) {
@@ -221,6 +234,7 @@ public class MysqlClusterMonitor implements AutoCloseable {
         observedMembers.set(size);
         publishMembership(membership);
         logMembershipChanges(membership);
+        logSelfPrimary(membership);
     }
 
     private void publishMembership(ClusterMembership membership) {
@@ -283,6 +297,44 @@ public class MysqlClusterMonitor implements AutoCloseable {
         lastPrimaryCount = primaries;
 
         lastMembers = current;
+    }
+
+    /**
+     * Maps a probe container name to the {@code MEMBER_HOST} the group reports.
+     * Compose sets {@code report_host=mysql-N} while the container is
+     * {@code jl-mysql-N}, so only the leading lab prefix is removed. A name
+     * without the prefix is returned unchanged; matching is always whole-string
+     * (never {@code contains}), so {@code jl-mysql-1} cannot match
+     * {@code mysql-10}.
+     */
+    static String membershipHost(String container) {
+        return container.startsWith(CONTAINER_PREFIX)
+                ? container.substring(CONTAINER_PREFIX.length())
+                : container;
+    }
+
+    /**
+     * WARNs once per state change when the probed node itself is the PRIMARY.
+     * That is the teaching point: the probe looks healthy while the cluster is
+     * healthy, but the very drill the lab runs (kill the primary) takes the
+     * probe down with its target, and {@code mysql_cluster_*} freezes instead
+     * of reporting the failover.
+     */
+    private void logSelfPrimary(ClusterMembership membership) {
+        String selfHost = membershipHost(config.getContainer());
+        boolean selfPrimary = membership.primaries().stream()
+                .anyMatch(member -> selfHost.equals(member.member()));
+        if (selfPrimary && !Boolean.TRUE.equals(lastSelfPrimary)) {
+            log.warn("MySQL probe target {} ({}) is the current PRIMARY: a failover drill that kills this node "
+                            + "also stops the probe, so mysql_cluster_* freezes until it returns. Point "
+                            + "CHAOS_MYSQL_CLUSTER_CONTAINER at a different member.",
+                    config.getContainer(), selfHost);
+        } else if (!selfPrimary && Boolean.TRUE.equals(lastSelfPrimary)) {
+            log.info("MySQL probe target {} ({}) is no longer the PRIMARY (now {}); the probe is drill-safe",
+                    config.getContainer(), selfHost,
+                    membership.primary().map(ClusterMember::member).orElse("none"));
+        }
+        lastSelfPrimary = selfPrimary;
     }
 
     private void onFailure(Exception e) {

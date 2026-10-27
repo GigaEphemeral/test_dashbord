@@ -551,7 +551,14 @@ public class ChaosProperties {
         /** Poll period; also the upper bound for one exec (timeout &lt;= interval). */
         private int intervalSeconds = 10;
 
-        /** Lab container the probe execs into; must stay inside the db-ha tier. */
+        /**
+         * Lab container the probe execs into; must stay inside the db-ha tier.
+         * Kept at {@code jl-mysql-1} here so the property is complete on its own;
+         * the lab compose file defaults to {@code jl-mysql-3} instead, because
+         * {@code jl-mysql-1} is the usual failover-drill kill target (step-47).
+         * A fixed target can still become PRIMARY after a failover - the monitor
+         * WARNs when that happens.
+         */
         private String container = "jl-mysql-1";
 
         /** MySQL account used by the probe; its password is read in-container. */
