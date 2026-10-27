@@ -6,6 +6,10 @@
 #   K6_NETWORK=host BASE_URL=http://127.0.0.1:8080 bash code/lab/k6/run.sh smoke
 #   LAB_TOKEN=... CHAOS_SCENARIO_FILE=quick-failover.json \
 #     CHAOS_DURATION=30s bash code/lab/k6/run.sh ha-failover
+#   LAB_TOKEN=... CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+#     CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+#     DB_FAILOVER_TARGET=jl-mysql-2 bash code/lab/k6/run.sh db-failover
+#   LAB_TOKEN=... bash code/lab/k6/run.sh cache-lab   # opt-in: writes cache data
 #
 # The pinned image (grafana/k6:1.3.0, sha256:3ddc8b1a33a2c3d8edc6e99b6a762ae36cba08788463458f5e6a7703e14eb77d)
 # is resolved on the jl-net network by default, so BASE_URL=http://nginx.
@@ -25,7 +29,7 @@ PROM_URL="${PROM_URL:-http://127.0.0.1:8080/prom}"
 K6_REPORT_DIR="${K6_REPORT_DIR:-}"
 K6_SUMMARY_EXPORT="${K6_SUMMARY_EXPORT:-}"
 K6_REPORT_MOUNT="${K6_REPORT_MOUNT:-/reports}"
-# Shared chaos scenario JSON (Task 22a), used only by the ha-failover scenario.
+# Shared chaos scenario JSON (Task 22a), used only by the chaos scenarios.
 # It is mounted read-only at a root-level container path: /scripts is mounted
 # read-only, so Docker cannot create a nested mount point inside it, and
 # /scripts/scenarios must stay the k6 JavaScript directory.
@@ -37,11 +41,17 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
   shift
 fi
 
+# IS_CHAOS mounts the shared scenario JSON directory and forwards the
+# chaos-controller variables; IS_CACHE only forwards the internal lab API
+# settings (token + app base URL) for the cache experiment.
+IS_CHAOS=0
+IS_CACHE=0
 case "$SCENARIO" in
-  smoke|load|stress|spike|soak|d7) IS_CHAOS=0 ;;
-  ha-failover) IS_CHAOS=1 ;;
+  smoke|load|stress|spike|soak|d7) ;;
+  ha-failover|db-failover) IS_CHAOS=1 ;;
+  cache-lab) IS_CACHE=1 ;;
   *)
-    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|d7|ha-failover).\n' "$SCENARIO" >&2
+    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|d7|ha-failover|db-failover|cache-lab).\n' "$SCENARIO" >&2
     exit 2
     ;;
 esac
@@ -93,8 +103,9 @@ host_mount_path() {
 
 K6_MOUNT_DIR="$(host_mount_path "$K6_DIR")"
 
-# Chaos-specific setup applies to ha-failover only; every other scenario keeps
-# its original mounts, printed lines, forwarded environment and exit codes.
+# Chaos-specific setup applies to ha-failover and db-failover; every other
+# scenario keeps its original mounts, printed lines, forwarded environment and
+# exit codes.
 if [[ "$IS_CHAOS" == "1" ]]; then
   if [[ ! -d "$K6_SCENARIOS_DIR" ]]; then
     printf 'ERROR: chaos scenarios directory not found: %s\n' "$K6_SCENARIOS_DIR" >&2
@@ -140,13 +151,29 @@ CONFIG_VARS=(
   K6_PROMETHEUS_RW_SERVER_URL K6_PROMETHEUS_RW_TREND_STATS K6_PROMETHEUS_RW_PUSH_INTERVAL
 )
 
-# Chaos-controller variables (Task 22a). Forwarded only for ha-failover so the
-# lab token and CHAOS_* settings never reach unrelated scenario containers.
+# Chaos-controller variables (Task 22a). Forwarded only for the two chaos
+# scenarios so the lab token and CHAOS_* settings never reach unrelated
+# scenario containers. db-failover adds the DB_* target/TTL/window knobs.
 if [[ "$IS_CHAOS" == "1" ]]; then
   CONFIG_VARS+=(
     CHAOS_CONTROLLER_URL LAB_TOKEN
     CHAOS_SCENARIO_FILE CHAOS_SCENARIO_DIR CHAOS_START_OFFSET CHAOS_HTTP_TIMEOUT CHAOS_TEARDOWN_TIMEOUT
-    CHAOS_MAX_TTL CHAOS_TARGET_PATTERN CHAOS_DURATION CHAOS_VUS DURATION
+    CHAOS_MAX_TTL CHAOS_TARGET_PATTERN CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN
+    CHAOS_DURATION CHAOS_VUS DURATION
+    DB_FAILOVER_TARGET DB_FAILOVER_TTL_SECONDS DB_FAILOVER_KILL_AT DB_FAILOVER_ERROR_WINDOW
+    DB_FAILOVER_DURATION DB_FAILOVER_READ_VUS DB_FAILOVER_WRITE_VUS DB_FAILOVER_WRITE_INTERVAL
+    DB_FAILOVER_READ_THINK_TIME DB_FAILOVER_WRITE_EXPECTED_STATUSES DB_FAILOVER_WRITE_MIN_SUCCESS_RATE
+  )
+fi
+
+# Cache experiment (step 48). The token is needed for /lab/**; business reads
+# still use BASE_URL (Nginx). The app URL list only covers the internal API.
+if [[ "$IS_CACHE" == "1" ]]; then
+  CONFIG_VARS+=(
+    LAB_TOKEN CACHE_LAB_APP_URLS CACHE_LAB_SEED_START_ID CACHE_LAB_SEED_COUNT
+    CACHE_LAB_MODES CACHE_LAB_MODE_DURATION CACHE_LAB_VUS CACHE_LAB_THINK_TIME
+    CACHE_LAB_READ_EXPECTED_STATUSES CACHE_LAB_SAMPLE_ACTUATOR
+    CACHE_LAB_SEED_PATH CACHE_LAB_MODE_PATH CACHE_LAB_STATE_PATH CACHE_LAB_ACTUATOR_PATH
   )
 fi
 
@@ -211,9 +238,26 @@ printf 'remote write: %s\n' "$K6_PROMETHEUS_RW_SERVER_URL"
 if [[ "$IS_CHAOS" == "1" ]]; then
   printf 'scenarios   : %s -> %s\n' "$K6_SCENARIOS_DIR" "$K6_SCENARIOS_MOUNT"
   printf 'chaos ctl   : %s\n' "${CHAOS_CONTROLLER_URL:-http://chaos-controller:8081}"
-  printf 'chaos file  : %s (dir %s)\n' \
-    "${CHAOS_SCENARIO_FILE:-ha-app-failover.json}" "$CHAOS_SCENARIO_DIR"
-  printf 'chaos offset: %s\n' "${CHAOS_START_OFFSET:-0s}"
+  if [[ "$SCENARIO" == "db-failover" ]]; then
+    printf 'db target   : %s (ttl %ss, kill at %s, error window %s)\n' \
+      "${DB_FAILOVER_TARGET:-jl-mysql-2}" "${DB_FAILOVER_TTL_SECONDS:-45}" \
+      "${DB_FAILOVER_KILL_AT:-20s}" "${DB_FAILOVER_ERROR_WINDOW:-30s}"
+    printf 'db duration : %s (reads %s VU, writes %s VU every %s)\n' \
+      "${DB_FAILOVER_DURATION:-${CHAOS_DURATION:-2m}}" \
+      "${DB_FAILOVER_READ_VUS:-20}" "${DB_FAILOVER_WRITE_VUS:-1}" \
+      "${DB_FAILOVER_WRITE_INTERVAL:-2s}"
+  else
+    printf 'chaos file  : %s (dir %s)\n' \
+      "${CHAOS_SCENARIO_FILE:-ha-app-failover.json}" "$CHAOS_SCENARIO_DIR"
+    printf 'chaos offset: %s\n' "${CHAOS_START_OFFSET:-0s}"
+  fi
+fi
+if [[ "$IS_CACHE" == "1" ]]; then
+  printf 'cache app   : %s\n' "${CACHE_LAB_APP_URLS:-http://app-1:8080}"
+  printf 'cache modes : %s\n' \
+    "${CACHE_LAB_MODES:-off,null-cache,bloom,mutex,logical-expire,ttl-jitter,l1-cache,db-fallback}"
+  printf 'cache dwell : %s per mode (reads %s VU)\n' \
+    "${CACHE_LAB_MODE_DURATION:-20s}" "${CACHE_LAB_VUS:-10}"
 fi
 if [[ -n "$K6_SUMMARY_EXPORT" ]]; then
   printf 'summary     : %s (host dir %s)\n' "$K6_SUMMARY_EXPORT" "$K6_REPORT_DIR"

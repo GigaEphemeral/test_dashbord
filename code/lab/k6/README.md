@@ -8,7 +8,11 @@ adds run comparison (`compare.sh`) and the D9 bench dashboard. Task 22a adds
 the data-driven chaos timeline (`ha-failover.js` + `lib/chaos*.js`) that
 replays `code/lab/scenarios/*.json` against the chaos-controller. Task 23 adds
 the console-driven background load (`traffic.js` + the profile-gated
-`jl-traffic` compose service).
+`jl-traffic` compose service). Step 48 adds the two remaining HA/cache drills:
+`db-failover.js` (reads + idempotent writes while a MySQL node is killed) and
+`cache-lab.js` (seed once, then walk every `/lab/cache/mode` defense while
+reading the seeded range). Both are **opt-in**: they change cluster or cache
+state and are not part of the bench baseline.
 
 ## Layout
 
@@ -22,8 +26,12 @@ code/lab/
 │   ├── lib/chaos.js           # controller client, chaos_events counter, loader
 │   ├── scenarios/{smoke,load,stress,spike,soak}.js
 │   ├── scenarios/ha-failover.js  # product load + chaos timeline + teardown
+│   ├── scenarios/db-failover.js  # reads + idempotent writes + MySQL kill
+│   ├── scenarios/cache-lab.js    # seed + mode schedule + per-mode metrics
 │   ├── scenarios/traffic.js      # console-driven background read load (M2-5)
 │   ├── test/chaos-schema.test.mjs  # node --test schema regression suite
+│   ├── test/db-failover-scenario.test.mjs
+│   ├── test/cache-lab-scenario.test.mjs
 │   ├── run.sh                 # dockerized scenario runner (+ summary export)
 │   ├── reports/<run_id>/      # generated archives (gitignored)
 │   └── README.md
@@ -163,6 +171,149 @@ The controller also exposes `chaos_actions_total{action,target,result}` and
 `chaos_active_actions`; Grafana gets one annotation per action (Task 21).
 `http_req_duration{flow:chaos}` covers controller latency and does not affect
 the product thresholds.
+
+## MySQL primary failover (`db-failover.js`, step 48)
+
+This is the k6 counterpart of the step-31 Router drill. Three k6 scenarios run
+in parallel for `DB_FAILOVER_DURATION`:
+
+- `read` — constant VUs reading `PRODUCT_ID` through Nginx. Reads must never
+  fail, including during the election.
+- `write` — constant VUs creating idempotent orders with a fresh
+  `Idempotency-Key` every `DB_FAILOVER_WRITE_INTERVAL`.
+- `chaos` — one timeline VU that kills `DB_FAILOVER_TARGET` with
+  `DB_FAILOVER_TTL_SECONDS` through the chaos-controller, then `teardown`
+  always posts `/chaos/stop-all`.
+
+The kill event is built from env and validated with the same schema v1 rules as
+the JSON files (target pattern, datastore allow-list, TTL ceiling), so there is
+no new JSON to edit. Datastore targets remain **closed by default**: a run needs
+both gates widened by the operator.
+
+```bash
+TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
+LAB_TOKEN="$TOKEN" \
+  CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  DB_FAILOVER_TARGET=jl-mysql-2 DB_FAILOVER_TTL_SECONDS=45 \
+  DB_FAILOVER_KILL_AT=20s DB_FAILOVER_ERROR_WINDOW=30s \
+  DB_FAILOVER_DURATION=2m \
+  bash code/lab/k6/run.sh db-failover
+```
+
+**Threshold rationale.** `http_req_failed{flow:product}` must be `rate==0`:
+the whole point of the Router is that reads stay available while the write port
+moves. Writes are different — the election window is allowed to lose writes, so
+the verdict is `db_failover_write_success: rate>DB_FAILOVER_WRITE_MIN_SUCCESS_RATE`
+(default `0.85`). With 1 write VU every 2s over 2m (about 60 writes), a 30s
+election window can lose at most ~15 writes; the 85% floor accepts that
+documented window and still fails a run whose writes stay broken afterwards.
+
+The expected 5xx list (`DB_FAILOVER_WRITE_EXPECTED_STATUSES`, default
+`500,502,503,504`) is passed to `http.expectedStatuses` **only** between
+`DB_FAILOVER_KILL_AT` and `DB_FAILOVER_KILL_AT + DB_FAILOVER_ERROR_WINDOW`.
+Outside that window the same status is a real flow/server error, so a
+regression cannot hide behind the election budget. Expected and real failures
+are counted separately:
+
+| Metric | Meaning |
+|---|---|
+| `db_failover_reads{result}` | read outcomes (`ok` / `error`). |
+| `db_failover_writes{result}` | write outcomes (`created` / `expected-election-error` / `failed`). |
+| `db_failover_write_success` | rate over every write; the threshold metric. |
+| `db_failover_expected_write_errors{status}` | 5xx accepted inside the window. |
+| `db_failover_write_failures{status}` | every other write failure, inside or outside the window. |
+
+Orders consume stock for `PRODUCT_ID`; run `reset-lab.sh` before repeating a
+long drill. `DB_FAILOVER_TTL_SECONDS` auto-starts the old primary, but if the
+TTL ends after the load window the teardown `stop-all` restores it first.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LAB_TOKEN` | unset (required) | `X-Lab-Token` for the chaos-controller. |
+| `DB_FAILOVER_TARGET` | `jl-mysql-2` | MySQL container to kill; must match both gates above. |
+| `DB_FAILOVER_TTL_SECONDS` | `45` | Auto-`start` TTL, bounded by `CHAOS_MAX_TTL`. |
+| `DB_FAILOVER_KILL_AT` | `20s` | Offset from load start to the kill. |
+| `DB_FAILOVER_ERROR_WINDOW` | `30s` | Window in which configured write 5xx are expected. |
+| `DB_FAILOVER_DURATION` | `2m` (or `CHAOS_DURATION`) | Total load window; kill+error window must fit. |
+| `DB_FAILOVER_READ_VUS` | `20` | Constant read VUs. |
+| `DB_FAILOVER_WRITE_VUS` | `1` | Constant write VUs. |
+| `DB_FAILOVER_WRITE_INTERVAL` | `2s` | Sleep between order creates per VU. |
+| `DB_FAILOVER_READ_THINK_TIME` | `1s` | Sleep between reads per VU. |
+| `DB_FAILOVER_WRITE_EXPECTED_STATUSES` | `500,502,503,504` | Statuses accepted only inside the window. |
+| `DB_FAILOVER_WRITE_MIN_SUCCESS_RATE` | `0.85` | Write-success threshold (fraction in `(0,1)`). |
+
+## Cache experiment (`cache-lab.js`, step 48)
+
+This scenario drives the D10 cache experiment end to end:
+
+1. `setup()` calls `POST /lab/cache/seed` once (idempotent) on the internal lab
+   API and resets every app instance to `mode=off`.
+2. Constant VUs read the seeded ids `CACHE_LAB_SEED_START_ID..+COUNT-1`
+   (default `90001+`) through `BASE_URL` (Nginx).
+3. One timeline VU walks `CACHE_LAB_MODES` (default
+   `off → null-cache → bloom → mutex → logical-expire → ttl-jitter → l1-cache →
+   db-fallback`) on `CACHE_LAB_MODE_DURATION` dwells, calling
+   `POST /lab/cache/mode` on every URL in `CACHE_LAB_APP_URLS`.
+4. At the end of each dwell it samples `GET /lab/cache/state` and
+   `/actuator/prometheus`, then finally resets to `off`; `teardown()` resets
+   `off` again even if the timeline aborted.
+
+```bash
+TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
+LAB_TOKEN="$TOKEN" \
+  CACHE_LAB_APP_URLS='http://app-1:8080,http://app-2:8080,http://app-3:8080' \
+  CACHE_LAB_MODE_DURATION=20s \
+  bash code/lab/k6/run.sh cache-lab
+```
+
+This is **opt-in**: it writes 1000 experiment rows (`catalog_product`
+90000..90999 by default), warms Redis keys and flips the instance-level defense
+mode. Do not archive it as a bench baseline, and do not run it concurrently
+with another cache experiment.
+
+Reads are tagged with the schedule-derived `mode`, so a read that lands just
+after a switch can briefly carry the previous tag; the mode timeline logs the
+authoritative switch time. `429` is accepted as the db-fallback limiter's
+fast-fail (`42901`) and counted in `cache_lab_db_fallback_rejections`.
+
+Per-mode metrics (all also carry `run_id` from `baseOptions.tags`):
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `cache_lab_reads{mode,result}` | Counter | read outcomes (`ok` / `limited` / `error`). |
+| `cache_lab_read_errors{mode,status}` | Counter | unexpected read statuses. |
+| `cache_lab_mode_switches{mode,result}` | Counter | accepted/failed switch per app URL set. |
+| `cache_lab_db_fallback_rejections{mode}` | Counter | `42901` fast fails in db-fallback. |
+| `cache_lab_db_fallbacks{mode}` | Gauge | Δ `cache_db_fallbacks_total` over the dwell (actuator). |
+| `cache_lab_l1_hits{mode}` / `cache_lab_l1_requests{mode}` | Gauge | Δ L1 hits / L1 requests. |
+| `cache_lab_bloom_absents{mode}` | Gauge | Δ bloom `absent` rejections. |
+| `cache_lab_mutex_rebuilds{mode}` | Gauge | Δ mutex `rebuild` outcomes. |
+| `cache_lab_limiter_rejections{mode}` | Gauge | Δ avalanche limiter `rejected`. |
+| `cache_lab_state_l2_keys{mode}` | Gauge | live L2 experiment keys at dwell end. |
+| `cache_lab_state_l1_keys{mode}` | Gauge | live L1 experiment keys at dwell end. |
+| `cache_lab_state_live_markers{mode}` | Gauge | null-cache markers at dwell end. |
+| `cache_lab_state_bloom_size{mode}` | Gauge | bloom filter size at dwell end. |
+| `cache_lab_state_redis_reachable{mode}` | Gauge | number of app URLs with Redis reachable. |
+
+The actuator gauges are **deltas over each dwell**, so D10 can compare
+`off` with each defense on the same `run_id`. If `/actuator/prometheus` is not
+reachable the driver logs a warning and skips those gauges; state gauges still
+come from `/lab/cache/state`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LAB_TOKEN` | unset (required) | `X-Lab-Token` for `/lab/cache/**`. |
+| `CACHE_LAB_APP_URLS` | `http://app-1:8080` | Comma list of internal app base URLs to switch/sample. |
+| `CACHE_LAB_SEED_START_ID` | `90001` | First id read (must be inside the seed range). |
+| `CACHE_LAB_SEED_COUNT` | `200` | Number of consecutive ids read. |
+| `CACHE_LAB_MODES` | canonical 8-mode list | Ordered subset; duplicates/reordering are rejected. |
+| `CACHE_LAB_MODE_DURATION` | `20s` | Dwell per mode; read duration = modes × dwell. |
+| `CACHE_LAB_VUS` | `10` | Constant read VUs. |
+| `CACHE_LAB_THINK_TIME` | `200ms` | Sleep between reads per VU. |
+| `CACHE_LAB_READ_EXPECTED_STATUSES` | `200,429` | Accepted read statuses. |
+| `CACHE_LAB_SAMPLE_ACTUATOR` | `1` | `0` disables the `/actuator/prometheus` deltas. |
+| `CACHE_LAB_SEED_PATH` / `_MODE_PATH` / `_STATE_PATH` / `_ACTUATOR_PATH` | `/lab/cache/seed`, `/lab/cache/mode`, `/lab/cache/state`, `/actuator/prometheus` | Endpoint overrides. |
 
 ## Interactive background traffic (M2-5)
 
@@ -336,6 +487,8 @@ run manifest are deferred to Task 21/22 (chaos).
 | `spike.js` | 50 baseline → 800 VU for 60s, then down | seckill product `SECKILL_PRODUCT_ID` | 5xx/error < 1%; 409/429 are expected and counted |
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
 | `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
+| `db-failover.js` | 20 read VU + 1 write VU for `DB_FAILOVER_DURATION=2m`, plus one timeline VU | product reads + idempotent orders + MySQL kill | read failures exactly 0; write success > 85% |
+| `cache-lab.js` | 10 read VU for modes × dwell (default 8 × 20s), plus one mode VU | seeded 90001+ reads + `/lab/cache/mode` schedule | flow errors < 1%; per-mode `cache_lab_*` markers |
 | `traffic.js` | `TRAFFIC_VUS=50` constant for `TRAFFIC_DURATION=30m` | login → product read only (no stock consumed) | errors < 1%, product P95/P99 from Task 19; started/stopped from the console |
 | `d7.js` | identical to `load.js` (same stages/thresholds) | product reads only, **no login** | errors < 1%, product P95 < 300ms, P99 < 800ms |
 
@@ -487,6 +640,17 @@ BASE_URL=http://seckill-app-jdk8:8080 LOAD_DURATION=1m bash code/lab/k6/run.sh d
 # Chaos timeline: short live check on jl-app-3 only
 LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
   CHAOS_DURATION=30s CHAOS_VUS=6 bash code/lab/k6/run.sh ha-failover
+
+# MySQL primary failover (opt-in; widens the datastore gates)
+LAB_TOKEN="$TOKEN" \
+  CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  DB_FAILOVER_TARGET=jl-mysql-2 DB_FAILOVER_DURATION=2m \
+  bash code/lab/k6/run.sh db-failover
+
+# Cache experiment (opt-in; seeds data and flips the defense mode)
+LAB_TOKEN="$TOKEN" CACHE_LAB_MODE_DURATION=20s \
+  bash code/lab/k6/run.sh cache-lab
 ```
 
 Extra arguments before the script are passed to `k6 run`, for example
