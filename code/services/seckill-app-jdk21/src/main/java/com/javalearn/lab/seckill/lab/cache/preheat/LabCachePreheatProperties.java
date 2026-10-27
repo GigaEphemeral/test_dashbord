@@ -230,6 +230,8 @@ public class LabCachePreheatProperties {
         private long maximumSize;
         private long refreshAfterWriteSeconds;
         private long expireAfterWriteSeconds;
+        /** B0-03: register the Caffeine-native L1 stats series with Micrometer. */
+        private boolean micrometerStatsEnabled;
 
         public long getMaximumSize() {
             return maximumSize;
@@ -253,6 +255,14 @@ public class LabCachePreheatProperties {
 
         public void setExpireAfterWriteSeconds(long expireAfterWriteSeconds) {
             this.expireAfterWriteSeconds = expireAfterWriteSeconds;
+        }
+
+        public boolean isMicrometerStatsEnabled() {
+            return micrometerStatsEnabled;
+        }
+
+        public void setMicrometerStatsEnabled(boolean micrometerStatsEnabled) {
+            this.micrometerStatsEnabled = micrometerStatsEnabled;
         }
     }
 }
