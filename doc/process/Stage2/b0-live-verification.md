@@ -98,7 +98,54 @@ LAB_TOGGLE_{LOCK,IDEMPOTENCY,MQ,RATELIMIT,CIRCUITBREAKER,CACHE}=true
 
 ## 2. B0-02 `stock_oversold_total` 真机样本
 
-（进行中）
+现场：一次性 `curlimages/curl:8.10.1` 容器挂 `jl-net`（app 镜像无 curl，见手册 §4.2），脚本
+`/tmp/r1/b002.sh` 只读挂载进 `/work`；`--entrypoint sh /work/b002.sh jl-app-1 10`。
+证据：`/tmp/r1/b002-baseline.log`、`/tmp/r1/b002-burst.log`、`/tmp/r1/b002-after.log`、`/tmp/r1/b002-revert.log`。
+
+1. **关 `lock` 开关（POST /lab/toggles，app 侧）** — `{"key":"lock","value":false}` 返回
+   `{"lock":false,...,"cache":true}`，随后 GET 复核同为 false。
+2. **制造库存拒绝**（product 10 当时 `available=100`）：
+   - 单次超量：`quantity=100000` → `{"code":"40901","message":"Sold out"}` / `HTTP=409`；
+   - 12 并发 `quantity=50` → HTTP 码直方图 `2 × 200`、`10 × 409`。
+     合计「数据库防线挡下」应为 1 + 10 = **11**。
+3. **Prometheus 即时查询**（经 Nginx `/prom/`）：
+
+   ```
+   stock_oversold_total                       app-1 = 11   app-2 = 0  app-3 = 0
+   increase(stock_oversold_total[5m])         app-1 = 11.141345032412053  app-2/3 = 0
+   sum(increase(stock_oversold_total[5m]))    = 11.14522362960753          (> 0 ✓)
+   ```
+
+   `increase()` 的 11.14 是 Prometheus 对采样边界的外推（计数真实值 11），不是多计。
+   基线（打流量前）三条序列已在、值为 0，验证了 B0-02「急切注册 ⇒ 零值序列先于流量存在」。
+4. **订单表未超卖**（`docker exec jl-mysql mysql -N ... seckill`，`MYSQL_MODE=standalone` 的数据面即 dev 单节点）：
+
+   ```
+   select product_id,available from inventory_stock where product_id=10;   -> 10  0
+   select count(*),sum(quantity) from order_order where product_id=10 and user_id='r1-oversold';  -> 2  100
+   select min(available) from inventory_stock;                              -> 0
+   select count(*) from inventory_stock where available<0;                  -> 0
+   ```
+
+   售出 100 = 初始 `available` 100，`available` 落在 0 且全表无负值 ⇒ 条件 UPDATE 确实把 11 次超卖挡在数据库之前。
+
+### 现场复位
+
+- `POST /lab/toggles {"key":"lock","value":true}` 对 app-1/2/3 各一次，三台 GET 复核均为
+  `{lock:true, idempotency:true, mq:true, ratelimit:true, circuitbreaker:true, cache:true}`（默认态）。
+- 测试数据回收：`delete from order_order where user_id='r1-oversold'`（残留 0 行）、
+  `update inventory_stock set available=100 where product_id=10`（回到测试前值）。
+
+### 逐项结论
+
+| 步骤文档登记的项 | 结果 |
+|---|---|
+| `/actuator/prometheus` 导出 `stock_oversold_total` 名称不变 | PASS（Prometheus 端序列名即 `stock_oversold_total`，标签 `exported_instance`=app-1/2/3、`instance`=app-N:8080） |
+| 手工制造库存不足 → 样本计数 +1 | PASS（挡下 11 次 → 计数 11，`increase[5m]` = 11.14 > 0） |
+| 同步/异步各一次阻止不双计（样本层面） | 部分——本轮只造了同步 `POST /api/orders` 样本（清单口径即此）；异步消费路径未单独造样本，单测层已证（用例级各 +1） |
+
+**结论：PASS**
+
 
 ## 3. B0-03 Caffeine L1 统计序列
 
