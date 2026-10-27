@@ -174,6 +174,11 @@ if [[ "$IS_CACHE" == "1" ]]; then
     CACHE_LAB_MODES CACHE_LAB_MODE_DURATION CACHE_LAB_VUS CACHE_LAB_THINK_TIME
     CACHE_LAB_READ_EXPECTED_STATUSES CACHE_LAB_SAMPLE_ACTUATOR
     CACHE_LAB_SEED_PATH CACHE_LAB_MODE_PATH CACHE_LAB_STATE_PATH CACHE_LAB_ACTUATOR_PATH
+    CACHE_LAB_ABSENT_IDS CACHE_LAB_PROBE_EVERY
+    CACHE_LAB_PROBE_EXPECTED_STATUSES CACHE_LAB_PROBE_EXPECTED_CODE
+    CACHE_LAB_HOT_KEY_ID CACHE_LAB_HOT_KEY_EVERY
+    CACHE_LAB_RESEED_MODES CACHE_LAB_AVALANCHE_TTL_SECONDS
+    CACHE_LAB_ARM_MARGIN CACHE_LAB_STORM_SAMPLE_DELAY
   )
 fi
 
@@ -258,6 +263,13 @@ if [[ "$IS_CACHE" == "1" ]]; then
     "${CACHE_LAB_MODES:-off,null-cache,bloom,mutex,logical-expire,ttl-jitter,l1-cache,db-fallback}"
   printf 'cache dwell : %s per mode (reads %s VU)\n' \
     "${CACHE_LAB_MODE_DURATION:-20s}" "${CACHE_LAB_VUS:-10}"
+  printf 'cache probe : absent ids every %s iters, hot key every %s\n' \
+    "${CACHE_LAB_PROBE_EVERY:-10}" "${CACHE_LAB_HOT_KEY_EVERY:-25}"
+  if [[ -n "${CACHE_LAB_RESEED_MODES:-}" ]]; then
+    printf 'cache reseed: %s (avalanche ttl %ss, margin %s)\n' \
+      "$CACHE_LAB_RESEED_MODES" "${CACHE_LAB_AVALANCHE_TTL_SECONDS:-60}" \
+      "${CACHE_LAB_ARM_MARGIN:-15s}"
+  fi
 fi
 if [[ -n "$K6_SUMMARY_EXPORT" ]]; then
   printf 'summary     : %s (host dir %s)\n' "$K6_SUMMARY_EXPORT" "$K6_REPORT_DIR"
