@@ -65,13 +65,10 @@ services:
     labels:
       lab: "java-learn"
       lab.role: "toxiproxy"
-    healthcheck:
-      # The image is Alpine-based (busybox wget); /version answers as soon as
-      # the API socket is up.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${TOXIPROXY_API_PORT}/version | grep -q '\"version\"'"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+    # No in-container healthcheck: shopify/toxiproxy:2.9.0 is distroless (no
+    # shell, no wget), so a CMD-SHELL probe can never run. Readiness is owned by
+    # the one-shot init job below, which polls /version from a shell-capable
+    # image and is a hard dependency of the app tier.
       start_period: 5s
 
   # --- create-or-update the two proxies --------------------------------------
@@ -85,7 +82,9 @@ services:
   # default entrypoint (/toxiproxy-server) is replaced by /bin/sh, so the job
   # needs no extra image and no mounted script.
   toxiproxy-init:
-    image: ${TOXIPROXY_IMAGE}
+    # A shell-capable sidecar: the toxiproxy image is distroless and cannot run
+    # the wget-based upsert script (or any healthcheck) itself.
+    image: ${TOXIPROXY_INIT_IMAGE:-alpine:3.19}
     container_name: jl-toxiproxy-init
     restart: "no"
     profiles: ["chaos-proxy"]
@@ -97,7 +96,7 @@ services:
       TOXIPROXY_MYSQL_PORT: "${TOXIPROXY_MYSQL_PORT}"
     depends_on:
       toxiproxy:
-        condition: service_healthy
+        condition: service_started
     networks:
       - jl-net
     labels:
@@ -108,6 +107,16 @@ services:
       - |
         set -eu
         api="$$TOXIPROXY_API_URL"
+        tries=0
+        while ! wget -qO- "$$api/version" >/dev/null 2>&1; do
+          tries=$$((tries + 1))
+          if [ "$$tries" -ge 60 ]; then
+            echo "toxiproxy: API not reachable after 60s at $$api" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "toxiproxy: API ready at $$api"
         upsert() {
           name="$$1"
           listen="$$2"

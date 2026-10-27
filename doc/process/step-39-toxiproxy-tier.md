@@ -163,3 +163,16 @@ bash -n OK
 ```
 
 文件：`code/lab/docker/compose.toxiproxy.yml`（新）、`code/lab/docker/.env.example`、`code/lab/scripts/up.sh`、`code/lab/scripts/down.sh`、`.gitattributes`（覆盖层内嵌 init 脚本必须 LF）。
+
+
+---
+
+## 补充（2026-10-27 真机演练）：镜像无 shell，init 必须独立镜像
+
+真机首次拉起时报 `container jl-toxiproxy is unhealthy`，根因是 `shopify/toxiproxy:2.9.0` 为 **distroless** 镜像：容器内没有 `/bin/sh`，也没有 `wget`。
+
+- 本文件正文里「busybox wget 随镜像提供」的说法**不成立**，已由 `compose.toxiproxy.yml` 修正：
+  - 删除 toxiproxy 容器的 in-container healthcheck（distroless 无法执行任何 shell 探针）；
+  - `toxiproxy-init` 改用独立镜像 `TOXIPROXY_INIT_IMAGE=alpine:3.19`（可配），`depends_on` 降为 `service_started`，脚本开头轮询 `/version` 最多 60s；
+  - 新增 `.env.example` / `.env` 键 `TOXIPROXY_INIT_IMAGE`。
+- 演练与证据见 `doc/process/step-43-toxiproxy-live-drill.md`。
