@@ -141,13 +141,13 @@ LAB_TOKEN="$TOKEN" \
 
 # 5. 仍未完成 / 后续
 
-## 5.1 `db-failover` live run 已完成
+## 5.1 两个 live run 都已完成
 
-见第 6 节；`cache-lab` 仍未真机执行。
+`db-failover` 见第 6 节，`cache-lab` 见第 7 节（结论：链路绿，但场景没有制造它要防的缺陷）。
 
 ## 5.2 其余条目
 
-1. **D10 相关性未验收**：`cache_lab_*` gauge 依赖 `/actuator/prometheus` 与 `/lab/cache/state` 的真实序列；需要在真栈确认 `cache_db_fallbacks_total`、`cache_l1_requests_total` 等名称/标签与 step-37 一致，并确认 remote-write 后 PromQL 能按 `run_id` + `mode` 聚合。当前 D10 没有 annotation，切换时间点仍靠 k6 日志与 gauge 时间窗。
+1. **D10 相关性未验收**：`cache_lab_*` gauge 依赖 `/actuator/prometheus` 与 `/lab/cache/state` 的真实序列；真机已确认 k6 侧 13 个 `k6_cache_lab_*` 序列带 `run_id`/`mode`/`result`/`scenario` 进了 Prometheus，但 **D10 只有 `instance` 变量、没有 `run_id`、也没有任何 k6 面板**，所以「按 run_id 对齐」仍未达成（见 §7.1 第 4 条）。
 2. **模式切换是单实例 API**：要整层一致必须传 `CACHE_LAB_APP_URLS` 三个实例；不传时 1/3 流量命中被切模式，D10 的 `instance` 变量会显示差异，这是预期但容易误读。
 3. **读的 mode 标签是时间表推导**：与 app 实际切换有毫秒级偏差；没有从响应头/state 回读每个请求的真实模式。
 4. **actuator 采样的边界**：若 management endpoint 未暴露、返回 404 或 app 重启，差值会跳过或跨模式累积；`CACHE_LAB_SAMPLE_ACTUATOR=0` 可关闭，state gauge 不受影响。
@@ -233,5 +233,87 @@ remote write 正常，上述 `k6_*` 序列都能在 Prometheus 按 `run_id` 查�
 | 本文档 | 第 5 节收口 + 第 6 节真机运行 |
 
 **未改动**：控制器与 app 代码（缺陷在 k6 客户端超时，服务端同步语义是设计选择）；
-`cache-lab` 场景与其真机运行仍是待办。
+`cache-lab` 场景代码本轮未改（其真机运行见第 7 节）。
+
+# 7. 补充 · `cache-lab` 真机运行（2026-10-27）
+
+> 执行环境：本机 Windows 10 + Docker，32 个 lab 容器；app 层 `MYSQL_MODE=standalone`
+> （缓存实验与 MySQL 拓扑无关）；`CACHE_LAB_APP_URLS` 显式传三实例做**整层**切换。
+> 命令：`LAB_TOKEN=$TOKEN CACHE_LAB_APP_URLS='http://app-1:8080,http://app-2:8080,http://app-3:8080'
+> CACHE_LAB_MODE_DURATION=30s bash code/lab/k6/run.sh cache-lab`
+> `run_id=k6-20261027-164307-cache1`，归档 `code/lab/k6/reports/20261027-164307-cache-lab/`（gitignored），
+> k6 退出 **0**，两条阈值全绿（`flow_errors` 0.00%、`http_req_failed{flow:cache_read}` 0.00%）。
+
+## 7.1 §4.2 验收逐条结果
+
+| # | 期望 | 实测 |
+|---|---|---|
+| 1 | seed 覆盖读取区间 | `inserted=0 alreadyPresent=1000 rows=1000`（此前批次已 seed，幂等生效）；`reads [90001,90200]` |
+| 2 | 每模式切换 +1，最后回 `off` | `cache_lab_mode_switches=9`（8 个 dwell + 1 次 final reset），每条日志 `apps=3/3`；teardown 后三实例 `GET /lab/cache/mode` 均为 `off` |
+| 3 | 每 mode 有读样本、0 读错误 | 11618 reads / 11619 iterations（≈48 rps），`checks_succeeded=100%`，`http_req_failed{flow:cache_read}=0`；HTTP p95 9.36ms / p99 23.13ms / max 451.76ms。**`cache_lab_reads{result="limited"}` 与 `cache_lab_db_fallback_rejections` 全程为 0**：10 VU + 200ms think 打不满 db-fallback 的限流预算 |
+| 4 | D10 按 `run_id` 对齐 | **未达成**。k6 侧 13 个 `k6_cache_lab_*` 序列确实进了 Prometheus，标签为 `run_id`/`mode`/`result`/`scenario`；但 D10 只有 `instance` 变量、没有 `run_id`、也没有任何 k6 面板，只能靠时间窗对齐（§7.3） |
+| 5 | state gauge 与 `/lab/cache/state` 一致 | `state_redis_reachable=3`（三实例都通）、`state_bloom_size=3066`、`state_l1_keys 561..600`、`state_l2_keys 6..606` |
+
+## 7.2 一个真缺陷：场景没有制造它要防的缺陷
+
+按 dwell 取的 k6 actuator 差值 gauge 显示，八种模式里**只有雪崩被真正触发，而且是被 seed 的 60s TTL 意外触发的**：
+
+| gauge（每 dwell 差值 / 采样值） | off | null-cache | bloom | mutex | logical-expire | ttl-jitter | l1-cache | db-fallback |
+|---|---|---|---|---|---|---|---|---|
+| `cache_lab_db_fallbacks` | 1 | 0 | **398** | 0 | 0 | 0 | 0 | 0 |
+| `cache_lab_l1_hits` | 885 | 1437 | 1093 | 1433 | 1472 | 1470 | 1474 | 1369 |
+| `cache_lab_l1_requests` | 1447 | 1467 | 1440 | 1468 | 1472 | 1471 | 1475 | 1372 |
+| `cache_lab_bloom_absents` | 0 | 0 | **0** | 0 | 0 | 0 | 0 | 0 |
+| `cache_lab_mutex_rebuilds` | 0 | 0 | 0 | **0** | 0 | 0 | 0 | 0 |
+| `cache_lab_limiter_rejections` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
+| `cache_lab_state_l2_keys` | 606 | **6** | 603 | 603 | 603 | 603 | 603 | 603 |
+
+三个成因，都能对上代码/配置：
+
+1. **读集合里没有不存在的 id** → 穿透防护无事可做。`null-cache` 只为「查不到的 id」写标记，`bloom` 只拦截「不在过滤器里的 id」；场景只读 seed 出来的 90001..90200，于是 `bloom_absents=0`、`state_live_markers=0`。（`doc/design/details/03-缓存体系.md` 的手工演练用的是不存在的 `99999`，所以能看到效果。）
+2. **读集合里没有热点键** → 击穿防护无事可做。热点键是 `start-id + hot-key-index = 90999`（`LAB_CACHE_SEED_HOT_KEY_INDEX:999`，TTL 300s），与读取区间 90001..90200 不相交，所以 `mutex_rebuilds=0`、logical 的 stale-serve 也没有样本。
+3. **雪崩是「意外」触发的，且落在错误的模式窗口**。seed 把 200 个键写成同一个 `avalanche-ttl-seconds=60`，seed 后第 60 秒集体过期——正好是本次 `bloom` dwell 的起点：`null-cache` dwell 结束时 L2 只剩 **6** 个键，随后 30s 出现 **398** 次 DB 回落，下一个采样 L2 又回到 603。这既是雪崩的真实症状，也说明 **dwell 与 seed TTL 不同步时，模式对比会被污染**。
+
+结论：`cache-lab` 证明了「canonical 时间表 + 整层切换 + 按 mode 打标 + teardown 复位」这条链路（§7.1 的 1/2/3/5 全绿），
+但**证伪了** README 里「重点看 off 与各保护态的 DB 回落差异」这句——off dwell 的 DB 回落是 1 次、bloom dwell 是 398 次，
+差异来自 seed TTL 的时序而不是防护模式。后续必须给场景补「制造缺陷」的能力：
+读不存在的 id（穿透）、读热点键并让它变冷（击穿）、按 dwell 重新 arm 同 TTL 键（雪崩）。
+
+## 7.3 时间线证据（dwell 与切换点）
+
+k6 日志（UTC）与 30s dwell 完全对齐，每次切换都是 `apps=3/3`：
+
+| t | 模式 | 日志时间 |
+|---|---|---|
+| +0s | off | 08:43:11 |
+| +30s | null-cache | 08:43:41 |
+| +60s | bloom | 08:44:11 |
+| +90s | mutex | 08:44:41 |
+| +120s | logical-expire | 08:45:12 |
+| +150s | ttl-jitter | 08:45:42 |
+| +180s | l1-cache | 08:46:12 |
+| +210s | db-fallback | 08:46:42 |
+| +240s | final reset `off` + teardown ×3 | 08:47:12 |
+
+复现查询（Prometheus 未发布宿主端口，走 Nginx 代理）：
+
+```bash
+curl -s 'http://127.0.0.1:8080/prom/api/v1/query_range' --data-urlencode \
+  'query=sum by (mode) (k6_cache_lab_db_fallbacks{run_id="k6-20261027-164307-cache1"})' \
+  --data-urlencode 'start=2026-10-27T08:43:00Z' --data-urlencode 'end=2026-10-27T08:47:40Z' \
+  --data-urlencode 'step=30s'
+```
+
+## 7.4 本次改动的文件
+
+| 文件 | 改动 |
+|---|---|
+| `doc/readme.md` | §4.1/§4.4 的 `docker exec jl-app-N sh -c 'curl ...'` 全部改成 `wget`：运行镜像是 `eclipse-temurin:*-alpine`，**只有 BusyBox wget、没有 curl**，照抄原命令会报 `sh: curl: not found`（本次实测）；§4.1 补 k6 `cache-lab` 入口与副作用说明 |
+| 本文档 | 第 5 节收口 + 第 7 节真机运行与证伪结论 |
+
+**未改动**：`scenarios/cache-lab.js` 与 compose —— §7.2 的三个成因需要改场景与
+`LAB_CACHE_SEED_*` 的 compose 透传（当前 `x-app-env` 锚点里没有任何 `LAB_CACHE_*`，
+所以 app 只能用 application.yml 默认值：热点键 TTL 300s、雪崩 TTL 60s），
+这部分单独成步。
+
 

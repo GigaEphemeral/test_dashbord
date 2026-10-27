@@ -286,3 +286,29 @@
     pattern: "CHAOS_HTTP_TIMEOUT', '20s'"
   expect: true
   last_verified: 2026-10-27
+
+- id: no-curl-commands-for-app-containers
+  polarity: negative
+  doc:
+    - doc/readme.md
+    - doc/避坑/16-app-image-has-no-curl.md
+  statement: "doc/readme.md 里不存在 `docker exec jl-app-N ... curl` 形式的命令：运行镜像 eclipse-temurin:*-alpine 没有 curl，只有 BusyBox wget（照抄 curl 会报 not found）"
+  verify:
+    kind: grep_count
+    path: doc/readme.md
+    pattern: "docker exec jl-app-[0-9].*curl"
+  expect: 0
+  last_verified: 2026-10-27
+
+- id: no-curl-commands-in-design-runbooks
+  polarity: negative
+  doc:
+    - doc/design/details/03-缓存体系.md
+    - doc/design/details/07-线程实验室.md
+  statement: "细节设计里的 5 分钟演示脚本也不依赖 app 容器内的 curl（nginx 容器内打 app 用 http://app-N:8080）"
+  verify:
+    kind: grep_count
+    path: doc/design/details
+    pattern: "docker exec jl-app-[0-9].*curl"
+  expect: 0
+  last_verified: 2026-10-27

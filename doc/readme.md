@@ -82,14 +82,44 @@ bash code/lab/scripts/smoke.sh             # 期望 7/7
 
 ### 4.1 缓存四类防护（D10）
 
-1. `POST /lab-api/...`？不是——缓存实验走应用内端点，操作台尚未提供页面时用容器内 curl：
+1. 缓存实验走**应用内**端点（Nginx 不代理 `/lab/**`）。运行镜像是
+   `eclipse-temurin:21-jdk-alpine`，**只有 BusyBox wget、没有 curl**，所以用 wget；
+   `$LAB_TOKEN` 由容器自身环境提供，不会出现在宿主机命令行里：
    ```bash
-   docker exec jl-app-1 sh -c 'curl -s -X POST localhost:8080/lab/cache/seed -H "X-Lab-Token: $LAB_TOKEN"'
-   docker exec jl-app-1 sh -c 'curl -s -X POST localhost:8080/lab/cache/mode -H "X-Lab-Token: $LAB_TOKEN" -H "Content-Type: application/json" -d "{\"mode\":\"bloom\"}"'
+   docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-data="{}" http://localhost:8080/lab/cache/seed'
+   docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --header="Content-Type: application/json" --post-data="{\"mode\":\"bloom\"}" http://localhost:8080/lab/cache/mode'
+   docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" http://localhost:8080/lab/cache/state'
    ```
 2. 依次切 `off → null-cache/bloom`（穿透）、`mutex/logical-expire`（击穿）、`ttl-jitter/l1-cache/db-fallback`（雪崩）。
 3. 在 Grafana **D10** 对比：DB fallback 按 reason 堆叠、L1/L2 命中率、布隆拦截、预热条数。
-4. `off` 是「缺陷可见」基线：同样的请求会打出 DB 回退尖峰。
+4. `off` 是「缺陷可见」基线：同样的请求会打出 DB 回退尖峰。**前提是请求真的打得到缺陷**——
+   要么读一个不存在的 id（如 `99999`，穿透），要么先 `docker exec jl-redis redis-cli DEL cache:product:90999`
+   再并发读热点键（击穿），要么等 seed 的同 TTL 键集体过期（雪崩，默认 60s）。只读存在的普通商品，
+   四种防护的计数器都不会动（2026-10-27 真机实测，见 `doc/process/step-48-k6-ha-cache-scenarios.md` §7.2）。
+
+**带压测的版本**（k6 `cache-lab`：10 VU 读 90001+，同时按 canonical 顺序整层切八种模式）：
+
+```bash
+TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
+LAB_TOKEN="$TOKEN" \
+  CACHE_LAB_APP_URLS='http://app-1:8080,http://app-2:8080,http://app-3:8080' \
+  CACHE_LAB_MODE_DURATION=30s \
+  bash code/lab/k6/run.sh cache-lab
+```
+
+前提与副作用：默认只切 `http://app-1:8080`，那样经 Nginx 的读只有约 1/3 落在被切模式上，
+要整层一致必须显式传三个实例；`setup()` 会 seed `catalog_product` 90000..90999（幂等，重复跑 `inserted=0`）
+并重建 Bloom、预热雪崩键；`429` 是 db-fallback 限流的预期结果，不算错误；
+`teardown()` 会把所有实例复位成 `off`（时间线中途失败也会复位）。
+
+实测（2026-10-27，`run_id=k6-20261027-164307-cache1`，dwell 30s，归档
+`code/lab/k6/reports/20261027-164307-cache-lab/`）：k6 退出 **0**，11618 次读**零失败**、checks 100%、
+p95 9.36ms / p99 23.13ms；9 次切换（8 dwell + 1 次 final reset）全部 `apps=3/3`，teardown 后三实例都是 `off`；
+k6 侧 13 个 `k6_cache_lab_*{run_id,mode,result}` 序列进了 Prometheus，可与 D10 按 30s dwell 时间窗对齐。
+**已知缺口**：读取区间 90001..90200 全部存在且不含热点键 90999，所以穿透/击穿两族的计数器全程为 0
+（`bloom_absents`、`mutex_rebuilds`、`live_markers` 都是 0），唯一的 398 次 DB 回落来自 seed 的 60s 同 TTL
+键集体过期，且落在 `bloom` dwell 而不是雪崩族——证据与三个成因见
+`doc/process/step-48-k6-ha-cache-scenarios.md` §7.2，场景侧修复单独成步。
 
 ### 4.2 Redis Sentinel 切换（D11 / 日志）
 
@@ -144,10 +174,13 @@ teardown 后 `/chaos/actions` 为空。证据与阈值预算的算术见
 
 ```bash
 # 注入七种故障之一（deadlock/stuck/cpu-burn/heap-leak/oom/thread-leak/starvation）
-docker exec jl-app-1 sh -c 'curl -s -X POST localhost:8080/lab/thread/fault -H "X-Lab-Token: $LAB_TOKEN" -H "Content-Type: application/json" -d "{\"mode\":\"deadlock\",\"hold\":\"auto\",\"ttlSeconds\":120}"'
+docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --header="Content-Type: application/json" --post-data="{\"mode\":\"deadlock\",\"hold\":\"auto\",\"ttlSeconds\":120}" http://localhost:8080/lab/thread/fault'
 # 六态演示线程
-docker exec jl-app-1 sh -c 'curl -s -X POST localhost:8080/lab/thread/lifecycle/start -H "X-Lab-Token: $LAB_TOKEN"'
+docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-data="" http://localhost:8080/lab/thread/lifecycle/start'
 ```
+
+> 运行镜像里没有 `curl`（`eclipse-temurin:*-alpine` 只带 BusyBox `wget`），所以 `/lab/**` 一律用 wget；
+> 宿主机侧的 `/lab-api/**` 与 `/api/**` 仍用 curl（走 `127.0.0.1:8080`）。
 - D6 看 `thread_lab_demo_state_code`（六态）与 `thread_lab_lifecycle_state_code`（故障 ACTIVE/PAUSED/STOPPED）是**两台不同的状态机**。
 - `freeze` 会抓一份 `jcmd` 快照到 `doc/process/snapshots/<时间戳>_<instance>/`（thread dump / heap info / 类直方图 + metadata + 分析模板）。
 - 演示 `true deadlock` 需显式开 `LAB_THREAD_DEADLOCK_TRUE=true`；默认模式是可排空的反转（不会永久死锁）。

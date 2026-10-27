@@ -118,7 +118,7 @@
 # 待定事项和注意事项
 
 - **5 分钟演示脚本（如何读一份快照）**：
-  1. `docker exec jl-app-1 curl -s -XPOST -H "X-Lab-Token: $LAB_TOKEN" http://127.0.0.1:8080/lab/thread/lifecycle/start`；
+  1. `docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-data="" http://127.0.0.1:8080/lab/thread/lifecycle/start'`（运行镜像是 `eclipse-temurin:21-jdk-alpine`，**没有 curl**，只有 BusyBox `wget`；`$LAB_TOKEN` 由容器自身环境提供，2026-10-27 更正，原写法照抄会报 `curl: not found`）；
   2. 两次 `.../lifecycle/step`（进入 BLOCKED、再到 WAITING），然后 `.../lifecycle/freeze`——返回 200 即代表 bundle 已落盘；
   3. `docker cp jl-app-1:/app/doc/process/snapshots/<dir> .`，先看 `metadata.json`（哪个实例、哪一步、JVM 版本/uptime），再 `grep "java.lang.Thread.State:" thread-dump.txt | sort | uniq -c`，`grep -A 20 '"thread-lab-demo"' thread-dump.txt` 对照六态，`head -20 class-histogram.txt` 看 Top 类；
   4. 配了 `LAB_THREAD_SNAPSHOT_GRAFANA_URL` 时，Grafana 时间轴上会出现 `snapshot` 标签的 annotation，与 `thread_lab_demo_state_code` 的台阶对齐；
