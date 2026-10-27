@@ -32,6 +32,11 @@ const FAULT_TTL_SECONDS = 10;
 // Waiting for cache traffic can take a scrape interval (5s) plus two samples
 // for rate()[1m] to leave zero; reuse the existing polling budget, widened.
 const MOTION_TIMEOUT_MS = Math.max(ACTION_TIMEOUT_MS * 2, 30000);
+// Public contract of CacheDefenseMode; the cache page renders exactly these keys.
+const CACHE_MODES = [
+  'off', 'null-cache', 'bloom', 'mutex',
+  'logical-expire', 'ttl-jitter', 'l1-cache', 'db-fallback',
+];
 
 let passed = 0;
 const failures = [];
@@ -138,6 +143,15 @@ async function restoreLabState(page) {
     await apiPost('/chaos/app/app-1/lab/thread/stop-all');
   } catch (err) {
     console.log(`WARN  could not stop thread faults: ${err.message}`);
+  }
+  // The cache mode is per-instance and survives a crashed run; normalize every
+  // instance back to off so the next demo starts from the documented baseline.
+  for (const instance of ['app-1', 'app-2', 'app-3']) {
+    try {
+      await apiPost(`/chaos/app/${instance}/lab/cache/mode`, { mode: 'off' });
+    } catch (err) {
+      console.log(`WARN  could not reset ${instance} cache mode to off: ${err.message}`);
+    }
   }
   if (page && (await page.getByTestId('wizard-refresh').count()) > 0) {
     try {
@@ -315,6 +329,72 @@ async function main() {
       Array.isArray(leftover.data) && leftover.data.length === 0,
       JSON.stringify(leftover.data),
     );
+
+    // --- Cache lab page (second proxy allow-list + 5s poll) ---------------
+    await page.getByTestId('nav-cache').click();
+    await expectCondition('cache lab page opens with a known mode and D10 link', async () => {
+      if ((await page.getByTestId('cache-page').count()) === 0) {
+        return { ok: false, detail: 'cache page not rendered' };
+      }
+      const instanceValue = await page.getByTestId('cache-instance').inputValue();
+      const mode = ((await page.getByTestId('cache-mode').textContent()) || '').trim();
+      const strategy = (await page.getByTestId('cache-strategy').textContent()) || '';
+      const link = page.getByTestId('cache-grafana-link');
+      const href = (await link.getAttribute('href')) || '';
+      const target = await link.getAttribute('target');
+      const ok = instanceValue === 'app-1'
+        && CACHE_MODES.includes(mode)
+        && strategy.includes('defense.mode')
+        && strategy.includes('击穿防护')
+        && href.includes('/d/ha-d10')
+        && target === '_blank';
+      return {
+        ok,
+        detail: `instance=${instanceValue} mode=${mode} href=${href} target=${target}`,
+      };
+    });
+
+    await page.getByTestId('cache-mode-select').selectOption('null-cache');
+    await page.getByTestId('cache-mode-apply').click();
+    await expectText(
+      page.getByTestId('cache-mode'),
+      'null-cache',
+      'cache mode switches to null-cache through the proxy',
+    );
+
+    await page.getByTestId('cache-mode-select').selectOption('off');
+    await page.getByTestId('cache-mode-apply').click();
+    await expectText(
+      page.getByTestId('cache-mode'),
+      'off',
+      'cache mode switches back to off through the proxy',
+    );
+
+    await page.getByTestId('cache-seed').click();
+    await expectCondition('cache seed returns an id range and row count', async () => {
+      const result = page.getByTestId('cache-seed-result');
+      if ((await result.count()) === 0) {
+        return { ok: false, detail: 'seed result not rendered' };
+      }
+      const range = ((await page.getByTestId('cache-seed-range').textContent()) || '').trim();
+      const rows = ((await page.getByTestId('cache-seed-rows').textContent()) || '').trim();
+      const enabled = await page.getByTestId('cache-seed').isEnabled();
+      const ok = /^ids \d+–\d+$/.test(range) && /^rows \d+$/.test(rows) && enabled;
+      return { ok, detail: `${range}; ${rows}; buttonEnabled=${enabled}` };
+    }, ACTION_TIMEOUT_MS * 2);
+
+    await page.getByTestId('cache-preheat-run').click();
+    await expectCondition('cache preheat reports the manual run it just did', async () => {
+      const last = page.getByTestId('cache-preheat-last');
+      if ((await last.count()) === 0) {
+        return { ok: false, detail: 'last run not rendered' };
+      }
+      const text = (await last.textContent()) || '';
+      return {
+        ok: text.includes('manual') && text.includes('requested'),
+        detail: text.trim(),
+      };
+    });
 
     // --- Animation view: topology / instances / cache flow ----------------
     await page.getByTestId('nav-animation').click();

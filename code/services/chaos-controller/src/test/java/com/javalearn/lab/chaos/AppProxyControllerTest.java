@@ -91,6 +91,25 @@ class AppProxyControllerTest {
     }
 
     @Test
+    void postForwardsTheRawCacheModeJsonBody() throws Exception {
+        when(appProxyService.forward(anyString(), anyString(), anyString(), any()))
+                .thenReturn(new ProxyResponse(200, "{\"code\":\"0\",\"data\":{\"mode\":\"null-cache\"}}"));
+        String request = "{\"mode\":\"null-cache\"}";
+
+        mockMvc.perform(post("/chaos/app/app-2/lab/cache/mode")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mode").value("null-cache"));
+
+        ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
+        verify(appProxyService).forward(org.mockito.ArgumentMatchers.eq("app-2"),
+                org.mockito.ArgumentMatchers.eq("POST"),
+                org.mockito.ArgumentMatchers.eq("/lab/cache/mode"), body.capture());
+        assertThat(new String(body.getValue(), StandardCharsets.UTF_8)).isEqualTo(request);
+    }
+
+    @Test
     void postWithoutABodyStillReachesTheService() throws Exception {
         when(appProxyService.forward(anyString(), anyString(), anyString(), any()))
                 .thenReturn(new ProxyResponse(200, "{\"code\":\"0\",\"data\":null}"));

@@ -17,6 +17,8 @@ class AppProxyServiceTest {
 
     private static final byte[] FAULT_BODY = "{\"mode\":\"cpu-burn\",\"hold\":\"auto\",\"ttlSeconds\":5}"
             .getBytes(StandardCharsets.UTF_8);
+    private static final byte[] CACHE_MODE_BODY = "{\"mode\":\"null-cache\"}"
+            .getBytes(StandardCharsets.UTF_8);
 
     private final RecordingGateway gateway = new RecordingGateway();
     private final ChaosProperties.AppProxy config = new ChaosProperties.AppProxy();
@@ -79,6 +81,69 @@ class AppProxyServiceTest {
     void bodiesOnOtherPostPathsAreDropped() {
         service.forward("app-1", "POST", "/lab/thread/stop-all", FAULT_BODY);
         assertThat(gateway.body).isNull();
+    }
+
+    @Test
+    void cacheReadPathsAreForwardedToTheSelectedInstance() {
+        ProxyResponse response = service.forward("app-2", "GET", "/lab/cache/state", new byte[0]);
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(gateway.instance).isEqualTo("app-2");
+        assertThat(gateway.method).isEqualTo("GET");
+        assertThat(gateway.path).isEqualTo("/lab/cache/state");
+        assertThat(gateway.body).isNull();
+
+        service.forward("app-3", "get", "/lab/cache/preheat", new byte[0]);
+        assertThat(gateway.instance).isEqualTo("app-3");
+        assertThat(gateway.method).isEqualTo("GET");
+        assertThat(gateway.path).isEqualTo("/lab/cache/preheat");
+        assertThat(gateway.body).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "/lab/cache/seed",
+            "/lab/cache/preheat"
+    })
+    void cacheBodylessPostPathsAreForwardedWithoutABody(String path) {
+        service.forward("app-1", "POST", path, new byte[0]);
+        assertThat(gateway.method).isEqualTo("POST");
+        assertThat(gateway.path).isEqualTo(path);
+        assertThat(gateway.body).isNull();
+    }
+
+    @Test
+    void cacheModeBodyIsForwardedVerbatim() {
+        service.forward("app-1", "POST", "/lab/cache/mode", CACHE_MODE_BODY);
+        assertThat(gateway.method).isEqualTo("POST");
+        assertThat(gateway.path).isEqualTo("/lab/cache/mode");
+        assertThat(gateway.body).isEqualTo(CACHE_MODE_BODY);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "/lab/cache/seed",
+            "/lab/cache/preheat"
+    })
+    void cacheBodiesOnSeedAndPreheatAreDropped(String path) {
+        service.forward("app-1", "POST", path, CACHE_MODE_BODY);
+        assertThat(gateway.body).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "GET,/lab/cache/mode",
+            "GET,/lab/cache/seed",
+            "POST,/lab/cache/state",
+            "POST,/lab/cache/preheat/run",
+            "GET,/lab/cache/preheat/",
+            "GET,/lab/cache/../toggles",
+            "PUT,/lab/cache/mode"
+    })
+    void cacheOffListMethodPathPairsAreRejected(String method, String path) {
+        assertThatThrownBy(() -> service.forward("app-1", method, path, new byte[0]))
+                .isInstanceOf(AppPathNotAllowedException.class)
+                .hasMessageContaining("allow-list");
+        assertThat(gateway.path).isNull();
     }
 
     @Test
