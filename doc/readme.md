@@ -38,10 +38,18 @@ code/                     全部可运行代码
     dashboard/            Vue 3 操作台（经 Nginx 托管）
     scenarios/            故障场景 JSON（schema v1）
 doc/
-  design/                 总体设计、方案对比、工程规约、安装与打包手册
-  design/details/         细节设计 01–11（每篇带代码对照表）+ diagrams/（Mermaid 图集）
-  process/                每步交接（step-*.md）、benchmark/、阶段交接
-  避坑/                   真实踩过的坑（index.md + 每坑一篇）
+  design/
+    Stage1/               总体设计、数据库方案对比 + details/01–11（每篇带代码对照表）
+                          + diagrams/（Mermaid 图集）
+    Stage2/               本轮改造方案稿（开工时写入）
+    工程规约.md / 安装与打包手册.md / OpenCodeReview-使用手册.md
+  process/
+    Stage1/               step-*.md 每步交接、benchmark/（压测结果页）、snapshots/（线程快照，
+                          .gitignore 忽略）、snapshot-analysis-template.md、retrospective
+    Stage2/               本轮改造的架构现状、交接与开发计划
+    STAGE-01阶段交接-2026-10-26.md   Stage1 收口现状（已知缺陷与 TODO 的落点）
+    交接模板.md
+  avoid_common_error/     真实踩过的坑（index.md + 每坑一篇），原 doc/避坑/
 ```
 
 ---
@@ -83,11 +91,11 @@ bash code/lab/scripts/smoke.sh             # 期望末行 "SMOKE PASSED."（7 �
 
 ## 4. 每一项设计的异常如何触发
 
-> 本章是使用文档的主干：按 `doc/design/details/01–11` 的族排列，**一行 = 一个可以在栈上真实制造出来的异常**，
+> 本章是使用文档的主干：按 `doc/design/Stage1/details/01–11` 的族排列，**一行 = 一个可以在栈上真实制造出来的异常**，
 > 给出触发命令、观察点、预期症状与复位手段。命令均为可直接粘贴的完整形式。
 >
 > 证据标记（不做无标记的断言）：
-> **✅** = 在本机真机栈上跑过，证据在 `doc/process/step-*.md`；
+> **✅** = 在本机真机栈上跑过，证据在 `doc/process/Stage1/step-*.md`；
 > **⚪** = 按代码/配置口径（含单测与 `verify.sh` 的序列存在性断言）得到，本轮未逐条真机复现。
 
 ### 4.0 先认清走哪条通道
@@ -103,7 +111,7 @@ bash code/lab/scripts/smoke.sh             # 期望末行 "SMOKE PASSED."（7 �
 两条铁律：
 
 1. **应用容器里没有 `curl`、也没有 `bash`**：运行镜像 `eclipse-temurin:*-alpine` 只带 BusyBox `wget` / `nc`，
-   所以容器内一律写成 `docker exec <容器> sh -c '… wget …'`（照抄 curl 会报 not found，见 `doc/避坑/16`）。
+   所以容器内一律写成 `docker exec <容器> sh -c '… wget …'`（照抄 curl 会报 not found，见 `doc/avoid_common_error/16`）。
 2. **token 不回显**：`$LAB_TOKEN` 由容器自身环境提供，写在 `sh -c '…'` 的单引号里由容器展开；宿主机侧从 `.env` 读：
 
 ```bash
@@ -135,7 +143,7 @@ docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" \
 | 异步 → 同步切换 | `POST /lab/toggles {"key":"mq","value":false}` | 秒杀响应从 **202 ACCEPTED** 变 **200 OK**；队列不再增长 | 同步路径直接落库、无 MQ | 把值改回 true（每实例单独生效，三个实例都要发） | ⚪ |
 
 > `seckill_attempts{result=…}` 的 8 个取值：`accepted replay sold_out lock_timeout invalid error rate_limited degraded`；
-> Prometheus 侧名字带 `_total`。Micrometer/OpenMetrics 的命名坑（`_info` 被剥、`orders_created` 被改名）见 `doc/避坑`。
+> Prometheus 侧名字带 `_total`。Micrometer/OpenMetrics 的命名坑（`_info` 被剥、`orders_created` 被改名）见 `doc/avoid_common_error`。
 
 ### 4.2 缓存体系（details/03）—— 穿透 / 击穿 / 雪崩
 
@@ -179,7 +187,7 @@ LAB_TOKEN="$LAB_TOKEN" \
 `logical_cold_rebuilds=245` / `stale_serves=61` / `refresh_submitted=62`；DB 回落 `off=301` 基线 vs `mutex=933`；
 `l1-cache` dwell 的雪崩采样窗口里 `state_l2_keys` 掉到 12（集体过期后的塌陷快照）。
 未 arm 的那一轮这些计数全为 0 或序列根本不存在——**这个差值就是「缺陷被造出来了」的证据**。
-完整证据矩阵与两条 init 护栏见 `doc/process/step-56-cache-lab-defect-arming.md`。
+完整证据矩阵与两条 init 护栏见 `doc/process/Stage1/step-56-cache-lab-defect-arming.md`。
 
 > **5 分钟窗口**：上面这条完整时间线是 8 × 90s ≈ 12 分钟。要做短演示就把模式数收窄、不要缩短 dwell：
 > `CACHE_LAB_MODES='off,bloom'`（顺序仍按 canonical 强制）+ 90s dwell ≈ 3 分钟。
@@ -243,7 +251,7 @@ Router 模式下 `reset-lab.sh` 默认清的是 standalone 的 `jl-mysql`，所�
 
 实测（2026-10-27，`run_id=k6-20261027-161756-dbfo2`）：k6 退出 0，读 **3580 次零失败**、p95 8.3ms；
 写 85 次里只有 **1 次**落在选举窗口内（`status=500`，kill 后 7s），成功率 **98.8%**；teardown 后 `/chaos/actions` 为空。
-证据与阈值预算的算术见 `doc/process/step-48-k6-ha-cache-scenarios.md` 第 6 节。
+证据与阈值预算的算术见 `doc/process/Stage1/step-48-k6-ha-cache-scenarios.md` 第 6 节。
 
 ### 4.5 实例与网络故障（details/06）
 
@@ -275,7 +283,7 @@ toxiproxy 只有三种 toxic：`latency`（+`jitterMs`）、`bandwidth`（`rateK
 `POST /lab-api/lab/guide/start {"scenarioId":"quick-failover"}` 再 `/step` 推进。
 **暂停会冻结 TTL 倒计时**（不是暂停故障），`POST /lab-api/chaos/stop-all` 无视暂停强制回滚。
 k6 侧用 `ha-failover` 场景驱动同一套时间线：`CHAOS_SCENARIO_FILE`（默认 `ha-app-failover.json`）、
-`CHAOS_START_OFFSET`（默认 `0s`）、`CHAOS_HTTP_TIMEOUT`（默认 `20s`，**必须大于 stop-grace 10s**，见 `doc/避坑/15`）、`CHAOS_MAX_TTL`（600）。
+`CHAOS_START_OFFSET`（默认 `0s`）、`CHAOS_HTTP_TIMEOUT`（默认 `20s`，**必须大于 stop-grace 10s**，见 `doc/avoid_common_error/15`）、`CHAOS_MAX_TTL`（600）。
 `ha-failover` **不需要** `--profile ha`：默认目标就是三个 app 实例，控制面在 base 栈里就起来了。
 
 ### 4.6 线程实验室（details/07）
@@ -320,7 +328,7 @@ docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-
 响应里 `machineStage` 可能落后于 `state`（helper 释放监视器后线程已 RUNNABLE、stage 仍显示 BLOCKED），页面按 `state` 动画。
 
 **快照**：`POST /lab/thread/snapshot`（**空 body**，理由由服务端自己标 `freeze` / `manual`），落到
-`doc/process/snapshots/<yyyyMMdd-HHmmss-SSS>_<instance>/`：`thread-dump.txt`（`jcmd Thread.print -l`）、
+`doc/process/Stage1/snapshots/<yyyyMMdd-HHmmss-SSS>_<instance>/`：`thread-dump.txt`（`jcmd Thread.print -l`）、
 `heap-info.txt`（`GC.heap_info`）、`class-histogram.txt`（`GC.class_histogram`）、`metadata.json` 与分析模板。
 抓取永不抛异常，失败也返回 200 带 `captured=false` 与 `error`，不会把演示打断；目录写坏会被清掉。
 `GET /lab/thread/state` 与 `/lifecycle` 在控制台白名单里，故障动作也能从「实验操作台」页跳转「线程实验室」发起。
@@ -335,7 +343,7 @@ BASE_URL=http://seckill-app-jdk8:8080 bash code/lab/k6/run.sh d7   # JDK 8 直�
 
 `d7` 是**免登录只读**场景（JDK 8 外壳没有登录端点），所以对比的是商品读路径。
 期望（✅）：D7 同时看到两个 runtime 的 RPS / P95 / P99 / GC / 堆 / 线程；启动中位实测 **JDK 8 9.33s vs JDK 21 30.52s**（三实例并发、均 `-Xmx512m`）。
-坑：Boot 2.7 / Micrometer 1.9 **没有 `jvm_info`**，用 `jvm_version` 标签区分实例（`doc/避坑`）。
+坑：Boot 2.7 / Micrometer 1.9 **没有 `jvm_info`**，用 `jvm_version` 标签区分实例（`doc/avoid_common_error`）。
 
 **调优台 D8**：换 JVM 参数跑同一档位压测并留下注解与报告。
 
@@ -344,7 +352,7 @@ bash code/lab/scripts/tune.sh --name xmx256 --flags "-Xmx256m" --scenario load -
 bash code/lab/scripts/tune.sh --restore
 ```
 
-一次运行只做六件事：记录当前 flags → **只重建 app-1/2/3** 并注入 `APP_JAVA_TOOL_OPTIONS`（不改 `.env`）→ reload Nginx 并探活 → 打 Grafana 注解（tag `tuning,<profile>`）→ 可选 reset 数据 + 跑短压测 → 写 `doc/process/benchmark/tuning-<时间>-<profile>.md`。
+一次运行只做六件事：记录当前 flags → **只重建 app-1/2/3** 并注入 `APP_JAVA_TOOL_OPTIONS`（不改 `.env`）→ reload Nginx 并探活 → 打 Grafana 注解（tag `tuning,<profile>`）→ 可选 reset 数据 + 跑短压测 → 写 `doc/process/Stage1/benchmark/tuning-<时间>-<profile>.md`。
 期望症状：`-Xmx256m` 下 GC 停顿频率与最长停顿显著上升、`768m` 时退化为 SerialGC 形态。
 当前只做过 `-Xmx` 的对照，GC 选择 / `-Xms` / `-Xss` / Metaspace / 池大小未做真机扫描。
 
@@ -369,14 +377,14 @@ bash code/lab/scripts/tune.sh --restore
 D10 能按 run_id 与 dwell 时间窗对齐。归档：
 
 ```bash
-bash code/lab/scripts/bench.sh load -- LOAD_DURATION=1m     # 先 reset 再跑，产物入 reports/<run_id>/ 与 doc/process/benchmark/
+bash code/lab/scripts/bench.sh load -- LOAD_DURATION=1m     # 先 reset 再跑，产物入 reports/<run_id>/ 与 doc/process/Stage1/benchmark/
 bash code/lab/scripts/compare.sh <runA> <runB>              # 两个窗口的 PromQL 对照
 ```
 
 `bench.sh` 的退出码就是 k6 的退出码——**阈值破线时非零是期望结果**，`run.sh` 会把这句话打在结尾。
-k6 容器只挂了 `/scripts:ro` 与 `/reports`：`K6_SUMMARY_EXPORT` 指宿主路径会 `exit 107`（`doc/避坑/18`）；
+k6 容器只挂了 `/scripts:ro` 与 `/reports`：`K6_SUMMARY_EXPORT` 指宿主路径会 `exit 107`（`doc/avoid_common_error/18`）；
 `per-vu-iterations` 的 `maxDuration` 默认 10m，会把长时间线**静默截断**（`exit 0` + `checks 100%` 也一样），
-预算必须由 dwell 推导（`doc/避坑/17`）。
+预算必须由 dwell 推导（`doc/avoid_common_error/17`）。
 
 ### 4.9 操作台里能点的东西（details/10）
 
@@ -472,7 +480,7 @@ bash code/lab/scripts/down.sh                    # 停栈，保留命名卷
 一键复位故障：`POST /lab-api/chaos/stop-all`（容器动作 + Toxiproxy 一起清）；线程侧另有 `POST /lab/thread/stop-all`。
 
 bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DURATION=1m`，
-归档到 `code/lab/k6/reports/<run_id>/`（summary.json / k6.log / manifest.json / report.html）与 `doc/process/benchmark/`。
+归档到 `code/lab/k6/reports/<run_id>/`（summary.json / k6.log / manifest.json / report.html）与 `doc/process/Stage1/benchmark/`。
 
 ---
 
@@ -483,11 +491,11 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 | `up.sh` 报缺 env 键 | 按提示把键补进 `code/lab/docker/.env`（模板在 `.env.example`），脚本会逐个列出键名 |
 | `up.sh --profile db-ha` 被拒 | MySQL 层由 `db-ha-up.sh` 起（它自己带 `--profile db-ha|ha`），`up.sh` 明确拒绝该值 |
 | `verify.sh` Redis 内容检查 FAIL | app 处于 `REDIS_MODE=sentinel`，先还原 standalone（见 §4.3） |
-| 容器里 `wget` 有、`curl`/`bash` 没有 | 正常：`eclipse-temurin:*-alpine` 只有 BusyBox。一律 `docker exec <c> sh -c 'wget …'`（`doc/避坑/16`） |
+| 容器里 `wget` 有、`curl`/`bash` 没有 | 正常：`eclipse-temurin:*-alpine` 只有 BusyBox。一律 `docker exec <c> sh -c 'wget …'`（`doc/avoid_common_error/16`） |
 | 缓存防护计数器全程为 0 | 流量没打向缺陷：读一个区间外的 id、或删热点键、或显式 arm 雪崩重播（§4.2） |
 | `cache-lab` 启动即报 `CACHE_LAB_MODE_DURATION is too short to re-arm` | 雪崩护栏：dwell 必须 ≥ TTL + margin；调大 dwell 或调小 `CACHE_LAB_AVALANCHE_TTL_SECONDS` |
-| k6 `exit 0` + `checks 100%`，但少跑了一个 dwell | `per-vu-iterations` 的 `maxDuration` 默认 10m 静默截断（`doc/避坑/17`） |
-| `K6_SUMMARY_EXPORT` 报 `exit 107` | 那是**容器内**路径，`/scripts` 是只读挂载，必须落在 `/reports/` 下（`doc/避坑/18`） |
+| k6 `exit 0` + `checks 100%`，但少跑了一个 dwell | `per-vu-iterations` 的 `maxDuration` 默认 10m 静默截断（`doc/avoid_common_error/17`） |
+| `K6_SUMMARY_EXPORT` 报 `exit 107` | 那是**容器内**路径，`/scripts` 是只读挂载，必须落在 `/reports/` 下（`doc/avoid_common_error/18`） |
 | 杀主后 app 读还是 200 | 正常：L1(60s)/L2 缓存掩盖了切换；要看错误毛刺需显式设 Lettuce 超时 |
 | 秒杀返回 429 / 409 | 预期：限流与售罄/重放语义，D9 把它们从错误率里单独分出来 |
 | 控制台状态栏一直 warn | 有按需/一次性容器在退出态（traffic、db-ha init、jdk8 外壳）；用 `VITE_LAB_ON_DEMAND_CONTAINERS` 调整排除列表 |
@@ -503,8 +511,8 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 - 全部服务仅绑定本机；Grafana/RabbitMQ 账号默认值在 `.env.example`，**不要暴露到局域网**。
 - chaos-controller 以 root 挂载 rw Docker socket，只能操作带 `lab=java-learn` 标签的容器；datastore 目标另有闭环白名单（空 = 全拒）。
 - 单点：Nginx、MySQL Router、RabbitMQ、Prometheus/Grafana —— 本地演示接受，已在设计 §8.6 声明为范围外。
-- 已知限制与未收口项：`doc/design/details/README.md` §3.2（缺口清单）与 §3.3（文档说反话的位置）；
-  每步证据在 `doc/process/step-*.md`，里程碑级状态在 `doc/process/阶段交接-2026-10-26.md`。
+- 已知限制与未收口项：`doc/design/Stage1/details/README.md` §3.2（缺口清单）与 §3.3（文档说反话的位置）；
+  每步证据在 `doc/process/Stage1/step-*.md`，里程碑级状态在 `doc/process/STAGE-01阶段交接-2026-10-26.md`。
 
 ---
 
@@ -512,12 +520,12 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 
 | 想去哪 | 去哪 |
 |---|---|
-| 总体设计 | `doc/design/2026-10-26-ha-concurrency-lab-design.md` |
+| 总体设计 | `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` |
 | 安装、镜像构建与打包 | `doc/design/安装与打包手册.md` |
-| 细节设计（逐功能 + 代码对照） | `doc/design/details/`（01–11，索引在 README，缺口清单在 §3.2） |
-| 图集（Mermaid，可编辑） | `doc/design/details/diagrams/` |
-| 每步交接与证据 | `doc/process/step-*.md`、`doc/process/阶段交接-2026-10-26.md` |
-| 踩过的坑 | `doc/避坑/index.md`（18 条） |
+| 细节设计（逐功能 + 代码对照） | `doc/design/Stage1/details/`（01–11，索引在 README，缺口清单在 §3.2） |
+| 图集（Mermaid，可编辑） | `doc/design/Stage1/details/diagrams/` |
+| 每步交接与证据 | `doc/process/Stage1/step-*.md`、`doc/process/STAGE-01阶段交接-2026-10-26.md` |
+| 踩过的坑 | `doc/avoid_common_error/index.md`（18 条） |
 | 工程规约（配置外置、交接、评审） | `doc/design/工程规约.md` |
 | 压测场景与 k6 环境变量 | `code/lab/k6/README.md` |
 | 文档断言的可执行校验 | `code/lab/docclaims/claims.yml` + `node code/lab/scripts/check-doc-claims.mjs` |
