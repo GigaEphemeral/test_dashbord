@@ -79,5 +79,19 @@ class AppProxyPropertiesTest {
         assertThatThrownBy(config::validate)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MAX_REQUEST_BYTES");
+
+        config.setMaxRequestBytes(8192);
+        config.setMaxResponseBytes(0);
+        assertThatThrownBy(config::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MAX_RESPONSE_BYTES");
+
+        config.setMaxResponseBytes(16_777_217);
+        assertThatThrownBy(config::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("chaos.app-proxy.max-response-bytes");
+
+        config.setMaxResponseBytes(2_097_152);
+        assertThatCode(config::validate).doesNotThrowAnyException();
     }
 }

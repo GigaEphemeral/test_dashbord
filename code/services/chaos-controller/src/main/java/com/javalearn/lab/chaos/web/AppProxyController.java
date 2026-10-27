@@ -3,6 +3,7 @@ package com.javalearn.lab.chaos.web;
 import com.javalearn.lab.chaos.appproxy.AppProxyService;
 import com.javalearn.lab.chaos.appproxy.ProxyResponse;
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
+import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
@@ -65,7 +66,11 @@ public class AppProxyController {
             throw new AppPathNotAllowedException("Unsupported proxy path: " + method + " " + uri);
         }
         String path = uri.substring(expectedPrefix.length());
-        ProxyResponse response = service.forward(instance, method, path, body);
+        // Raw request target query (already percent-encoded on the wire); the
+        // proxy passes it through verbatim so callers can paginate
+        // (B3: /lab/cache/keys?cursor=...). Null/empty means "no query".
+        String query = request.getQueryString();
+        ProxyResponse response = service.forward(instance, method, path, query, body);
         return ResponseEntity.status(response.status())
                 .contentType(JSON_UTF8)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
@@ -77,7 +82,7 @@ public class AppProxyController {
         try {
             byte[] body = request.getInputStream().readNBytes(limit + 1);
             if (body.length > limit) {
-                throw new InvalidAppProxyRequestException("Request body exceeds "
+                throw new AppProxyRequestTooLargeException("Request body exceeds "
                         + limit + " bytes");
             }
             return body;

@@ -2,7 +2,7 @@ package com.javalearn.lab.chaos.appproxy;
 
 import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
-import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
+import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.UnknownAppInstanceException;
 
 import java.util.Set;
@@ -31,6 +31,12 @@ import java.util.regex.Pattern;
  * </ul>
  * <p>Only {@code POST /lab/thread/fault} and {@code POST /lab/cache/mode} carry
  * a request body; every other allowed POST is forwarded without one.</p>
+ *
+ * <p>The query string is a separate argument and is relayed verbatim: the
+ * allow-list is matched against the path only, so a query never rescues an
+ * off-list path and an on-list path keeps its parameters (B3's
+ * {@code /lab/cache/keys?cursor=...} depends on this). No decoding, parsing or
+ * re-encoding happens on this hop.</p>
  */
 public class AppProxyService {
 
@@ -89,11 +95,15 @@ public class AppProxyService {
     /**
      * @param instance allow-listed app instance
      * @param method   {@code GET} or {@code POST} (the controller maps only these)
-     * @param path     raw request path below {@code /chaos/app/{instance}}
+     * @param path     raw request path below {@code /chaos/app/{instance}}; the
+     *                 allow-list is matched against this alone, never the query
+     * @param query    raw query string (everything after the first {@code ?}),
+     *                 relayed to the gateway verbatim; it is deliberately not
+     *                 consulted for allow-listing or decoded in any way
      * @param body     raw request body; only forwarded for {@code POST /lab/thread/fault}
      *                 and {@code POST /lab/cache/mode}
      */
-    public ProxyResponse forward(String instance, String method, String path, byte[] body) {
+    public ProxyResponse forward(String instance, String method, String path, String query, byte[] body) {
         if (instance == null || !config.getInstances().contains(instance)) {
             throw new UnknownAppInstanceException("Unknown app instance '" + instance
                     + "'; allowed instances: " + config.getInstances());
@@ -104,13 +114,13 @@ public class AppProxyService {
                     + verb + " " + path);
         }
         if (body != null && body.length > config.getMaxRequestBytes()) {
-            throw new InvalidAppProxyRequestException("Request body is " + body.length
+            throw new AppProxyRequestTooLargeException("Request body is " + body.length
                     + " bytes; the app proxy accepts at most "
                     + config.getMaxRequestBytes() + " bytes");
         }
         byte[] payload = "POST".equals(verb) && BODY_PATHS.contains(path)
                 && body != null && body.length > 0 ? body : null;
-        return gateway.exchange(instance, verb, path, payload);
+        return gateway.exchange(instance, verb, path, query, payload);
     }
 
     /** Body cap exposed to the controller so it never buffers an unbounded request. */

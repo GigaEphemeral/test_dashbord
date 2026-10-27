@@ -191,6 +191,14 @@ public class ChaosProperties {
         /** Upper bound for the forwarded request body (the fault JSON is tiny). */
         private int maxRequestBytes = 8192;
 
+        /**
+         * Upper bound for the upstream answer the gateway relays. The console
+         * payloads are JSON envelopes; an oversized answer is refused 502/50202
+         * rather than truncated (truncation would break the envelope). B3's
+         * key-list pages must stay below this or the cap is raised via env.
+         */
+        private int maxResponseBytes = 2_097_152;
+
         public List<String> getInstances() {
             return instances;
         }
@@ -239,6 +247,14 @@ public class ChaosProperties {
             this.maxRequestBytes = maxRequestBytes;
         }
 
+        public int getMaxResponseBytes() {
+            return maxResponseBytes;
+        }
+
+        public void setMaxResponseBytes(int maxResponseBytes) {
+            this.maxResponseBytes = maxResponseBytes;
+        }
+
         /** Typed startup validation; messages name the property and its env variable. */
         public void validate() {
             if (instances == null || instances.isEmpty()) {
@@ -276,6 +292,10 @@ public class ChaosProperties {
             if (maxRequestBytes < 1 || maxRequestBytes > 1_048_576) {
                 throw new IllegalStateException("chaos.app-proxy.max-request-bytes must be between 1 and 1048576 (was "
                         + maxRequestBytes + "); env CHAOS_APP_PROXY_MAX_REQUEST_BYTES");
+            }
+            if (maxResponseBytes < 1 || maxResponseBytes > 16_777_216) {
+                throw new IllegalStateException("chaos.app-proxy.max-response-bytes must be between 1 and 16777216 (was "
+                        + maxResponseBytes + "); env CHAOS_APP_PROXY_MAX_RESPONSE_BYTES");
             }
         }
     }

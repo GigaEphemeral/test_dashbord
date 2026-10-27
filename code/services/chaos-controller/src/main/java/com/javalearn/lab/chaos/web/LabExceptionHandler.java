@@ -1,6 +1,8 @@
 package com.javalearn.lab.chaos.web;
 
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
+import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
+import com.javalearn.lab.chaos.error.AppProxyResponseTooLargeException;
 import com.javalearn.lab.chaos.error.AppResponseNotJsonException;
 import com.javalearn.lab.chaos.error.AppUnreachableException;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
@@ -141,6 +143,21 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleInvalidAppProxyRequest(InvalidAppProxyRequestException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    /** Request body over the proxy byte budget: 413, not 400 (the request is well-formed). */
+    @ExceptionHandler(AppProxyRequestTooLargeException.class)
+    public ResponseEntity<Result<Void>> handleAppProxyRequestTooLarge(AppProxyRequestTooLargeException ex) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Result.failure(LabErrorCode.PAYLOAD_TOO_LARGE, ex.getMessage()));
+    }
+
+    /** Upstream answer over the proxy byte budget: relay-refusing bad gateway (502/50202). */
+    @ExceptionHandler(AppProxyResponseTooLargeException.class)
+    public ResponseEntity<Result<Void>> handleAppProxyResponseTooLarge(AppProxyResponseTooLargeException ex) {
+        log.warn("App proxy response exceeded the relay limit: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Result.failure(LabErrorCode.RESPONSE_TOO_LARGE, ex.getMessage()));
     }
 
     @ExceptionHandler(AppUnreachableException.class)

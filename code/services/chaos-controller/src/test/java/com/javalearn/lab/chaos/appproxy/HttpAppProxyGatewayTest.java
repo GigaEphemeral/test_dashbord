@@ -2,8 +2,10 @@ package com.javalearn.lab.chaos.appproxy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.error.AppProxyResponseTooLargeException;
 import com.javalearn.lab.chaos.error.AppResponseNotJsonException;
 import com.javalearn.lab.chaos.error.AppUnreachableException;
+import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +29,8 @@ class HttpAppProxyGatewayTest {
     private final AtomicReference<String> seenAccept = new AtomicReference<>();
     private final AtomicReference<String> seenContentType = new AtomicReference<>();
     private final AtomicReference<String> seenBody = new AtomicReference<>();
+    private final AtomicReference<String> seenRawQuery = new AtomicReference<>("(unset)");
+    private final AtomicReference<String> seenPath = new AtomicReference<>("(unset)");
 
     @AfterEach
     void stopServer() {
@@ -41,7 +45,7 @@ class HttpAppProxyGatewayTest {
         startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
 
         ProxyResponse response = gateway(server.getAddress().getPort())
-                .exchange("127.0.0.1", "GET", "/lab/thread/state", null);
+                .exchange("127.0.0.1", "GET", "/lab/thread/state", null, null);
 
         assertThat(response.status()).isEqualTo(200);
         assertThat(response.body()).isEqualTo(STATE_JSON);
@@ -55,7 +59,7 @@ class HttpAppProxyGatewayTest {
         byte[] body = "{\"mode\":\"cpu-burn\",\"ttlSeconds\":5}".getBytes(StandardCharsets.UTF_8);
 
         ProxyResponse response = gateway(server.getAddress().getPort())
-                .exchange("127.0.0.1", "POST", "/lab/thread/fault", body);
+                .exchange("127.0.0.1", "POST", "/lab/thread/fault", null, body);
 
         assertThat(response.status()).isEqualTo(200);
         assertThat(seenContentType.get()).startsWith("application/json");
@@ -68,7 +72,7 @@ class HttpAppProxyGatewayTest {
         startServer(exchange -> respond(exchange, 409, "application/json", conflict));
 
         ProxyResponse response = gateway(server.getAddress().getPort())
-                .exchange("127.0.0.1", "POST", "/lab/thread/fault", null);
+                .exchange("127.0.0.1", "POST", "/lab/thread/fault", null, null);
 
         assertThat(response.status()).isEqualTo(409);
         assertThat(response.body()).isEqualTo(conflict);
@@ -80,7 +84,7 @@ class HttpAppProxyGatewayTest {
                 "<html><body><h1>Not the app</h1></body></html>"));
 
         assertThatThrownBy(() -> gateway(server.getAddress().getPort())
-                .exchange("127.0.0.1", "GET", "/lab/thread/state", null))
+                .exchange("127.0.0.1", "GET", "/lab/thread/state", null, null))
                 .isInstanceOf(AppResponseNotJsonException.class)
                 .hasMessageContaining("non-JSON")
                 .hasMessageContaining("text/html")
@@ -92,7 +96,7 @@ class HttpAppProxyGatewayTest {
         startServer(exchange -> respond(exchange, 200, "application/json", ""));
 
         assertThatThrownBy(() -> gateway(server.getAddress().getPort())
-                .exchange("127.0.0.1", "GET", "/lab/thread/state", null))
+                .exchange("127.0.0.1", "GET", "/lab/thread/state", null, null))
                 .isInstanceOf(AppResponseNotJsonException.class)
                 .hasMessageContaining("empty body");
     }
@@ -104,11 +108,114 @@ class HttpAppProxyGatewayTest {
         server.stop(0);
         server = null;
 
-        assertThatThrownBy(() -> gateway(port).exchange("127.0.0.1", "GET", "/lab/thread/state", null))
+        assertThatThrownBy(() -> gateway(port).exchange("127.0.0.1", "GET", "/lab/thread/state", null, null))
                 .isInstanceOf(AppUnreachableException.class)
                 .hasMessageContaining("unreachable")
                 .hasMessageContaining("127.0.0.1")
                 .satisfies(error -> assertThat(error.getMessage()).doesNotContain(TOKEN));
+    }
+
+    // ------------------------------------------------------------ query string
+
+    @Test
+    void theRawQueryStringReachesTheUpstreamVerbatim() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
+
+        gateway(server.getAddress().getPort()).exchange("127.0.0.1", "GET", "/lab/thread/state",
+                "cursor=v2:8&limit=50&like=a%20b&f&plus=1+2&eq=x==", null);
+
+        assertThat(seenPath.get()).isEqualTo("/lab/thread/state");
+        assertThat(seenRawQuery.get())
+                .isEqualTo("cursor=v2:8&limit=50&like=a%20b&f&plus=1+2&eq=x==");
+    }
+
+    @Test
+    void absentAndEmptyQueriesSendNoQuestionMark() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
+        HttpAppProxyGateway gateway = gateway(server.getAddress().getPort());
+
+        gateway.exchange("127.0.0.1", "GET", "/lab/thread/state", null, null);
+        assertThat(seenRawQuery.get()).isNull();
+
+        gateway.exchange("127.0.0.1", "GET", "/lab/thread/state", "", null);
+        assertThat(seenRawQuery.get()).isNull();
+    }
+
+    @Test
+    void charactersTheUriParserRejectsAreEscapedWithoutTouchingTheRest() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
+
+        // '|' is legal on the wire but illegal in a URI query (RFC 3986); the
+        // gateway escapes exactly that byte and decodes back to the same value
+        gateway(server.getAddress().getPort())
+                .exchange("127.0.0.1", "GET", "/lab/cache/state", "pattern=a|b&k=v", null);
+
+        assertThat(seenRawQuery.get()).isEqualTo("pattern=a%7Cb&k=v");
+    }
+
+    @Test
+    void aMalformedPercentEscapeIsRefusedAsAnInvalidRequest() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
+
+        // "%z" is not a percent-escape; forwarding it verbatim would lie about
+        // the caller's bytes, so the proxy refuses instead (400, never upstream)
+        assertThatThrownBy(() -> gateway(server.getAddress().getPort())
+                .exchange("127.0.0.1", "GET", "/lab/thread/state", "a=%zz", null))
+                .isInstanceOf(InvalidAppProxyRequestException.class)
+                .hasMessageContaining("Query string");
+        assertThat(seenPath.get()).isEqualTo("(unset)");
+    }
+
+    // ------------------------------------------------------------- size limits
+
+    @Test
+    void oversizedUpstreamAnswersAreRefusedInsteadOfRelayed() throws Exception {
+        String fat = "{\"code\":\"0\",\"message\":\"OK\",\"data\":\"" + "x".repeat(4096) + "\"}";
+        startServer(exchange -> respond(exchange, 200, "application/json", fat));
+
+        ChaosProperties.AppProxy config = new ChaosProperties.AppProxy();
+        config.setPort(server.getAddress().getPort());
+        config.setMaxResponseBytes(512);
+        assertThatThrownBy(() -> new HttpAppProxyGateway(config, TOKEN, new ObjectMapper())
+                .exchange("127.0.0.1", "GET", "/lab/cache/state", null, null))
+                .isInstanceOf(AppProxyResponseTooLargeException.class)
+                .hasMessageContaining("at most 512")
+                .hasMessageContaining("/lab/cache/state");
+    }
+
+    @Test
+    void answersWithinTheResponseBudgetStillRelay() throws Exception {
+        startServer(exchange -> respond(exchange, 200, "application/json", STATE_JSON));
+
+        ChaosProperties.AppProxy config = new ChaosProperties.AppProxy();
+        config.setPort(server.getAddress().getPort());
+        config.setMaxResponseBytes(512);
+        ProxyResponse response = new HttpAppProxyGateway(config, TOKEN, new ObjectMapper())
+                .exchange("127.0.0.1", "GET", "/lab/cache/state", null, null);
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.body()).isEqualTo(STATE_JSON);
+    }
+
+    @Test
+    void aSlowUpstreamHitsTheExternalizedRequestTimeout() throws Exception {
+        startServer(exchange -> {
+            try {
+                Thread.sleep(2500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, "application/json", STATE_JSON);
+        });
+
+        ChaosProperties.AppProxy config = new ChaosProperties.AppProxy();
+        config.setPort(server.getAddress().getPort());
+        config.setConnectTimeoutSeconds(1);
+        config.setRequestTimeoutSeconds(1);
+        assertThatThrownBy(() -> new HttpAppProxyGateway(config, TOKEN, new ObjectMapper())
+                .exchange("127.0.0.1", "GET", "/lab/thread/state", null, null))
+                .isInstanceOf(AppUnreachableException.class)
+                .hasMessageContaining("unreachable");
     }
 
     private HttpAppProxyGateway gateway(int port) {
@@ -126,6 +233,8 @@ class HttpAppProxyGatewayTest {
             seenAccept.set(exchange.getRequestHeaders().getFirst("Accept"));
             seenContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
             seenBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            seenRawQuery.set(exchange.getRequestURI().getRawQuery());
+            seenPath.set(exchange.getRequestURI().getPath());
             handler.handle(exchange);
         });
         server.start();
