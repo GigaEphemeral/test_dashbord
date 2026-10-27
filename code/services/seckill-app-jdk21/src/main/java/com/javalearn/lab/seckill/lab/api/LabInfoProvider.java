@@ -2,6 +2,7 @@ package com.javalearn.lab.seckill.lab.api;
 
 import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -21,12 +22,14 @@ public final class LabInfoProvider {
         this.instance = Objects.requireNonNull(instance, "instance");
     }
 
-    public LabConfigResponse config(LabToggleService toggleService) {
+    public LabConfigResponse config(LabToggleService toggleService,
+                                    List<LabCacheConfigItem> cacheConfig) {
         return new LabConfigResponse(
                 app,
                 env,
                 instance,
                 System.getProperty("java.version"),
-                toggleService.snapshot());
+                toggleService.snapshot(),
+                List.copyOf(cacheConfig));
     }
 }

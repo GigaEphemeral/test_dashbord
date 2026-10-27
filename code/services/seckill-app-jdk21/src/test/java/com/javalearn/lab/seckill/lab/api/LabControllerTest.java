@@ -2,6 +2,7 @@ package com.javalearn.lab.seckill.lab.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.seckill.lab.auth.LabTokenFilter;
+import com.javalearn.lab.seckill.lab.config.CacheEffectiveConfigReader;
 import com.javalearn.lab.seckill.lab.config.LabProperties;
 import com.javalearn.lab.seckill.lab.config.LabToggleProperties;
 import com.javalearn.lab.seckill.lab.toggle.LabToggleService;
@@ -9,6 +10,8 @@ import com.javalearn.lab.seckill.web.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.mock.env.MockEnvironment;
+import org.springframework.mock.env.MockPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -48,7 +51,8 @@ class LabControllerTest {
         ObjectMapper objectMapper = new ObjectMapper();
 
         LabController controller = new LabController(
-                toggleService, new LabInfoProvider("seckill-app", "test", "app-1"));
+                toggleService, new LabInfoProvider("seckill-app", "test", "app-1"),
+                new CacheEffectiveConfigReader(stubEnvironment()));
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .addFilters(new LabTokenFilter(labProperties, objectMapper))
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -160,10 +164,33 @@ class LabControllerTest {
                 .andExpect(jsonPath("$.data.jvmVersion").isNotEmpty())
                 .andExpect(jsonPath("$.data.toggles.cache").value(true))
                 .andExpect(jsonPath("$.data.toggles", hasKey("circuitbreaker")))
+                // B0-04 effective-value read-back: value + env + declared default + source.
+                .andExpect(jsonPath("$.data.cacheConfig[0].configKey")
+                        .value("app.lab.cache.l2.ttl-seconds"))
+                .andExpect(jsonPath("$.data.cacheConfig[0].env")
+                        .value("LAB_CACHE_L2_TTL_SECONDS"))
+                .andExpect(jsonPath("$.data.cacheConfig[0].value").value("300"))
+                .andExpect(jsonPath("$.data.cacheConfig[0].defaultValue").value("300"))
+                .andExpect(jsonPath("$.data.cacheConfig[0].source").value("mockSource"))
                 .andReturn().getResponse().getContentAsString();
 
         assertThat(body).doesNotContain(TOKEN);
         assertThat(body).doesNotContain("password");
         assertThat(toggleService.snapshot()).hasSize(6);
+    }
+
+    /**
+     * One cache key declared exactly the way {@code application.yml} declares it:
+     * an env placeholder with a default, in a source named {@code mockSource} so
+     * the payload can prove the reader reports the winning source rather than a
+     * hard-coded label. The override semantics themselves are covered by
+     * {@code CacheEffectiveConfigReaderTest}.
+     */
+    private static MockEnvironment stubEnvironment() {
+        MockEnvironment environment = new MockEnvironment();
+        environment.getPropertySources().remove("mockProperties");
+        environment.getPropertySources().addFirst(new MockPropertySource("mockSource")
+                .withProperty("app.lab.cache.l2.ttl-seconds", "${LAB_CACHE_L2_TTL_SECONDS:300}"));
+        return environment;
     }
 }
