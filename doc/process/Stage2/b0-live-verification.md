@@ -149,11 +149,119 @@ LAB_TOGGLE_{LOCK,IDEMPOTENCY,MQ,RATELIMIT,CIRCUITBREAKER,CACHE}=true
 
 ## 3. B0-03 Caffeine L1 统计序列
 
-（进行中）
+驱动：一次性 curl 容器脚本 `/tmp/r1/reads.sh`（`GET /api/products/1..20`，每台 3 轮 = 60 次读，直连
+`jl-app-N:8080` 以免受 Nginx 上游缓存影响）。证据：`/tmp/r1/b003-baseline.log`、
+`b003-round1.log`、`b003-round3.log`、`b003-off.log`、`b003-restore-check.log`。
 
-## 4. B0-04 有效值回读
+### 3.1 三实例真序列 + 数值随读写变化
 
-（进行中）
+打流量前（基线）：`count by (instance) (cache_l1_caffeine_requests_total)` = **3**（app-1/2/3 各 2 条
+`result` 序列），`cache_l1_estimated_size` = 3 条、值 0，`_hit_ratio` = 1（无读时的 Caffeine 约定值）。
+
+读写 3 轮 ×20 商品后：
+
+| 序列 | app-1 | app-2 | app-3 |
+|---|---|---|---|
+| `cache_l1_caffeine_requests_total{result="hit"}` | 120 | 100 | 100 |
+| `cache_l1_caffeine_requests_total{result="miss"}` | 20 | 40 | 40 |
+| `cache_l1_estimated_size{cache="product"}` | 20 → 0 | 20 | 20 |
+| `cache_l1_caffeine_hit_ratio` | 0.857 | 0.714 | 0.714 |
+| `cache_l1_caffeine_evictions_total` | 0 → 20 | 0 → 20 | 0 |
+| `increase(cache_l1_caffeine_evictions_total[5m])` | **20.011** | 0 | — |
+
+- 标签核对：Java 侧只有 `cache="product"`（requests 另带 `result`）；Prometheus 端为
+  `instance="app-N:8080"`（抓取目标）+ `exported_instance="app-N"`（relabel），与 B0-03「标签纪律」一致。
+- 双视图口径核对：同窗口 `cache_l1_requests_total`（应用口径）app-1 为 hit 60/miss 20，
+  Caffeine 口径为 hit 120/miss 20 —— 一次 Spring-cache 命中触发两次 Caffeine 读，正是设计逻辑预期。
+- `estimated_size` 随 `expireAfterWrite=60s` 归零、`evictions_total` 同步 +20，说明是活值而非常量。
+
+### 3.2 `LAB_CACHE_L1_MICROMETER_STATS_ENABLED=false` 重启一台 ⇒ 序列消失（缺失≠0）
+
+做法（不动 `.env`，走 compose 既有占位 `${LAB_CACHE_L1_MICROMETER_STATS_ENABLED:-true}` 由 shell 注入，
+只 recreate app-3）：
+
+```bash
+LAB_CACHE_L1_MICROMETER_STATS_ENABLED=false docker compose ... up -d --no-deps --force-recreate app-3
+docker inspect jl-app-3 ... | grep MICROMETER_STATS   # -> =false
+# 等过 Prometheus 5m lookback 再判缺失（重启 17:51:56Z，查询 17:57:24Z，间隔 5m28s）
+```
+
+| 查询 / 观测 | 结果 |
+|---|---|
+| `count by (instance) (cache_l1_caffeine_requests_total)` | **2**（仅 app-1、app-2）——app-3 序列消失 |
+| `count by (instance) (cache_l1_estimated_size)` | **2** |
+| `absent(cache_l1_estimated_size{exported_instance="app-3"})` | **1**（确证「无序列」而非「值为 0」） |
+| `cache_l1_requests_total`（旧应用口径） | 6 条，app-3 仍在（hit 0/miss 0）⇒ 只关本步 5 条 caffeine 序列，旧序列不受影响 |
+| app-3 原始抓取 `/actuator/prometheus` | `cache_l1_caffeine*` / `cache_l1_estimated_size` 匹配行数 **0**；app-1 同一抓取 **13** 行 |
+
+复位：不带覆盖变量再 `--force-recreate app-3`，`docker inspect` 读回 `=true`；两个
+`count by (instance)` 查询均回到 **3**（见 §8 现场复位）。
+
+**结论：PASS**
+
+## 4. B0-04 有效值回读（value + source 三处一致）
+
+现场：把 `LAB_CACHE_L2_TTL_SECONDS` 从默认 300 改为 **45** 后只 recreate app-2；
+驱动脚本 `/tmp/r1/b004.sh`（一次性 curl 容器）；Redis 侧 `docker exec jl-redis redis-cli`。
+证据：`/tmp/r1/b004-readback.log`、`b004-redis.log`、`b004-envcount.log`、`b004-restore.log`、`b003-restore-check.log`。
+
+### 4.1 `GET /lab/config` 的 value + source
+
+```
+configKey=app.lab.cache.l2.ttl-seconds  env=LAB_CACHE_L2_TTL_SECONDS
+value=45   defaultValue=300   source=systemEnvironment          ← B0-04 验收原句
+configKey=app.lab.cache.l2.key-prefix      value=cache:  defaultValue=cache:  source=systemEnvironment
+configKey=app.lab.cache.l2.clear-scan-count value=500   defaultValue=500     source=systemEnvironment
+```
+
+### 4.2 compose 59 个变量确实下发到 app 容器（本步登记的最后一项 unverified）
+
+```
+docker exec jl-app-{1,2,3} sh -c 'env | grep -c "^LAB_CACHE_"'   ->  59 / 59 / 59
+```
+
+对照：§1 重建**前**的 app-1 env 里 `LAB_CACHE_*` 出现 **0** 次（旧容器起在 compose 增键之前）——
+「改了 compose/env 但容器没跟上」正是手册避坑 19；本轮 recreate 消除了它。
+
+### 4.3 三处一致（config 回读 = Redis 单键 TTL = state 视图）
+
+| 观测点 | 值 |
+|---|---|
+| `GET app-2:/lab/config` → `l2.ttl-seconds` | 45 |
+| 常规读写路径新写键 `redis-cli TTL cache:product:90123` | **41**（≤45，写入后已过约 4s，同一 TTL） |
+| `GET app-2:/lab/cache/state` → `keys.l2ExperimentKeys` | **201** |
+| `redis-cli --scan --pattern 'cache:product:9*' \| wc -l` | **201** |
+| `state.keys.redisReachable` / `hotKeyCached` | true / true |
+
+### 4.4 播种热键 TTL 不随 L2 TTL 变（口径隔离反证）
+
+同一台 app-2（L2 TTL=45）执行 `POST /lab/cache/seed` 后：
+
+```
+seed 响应: hotKeyProductId=90999, hotKeyWritten=true, avalancheKeysWritten=200, avalancheTtlSeconds=60
+redis-cli TTL cache:product:90999  ->  280   ← 播种口径 LAB_CACHE_SEED_HOT_KEY_TTL_SECONDS=300，未被 45 带走
+redis-cli TTL cache:product:90001  ->  39    ← 播种雪崩键 TTL≈60（seed 后约 21s 查询），同样独立于 L2 TTL
+```
+
+代码侧对得上：`CacheExperimentDataService.warmHotKey(hotKeyId, Duration.ofSeconds(seed.getHotKeyTtlSeconds()))`
+用的是 seed 自己的 TTL，与 `TwoLevelCache` 的 L2 写 TTL 不同源。
+
+### 4.5 复位
+
+不带覆盖变量 recreate app-2 → `docker inspect` 读回 `LAB_CACHE_L2_TTL_SECONDS=300`，
+`GET /lab/config` 回读 `value=300 defaultValue=300 source=systemEnvironment`；随后 `nginx -s reload`。
+
+### 逐项结论
+
+| 步骤文档登记的项 | 结果 |
+|---|---|
+| `LAB_CACHE_L2_TTL_SECONDS=45` 后 `/lab/config` value=45 且 source=systemEnvironment | PASS |
+| `/lab/cache/state` 键数 + 单键 `TTL` 与回读值三者一致 | PASS（201=201；45↔41） |
+| 播种热键 TTL 不随 L2 TTL 变化 | PASS（280≈300） |
+| `LAB_CACHE_L2_KEY_PREFIX` 改值后 state 视图不出现「0 键」错位 | **未做**（本轮清单未列该项，且需再一整轮 recreate；单测已证前缀五方共用同一解析点） |
+| compose 起栈后 59 个变量确实下发到 app 容器 | PASS（59/59/59） |
+
+**结论：PASS**（前缀改值一条不在本轮真机范围，留给 B3/R2 顺手覆盖）
 
 ## 5. B0-05 query string 经 Nginx
 
