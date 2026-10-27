@@ -1,6 +1,7 @@
 package com.javalearn.lab.chaos.cluster;
 
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
 import com.javalearn.lab.chaos.model.ExecResult;
@@ -207,6 +208,113 @@ class MysqlClusterMonitorTest {
                 .isEmpty();
     }
 
+    // --- B0-08 slice B: a failed probe says WHO is down -----------------------
+
+    @Test
+    void aFailedProbeWithARunningTargetReportsANodeSideFailure() {
+        FakeGateway gateway = new FakeGateway(new ExecResult(HEALTHY, "", 0, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+        attachLogCapture();
+        monitor.pollOnce();
+        gateway.result = new ExecResult("", "ERROR 2003: Can't connect to MySQL server", 1, false);
+
+        monitor.pollOnce();
+
+        assertThat(monitor.lastFailureContainerState())
+                .isEqualTo(MysqlClusterMonitor.ProbeContainerState.RUNNING);
+        List<String> warnings = probeFailureWarnings();
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .contains("the probe container is still running")
+                .contains("node/MySQL-side");
+        assertThat(gateway.inspectCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aFailedProbeWithADeadTargetReportsAKilledObserver() {
+        FakeGateway gateway = new FakeGateway(new ExecResult(HEALTHY, "", 0, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+        attachLogCapture();
+        monitor.pollOnce();
+        // The drill took the probe container itself down: the exec cannot answer.
+        gateway.result = new ExecResult("", "container is not running", -1, false);
+        gateway.containerState = "exited";
+
+        monitor.pollOnce();
+
+        assertThat(monitor.lastFailureContainerState())
+                .isEqualTo(MysqlClusterMonitor.ProbeContainerState.NOT_RUNNING);
+        List<String> warnings = probeFailureWarnings();
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .contains("the probe container itself is NOT running")
+                .contains("observer")
+                .contains("CHAOS_MYSQL_CLUSTER_CONTAINER");
+    }
+
+    @Test
+    void aMissingProbeContainerCountsAsAKilledObserver() {
+        FakeGateway gateway = new FakeGateway(new ExecResult(HEALTHY, "", 0, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+        gateway.result = new ExecResult("", "no such container", -1, false);
+        gateway.containerState = "absent";
+
+        monitor.pollOnce();
+
+        assertThat(monitor.lastFailureContainerState())
+                .isEqualTo(MysqlClusterMonitor.ProbeContainerState.NOT_RUNNING);
+    }
+
+    @Test
+    void aClassificationChangeWarnsAgainWithoutResettingTheProbeState() {
+        FakeGateway gateway = new FakeGateway(new ExecResult("", "boom", 1, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+        attachLogCapture();
+
+        // Two identical failures: one WARN, no log spam per tick.
+        monitor.pollOnce();
+        monitor.pollOnce();
+        assertThat(probeFailureWarnings()).hasSize(1);
+
+        // Same failing probe, but now the target itself is gone: new information.
+        gateway.containerState = "exited";
+        monitor.pollOnce();
+
+        List<String> warnings = probeFailureWarnings();
+        assertThat(warnings).hasSize(2);
+        assertThat(warnings.get(1)).contains("NOT running");
+        assertThat(registry.scrape()).contains("mysql_cluster_probe_failure_total 3.0");
+    }
+
+    @Test
+    void disablingTheContainerCheckKeepsTheProbeSilentAboutDocker() {
+        ChaosProperties properties = properties(true, "jl-mysql-3");
+        properties.getMysqlCluster().setFailureContainerCheckEnabled(false);
+        FakeGateway gateway = new FakeGateway(new ExecResult("", "boom", 1, false));
+        monitor = newMonitor(gateway, properties);
+        attachLogCapture();
+
+        monitor.pollOnce();
+
+        assertThat(monitor.lastFailureContainerState())
+                .isEqualTo(MysqlClusterMonitor.ProbeContainerState.UNKNOWN);
+        assertThat(gateway.inspectCalls.get()).isZero();
+        assertThat(gateway.execCalls.get()).isEqualTo(1);
+        assertThat(probeFailureWarnings().get(0))
+                .contains("chaos.mysql-cluster.failure-container-check-enabled");
+    }
+
+    @Test
+    void aSuccessfulProbeDoesNotInspectTheContainer() {
+        FakeGateway gateway = new FakeGateway(new ExecResult(HEALTHY, "", 0, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+
+        monitor.pollOnce();
+
+        assertThat(gateway.inspectCalls.get()).isZero();
+        assertThat(registry.scrape()).contains("mysql_cluster_probe_up 1.0");
+    }
+
     private void attachLogCapture() {
         monitorLogger = (Logger) LoggerFactory.getLogger(MysqlClusterMonitor.class);
         logs = new ListAppender<>();
@@ -219,6 +327,14 @@ class MysqlClusterMonitorTest {
                 .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
                 .map(ILoggingEvent::getFormattedMessage)
                 .filter(message -> message.contains("is the current PRIMARY"))
+                .toList();
+    }
+
+    private List<String> probeFailureWarnings() {
+        return logs.list.stream()
+                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("MySQL cluster probe failed"))
                 .toList();
     }
 
@@ -242,7 +358,10 @@ class MysqlClusterMonitorTest {
     private static final class FakeGateway implements ContainerGateway {
 
         private final AtomicInteger execCalls = new AtomicInteger();
+        private final AtomicInteger inspectCalls = new AtomicInteger();
         private volatile ExecResult result;
+        /** Docker state reported for the probe container; "absent" means gone entirely. */
+        private volatile String containerState = "running";
 
         private FakeGateway(ExecResult result) {
             this.result = result;
@@ -260,7 +379,11 @@ class MysqlClusterMonitorTest {
 
         @Override
         public ContainerView inspectLabContainer(String containerName) {
-            return new ContainerView(containerName, "running", "healthy");
+            inspectCalls.incrementAndGet();
+            if ("absent".equals(containerState)) {
+                throw new ContainerNotFoundException("Container not found: " + containerName);
+            }
+            return new ContainerView(containerName, containerState, "healthy");
         }
 
         @Override

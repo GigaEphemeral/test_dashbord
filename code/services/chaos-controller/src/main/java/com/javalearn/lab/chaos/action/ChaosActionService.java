@@ -1,6 +1,7 @@
 package com.javalearn.lab.chaos.action;
 
 import com.javalearn.lab.chaos.annotation.ChaosAnnotator;
+import com.javalearn.lab.chaos.cluster.ProbeTargetGuard;
 import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.config.DatastoreTargetPolicy;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
@@ -8,6 +9,7 @@ import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
 import io.micrometer.core.instrument.Gauge;
@@ -54,6 +56,13 @@ import java.util.concurrent.TimeUnit;
  * anything else runs. Automatic TTL reverts bypass that rule on purpose - a
  * fault that was allowed to be applied must always be allowed to be undone.</p>
  *
+ * <p>Probe isolation (Stage2 B0-08 slice B) is a second, independent refusal on
+ * the same path: when {@code chaos.mysql-cluster.container} names the target of
+ * a {@code kill}/{@code freeze}/{@code restart}, the action is refused with 403
+ * {@code 40302} (see {@link ProbeTargetGuard}) - faulting the node the MySQL
+ * cluster probe lives in freezes every {@code mysql_cluster_*} series in the
+ * middle of the failover drill. {@code start}/{@code resume} stay allowed.</p>
+ *
  * <p>The guide can freeze the whole action set: while paused, scheduled reverts
  * and the watchdog do not fire, and every action keeps its remaining TTL.
  * Resuming schedules that remaining TTL (not a fresh one); stop-all reverts
@@ -89,6 +98,7 @@ public class ChaosActionService {
     private final ScheduledExecutorService scheduler;
     private final Clock clock;
     private final DatastoreTargetPolicy datastorePolicy;
+    private final ProbeTargetGuard probeTargetGuard;
     private final NetworkFaultCleaner networkFaultCleaner;
 
     private final ConcurrentHashMap<String, ChaosAction> active = new ConcurrentHashMap<>();
@@ -148,6 +158,9 @@ public class ChaosActionService {
         // Fail fast: an invalid chaos.datastore.allowed-target-pattern must stop
         // the context, not surface as a 500 on the first fault request.
         this.datastorePolicy = DatastoreTargetPolicy.from(properties);
+        // B0-08 slice B: the MySQL cluster probe container is never a legal
+        // destructive target (read straight from chaos.mysql-cluster.*).
+        this.probeTargetGuard = ProbeTargetGuard.from(properties);
 
         Gauge.builder("chaos.active.actions", active, map -> map.size())
                 .description("Chaos actions tracked with a pending automatic revert")
@@ -193,6 +206,21 @@ public class ChaosActionService {
                 countAction(type, target, "rejected");
                 throw new ContainerNotAllowedException(
                         "container reference \"" + target + "\" resolves to " + canonicalRejection);
+            }
+        }
+
+        // Probe isolation (B0-08 slice B): the container the MySQL cluster probe
+        // execs into is never a legal destructive target - faulting it blinds the
+        // drill exactly while it should report the failover. Checked against the
+        // canonical name so an id reference cannot slip past, and only for
+        // kill/freeze/restart; start/resume are what bring the probe back.
+        if (type.destructive()) {
+            String probeRejection = probeTargetGuard.rejectionReason(canonical != null ? canonical : target);
+            if (probeRejection != null) {
+                countAction(type, target, "rejected");
+                log.warn("Chaos {} on {} refused by the probe isolation rule: {}",
+                        type.wireName(), target, probeRejection);
+                throw new ProbeTargetProtectedException(probeRejection);
             }
         }
 

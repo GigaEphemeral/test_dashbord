@@ -31,6 +31,17 @@ public enum ChaosActionType {
         return this == KILL || this == FREEZE;
     }
 
+    /**
+     * True when the action takes the container (or its process) down for a while:
+     * {@code kill} stops it, {@code freeze} SIGSTOPs it, {@code restart} cycles it.
+     * Those are the actions that also blind an observer living in the same
+     * container, which is what the B0-08 probe isolation rule refuses.
+     * {@code start}/{@code resume} are recovery, never destructive.
+     */
+    public boolean destructive() {
+        return this == KILL || this == FREEZE || this == RESTART;
+    }
+
     /** The action that undoes this one, or {@code null} for non-reverting actions. */
     public ChaosActionType revertAction() {
         return switch (this) {
