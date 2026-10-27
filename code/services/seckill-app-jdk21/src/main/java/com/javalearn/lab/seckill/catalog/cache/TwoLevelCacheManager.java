@@ -72,11 +72,19 @@ public final class TwoLevelCacheManager implements CacheManager {
     }
 
     /**
-     * L2 Redis key prefix of the product cache, for the lab seeder and state
-     * reader that must write/inspect exactly the keys this cache reads.
+     * L2 Redis key prefix of the product cache for THIS manager's bound
+     * settings, for the lab seeder and state reader that must write/inspect
+     * exactly the keys this cache reads. The layout itself lives in
+     * {@link TwoLevelCacheSettings#l2PrefixFor(String)}
+     * ({@code app.lab.cache.l2.key-prefix}), so nothing here repeats the format.
      */
-    public static String productL2KeyPrefix() {
-        return TwoLevelCache.l2KeyPrefix(PRODUCT_CACHE);
+    public String productL2KeyPrefix() {
+        return settings.l2PrefixFor(PRODUCT_CACHE);
+    }
+
+    /** The bound settings this manager hands to every cache it creates. */
+    public TwoLevelCacheSettings settings() {
+        return settings;
     }
 
     private static Class<?> valueType(String cacheName) {

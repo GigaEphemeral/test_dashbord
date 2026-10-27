@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
+import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
 import com.javalearn.lab.seckill.lab.api.CachePreheatStateResponse;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
@@ -243,7 +244,7 @@ class CachePreheatServiceTest {
         manager = new TwoLevelCacheManager(redisTemplate, objectMapper, registry,
                 PreheatTestSupport.toggles(cacheEnabled));
         return new CachePreheatService(properties, redisTemplate, objectMapper,
-                manager, registry, tracker, clock);
+                manager, registry, tracker, clock, TwoLevelCacheSettings.defaults());
     }
 
     private void stubProduct(long id) throws Exception {

@@ -139,6 +139,34 @@ class TwoLevelCacheTest {
         assertThat(failingCache.get(1L).get()).isEqualTo(PRODUCT);
     }
 
+    /**
+     * B0-04 turned three compile-time constants of this class into configuration;
+     * this proves the bound values really drive the Redis write, so a lab run can
+     * change the L2 lifetime without a rebuild and the changed key TTL matches
+     * what {@code GET /lab/config} reports.
+     */
+    @Test
+    void boundSettingsDecideTheL2KeyLayoutAndWriteTtl() {
+        TwoLevelCacheSettings tuned = new TwoLevelCacheSettings(
+                1_000L, Duration.ofSeconds(10), Duration.ofSeconds(60), false,
+                Duration.ofSeconds(30), "lab-l2:", 250L);
+        TwoLevelCache configured = new TwoLevelCache("product", ProductResponse.class,
+                redis, new ObjectMapper(), new SimpleMeterRegistry(), tuned);
+
+        assertThat(configured.l2Ttl()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(configured.redisKeyPrefix()).isEqualTo("lab-l2:product:");
+        assertThat(configured.l2ClearScanCount()).isEqualTo(250L);
+
+        configured.put(1L, PRODUCT);
+
+        assertThat(redis.opsForValue().get("lab-l2:product:1")).isNotNull();
+        // The historical `cache:` layout is gone for this instance: a reader that
+        // still hardcodes it would find nothing.
+        assertThat(redis.opsForValue().get("cache:product:1")).isNull();
+        Long remainingSeconds = redis.getExpire("lab-l2:product:1");
+        assertThat(remainingSeconds).isNotNull().isBetween(1L, 30L);
+    }
+
     private double counter(String name, String... tags) {
         return counter(registry, name, tags);
     }

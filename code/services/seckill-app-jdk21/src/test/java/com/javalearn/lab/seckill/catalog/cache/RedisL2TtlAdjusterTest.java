@@ -20,8 +20,8 @@ import static org.mockito.Mockito.when;
 class RedisL2TtlAdjusterTest {
 
     private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
-    private final RedisL2TtlAdjuster adjuster =
-            new RedisL2TtlAdjuster(redis, TwoLevelCacheManager.productL2KeyPrefix());
+    private final RedisL2TtlAdjuster adjuster = new RedisL2TtlAdjuster(redis,
+            TwoLevelCacheSettings.defaults().l2PrefixFor(TwoLevelCacheManager.PRODUCT_CACHE));
 
     @Test
     void readsTheRemainingTtlOfTheProductKeyTheCacheWrote() {

@@ -27,8 +27,10 @@ import java.util.concurrent.Callable;
  * <p>L1 is an in-process Caffeine cache whose capacity and write/refresh
  * windows come from {@link TwoLevelCacheSettings} (design 8.4: 10k entries,
  * refresh from L2 after 10s, 60s write expiry as the final bound). L2 is Redis
- * with JSON values and a 5 minute TTL, keyed by {@code cache:<cacheName>:<key>}.
- * Reads go L1 -> L2 -> (miss) source; writes go to both layers.</p>
+ * with JSON values, whose write TTL and key layout also come from
+ * {@link TwoLevelCacheSettings} ({@code app.lab.cache.l2.*}; historically
+ * 5 minutes and {@code cache:<cacheName>:<key>}). Reads go L1 -> L2 -> (miss)
+ * source; writes go to both layers.</p>
  *
  * <p>A read that hits L1 doubles as Caffeine's refresh trigger: once the entry
  * is older than {@code refreshAfterWrite}, Caffeine asynchronously reloads it
@@ -54,11 +56,10 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
 
     private static final Logger log = LoggerFactory.getLogger(TwoLevelCache.class);
 
-    static final Duration L2_TTL = Duration.ofMinutes(5);
-    static final String KEY_PREFIX = "cache:";
-
     private final String name;
     private final String redisKeyPrefix;
+    private final Duration l2Ttl;
+    private final long l2ClearScanCount;
     private final Class<?> valueType;
     private final Cache<Object, Object> l1;
     private final StringRedisTemplate redisTemplate;
@@ -87,7 +88,9 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                          MeterRegistry meterRegistry,
                          TwoLevelCacheSettings settings) {
         this.name = name;
-        this.redisKeyPrefix = l2KeyPrefix(name);
+        this.redisKeyPrefix = settings.l2PrefixFor(name);
+        this.l2Ttl = settings.l2Ttl();
+        this.l2ClearScanCount = settings.l2ClearScanCount();
         this.valueType = valueType;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
@@ -271,7 +274,7 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
         l1.put(key, value);
         try {
             String json = objectMapper.writeValueAsString(value);
-            redisTemplate.opsForValue().set(redisKey(key), json, L2_TTL);
+            redisTemplate.opsForValue().set(redisKey(key), json, l2Ttl);
         } catch (JsonProcessingException | RuntimeException ex) {
             countL2Error("write", key, ex);
         }
@@ -292,7 +295,8 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
         l1.invalidateAll();
         List<String> keys = new ArrayList<>();
         try (Cursor<String> cursor = redisTemplate.scan(
-                ScanOptions.scanOptions().match(redisKeyPrefix + "*").count(500).build())) {
+                ScanOptions.scanOptions().match(redisKeyPrefix + "*")
+                        .count(l2ClearScanCount).build())) {
             while (cursor.hasNext()) {
                 keys.add(cursor.next());
             }
@@ -373,17 +377,16 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
     private record L2Read(Object value, boolean failed) {
     }
 
+    /**
+     * The single source of truth for the L2 key layout is
+     * {@link TwoLevelCacheSettings#l2PrefixFor(String)} (bound from
+     * {@code app.lab.cache.l2.key-prefix}). The lab cache seeder, the state
+     * reader, the preheat service and the TTL-jitter adjuster resolve it
+     * through that settings bean instead of repeating the format, so they cannot
+     * drift away from this cache when the prefix is reconfigured.
+     */
     private String redisKey(Object key) {
         return redisKeyPrefix + key;
-    }
-
-    /**
-     * The single source of truth for the L2 key layout. The lab cache seeder and
-     * state reader go through {@link TwoLevelCacheManager#productL2KeyPrefix()}
-     * instead of repeating the format, so they cannot drift away from this cache.
-     */
-    static String l2KeyPrefix(String cacheName) {
-        return KEY_PREFIX + cacheName + ":";
     }
 
     private void countL2Error(String operation, Object key, Exception ex) {
@@ -392,12 +395,18 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                 operation, name, key, ex.toString());
     }
 
-    // Visible for diagnostics and tests; never used to register meters.
+    /** The effective L2 key prefix of this cache, from the bound settings. */
     String redisKeyPrefix() {
         return redisKeyPrefix;
     }
 
+    /** The effective L2 write TTL, from the bound settings. */
     Duration l2Ttl() {
-        return L2_TTL;
+        return l2Ttl;
+    }
+
+    /** The effective SCAN COUNT hint used by {@link #clear()}. */
+    long l2ClearScanCount() {
+        return l2ClearScanCount;
     }
 }

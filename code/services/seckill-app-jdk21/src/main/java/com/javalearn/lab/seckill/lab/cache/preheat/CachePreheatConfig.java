@@ -2,6 +2,7 @@ package com.javalearn.lab.seckill.lab.cache.preheat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
+import com.javalearn.lab.seckill.lab.config.LabCacheL2Properties;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -32,17 +33,21 @@ import java.util.concurrent.atomic.AtomicLong;
  * service warms L1 from L2 and never writes L2.</p>
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(LabCachePreheatProperties.class)
+@EnableConfigurationProperties({LabCachePreheatProperties.class, LabCacheL2Properties.class})
 public class CachePreheatConfig {
 
     @Bean
-    public TwoLevelCacheSettings twoLevelCacheSettings(LabCachePreheatProperties properties) {
+    public TwoLevelCacheSettings twoLevelCacheSettings(LabCachePreheatProperties properties,
+                                                       LabCacheL2Properties l2Properties) {
         LabCachePreheatProperties.L1 l1 = properties.getL1();
         return new TwoLevelCacheSettings(
                 l1.getMaximumSize(),
                 Duration.ofSeconds(l1.getRefreshAfterWriteSeconds()),
                 Duration.ofSeconds(l1.getExpireAfterWriteSeconds()),
-                l1.isMicrometerStatsEnabled());
+                l1.isMicrometerStatsEnabled(),
+                Duration.ofSeconds(l2Properties.getTtlSeconds()),
+                l2Properties.getKeyPrefix(),
+                l2Properties.getClearScanCount());
     }
 
     @Bean
@@ -58,9 +63,10 @@ public class CachePreheatConfig {
                                                    ObjectMapper objectMapper,
                                                    CacheManager cacheManager,
                                                    MeterRegistry meterRegistry,
-                                                   HotKeyTracker hotKeyTracker) {
+                                                   HotKeyTracker hotKeyTracker,
+                                                   TwoLevelCacheSettings twoLevelCacheSettings) {
         return new CachePreheatService(properties, redisTemplate, objectMapper, cacheManager,
-                meterRegistry, hotKeyTracker, Clock.systemUTC());
+                meterRegistry, hotKeyTracker, Clock.systemUTC(), twoLevelCacheSettings);
     }
 
     @Bean(name = "cachePreheatScheduler", destroyMethod = "shutdownNow")

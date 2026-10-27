@@ -152,6 +152,19 @@ app:
       state:
         # Redis SCAN COUNT hint used by GET /lab/cache/state to count live keys.
         scan-count: ${LAB_CACHE_STATE_SCAN_COUNT:500}
+      # TwoLevelCache's own Redis L2 write side (Stage2 B0-04). These three were
+      # compile-time constants of TwoLevelCache (L2_TTL = 5 minutes,
+      # KEY_PREFIX = "cache:", clear() SCAN count 500); they are configuration
+      # now, so a run can change the L2 lifetime without a rebuild, and the
+      # effective value is readable through GET /lab/config.
+      # The prefix is the L2 key LAYOUT contract: the cache, the experiment
+      # seeder, GET /lab/cache/state, the preheat service and the TTL-jitter
+      # adjuster all resolve it from this single key (TwoLevelCacheSettings),
+      # so re-pointing it moves every reader and writer together.
+      l2:
+        ttl-seconds: ${LAB_CACHE_L2_TTL_SECONDS:300}
+        key-prefix: ${LAB_CACHE_L2_KEY_PREFIX:cache:}
+        clear-scan-count: ${LAB_CACHE_L2_CLEAR_SCAN_COUNT:500}
       penetration:
         # Startup seed of the runtime mode; POST /lab/cache/mode switches it
         # without a restart. off is the unprotected symptom state the lab starts in.

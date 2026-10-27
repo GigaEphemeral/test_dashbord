@@ -6,6 +6,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
+import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
 import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
@@ -125,7 +126,7 @@ class CacheExperimentDataServiceTest {
         service = new CacheExperimentDataService(properties, jdbcTemplate, template, objectMapper,
                 bloomFilter, markerStore, modeService, breakdownDefense, avalancheDefense,
                 avalancheProperties,
-                new LabToggleService(toggles()), cacheManager);
+                new LabToggleService(toggles()), cacheManager, TwoLevelCacheSettings.defaults());
     }
 
     private static LabCacheAvalancheProperties avalancheProperties() {

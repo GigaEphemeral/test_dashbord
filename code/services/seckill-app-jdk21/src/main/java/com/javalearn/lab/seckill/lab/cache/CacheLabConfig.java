@@ -5,6 +5,7 @@ import com.javalearn.lab.seckill.catalog.cache.NullValueMarkerStore;
 import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
+import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
 import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
 import com.javalearn.lab.seckill.lab.config.LabCacheProperties;
 import com.javalearn.lab.seckill.lab.toggle.CacheDefenseModeService;
@@ -37,10 +38,11 @@ public class CacheLabConfig {
             ProductAvalancheDefense productAvalancheDefense,
             LabCacheAvalancheProperties avalancheProperties,
             LabToggleService labToggleService,
-            CacheManager cacheManager) {
+            CacheManager cacheManager,
+            TwoLevelCacheSettings cacheSettings) {
         return new CacheExperimentDataService(properties, jdbcTemplate, redisTemplate, objectMapper,
                 productBloomFilterService, nullValueMarkerStore, cacheDefenseModeService,
                 productBreakdownDefense, productAvalancheDefense, avalancheProperties,
-                labToggleService, cacheManager);
+                labToggleService, cacheManager, cacheSettings);
     }
 }
