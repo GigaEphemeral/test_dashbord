@@ -148,6 +148,21 @@
   expect: 2
   last_verified: 2026-10-27
 
+# Live drill (step-52): the bundle is captured inside the container and lands on
+# the host through the compose bind mount; snapshot artifacts themselves are
+# gitignored (runtime data), so the committed step doc carries the evidence
+# marker (folder, five files, annotation id) and the reproduction commands.
+- id: thread-snapshot-live-capture
+  doc:
+    - doc/process/step-52-thread-snapshot-live.md
+  statement: "线程快照已在实栈抓取（宿主机挂载收到五件套 + Grafana annotation，见 step-52）"
+  verify:
+    kind: file_contains
+    path: doc/process/step-52-thread-snapshot-live.md
+    pattern: "live-capture-verified: thread-snapshot-live-capture"
+  expect: true
+  last_verified: 2026-10-27
+
 - id: ha-acceptance-script-exists
   doc:
     - doc/process/step-45-ha-acceptance-script.md
