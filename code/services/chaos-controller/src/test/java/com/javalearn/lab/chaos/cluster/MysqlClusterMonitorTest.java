@@ -190,6 +190,23 @@ class MysqlClusterMonitorTest {
         assertThat(selfPrimaryWarnings()).hasSize(2);
     }
 
+    @Test
+    void anUnchangedSecondPollDoesNotLogAMembershipChange() {
+        FakeGateway gateway = new FakeGateway(new ExecResult(HEALTHY, "", 0, false));
+        monitor = newMonitor(gateway, properties(true, "jl-mysql-3"));
+        attachLogCapture();
+
+        monitor.pollOnce();
+        monitor.pollOnce();
+
+        // Both ticks parse the same rows into new Observation records; identity
+        // comparison would log a false "changed: X/Y -> X/Y" WARN every tick.
+        assertThat(logs.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("member mysql-1 changed")))
+                .isEmpty();
+    }
+
     private void attachLogCapture() {
         monitorLogger = (Logger) LoggerFactory.getLogger(MysqlClusterMonitor.class);
         logs = new ListAppender<>();
