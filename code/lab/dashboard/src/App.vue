@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AnimationLab from './components/AnimationLab.vue'
+import CacheLab from './components/CacheLab.vue'
 import ScenarioWizard from './components/ScenarioWizard.vue'
 import ThreadLab from './components/ThreadLab.vue'
 import {
@@ -271,7 +272,7 @@ watch(autoSync, (enabled) => {
   }
 })
 
-// The thread page owns its own 5s poll (same busy rule); only one view polls.
+// The thread/cache pages own their own 5s poll (same busy rule); only one view polls.
 watch(view, (value) => {
   if (value === 'console') {
     syncEnvironment()
@@ -306,7 +307,7 @@ onBeforeUnmount(stopPolling)
         <div class="brand-mark">HA</div>
         <div>
           <h1>HA Lab · 实验操作台</h1>
-          <p class="subtitle">M2–M6 · 场景向导、故障状态、线程实验室与动画视图</p>
+          <p class="subtitle">M2–M6 · 场景向导、故障状态、线程/缓存实验室与动画视图</p>
         </div>
       </div>
       <div class="topbar-meta">
@@ -331,6 +332,13 @@ onBeforeUnmount(stopPolling)
         data-testid="nav-thread"
         @click="view = 'thread'"
       >线程实验室</button>
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: view === 'cache' }"
+        data-testid="nav-cache"
+        @click="view = 'cache'"
+      >缓存实验室</button>
       <button
         type="button"
         class="nav-btn"
@@ -504,6 +512,11 @@ onBeforeUnmount(stopPolling)
         :token="token.trim()"
         :active="view === 'thread'"
         :focus-instance="threadInstance"
+      />
+      <CacheLab
+        v-else-if="view === 'cache'"
+        :token="token.trim()"
+        :active="view === 'cache'"
       />
       <AnimationLab
         v-else

@@ -199,3 +199,35 @@ export function runThreadLifecycleAction(token, instance, action) {
 export function captureThreadSnapshot(token, instance) {
   return postJson(`${threadBase(instance)}/snapshot`, token)
 }
+
+// ---------------------------------------------------------------- cache lab
+// Same narrow controller hop, second explicit allow-list: state/preheat reads,
+// mode/seed/preheat writes. The app's /lab/cache/** is never reachable directly.
+function cacheBase(instance) {
+  return `/chaos/app/${encodeURIComponent(instance)}/lab/cache`
+}
+
+/** Defense mode, live strategy parameters, dataset and L1/L2 key counts. */
+export function fetchCacheState(token, instance) {
+  return getJson(`${cacheBase(instance)}/state`, token)
+}
+
+/** One of off | null-cache | bloom | mutex | logical-expire | ttl-jitter | l1-cache | db-fallback. */
+export function updateCacheMode(token, instance, mode) {
+  return postJson(`${cacheBase(instance)}/mode`, token, { mode })
+}
+
+/** Idempotent 1000-product seed; can take seconds and writes MySQL + Redis. */
+export function seedCache(token, instance) {
+  return postJson(`${cacheBase(instance)}/seed`, token)
+}
+
+/** Preheat snapshot: enabled flags, hot list, tracker size and the last run. */
+export function fetchCachePreheat(token, instance) {
+  return getJson(`${cacheBase(instance)}/preheat`, token)
+}
+
+/** Runs one manual preheat synchronously and returns the post-run snapshot. */
+export function runCachePreheat(token, instance) {
+  return postJson(`${cacheBase(instance)}/preheat`, token)
+}
