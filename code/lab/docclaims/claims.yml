@@ -339,3 +339,97 @@
     pattern: "docker exec jl-app-[0-9].*curl"
   expect: 0
   last_verified: 2026-10-27
+
+# ---------------------------------------------------------------------------
+# Documentation-pass claims (2026-10-27 第六批次): guard the shape of the docs
+# themselves, so a future edit cannot silently undo the fold-up / re-stale a
+# number that was just corrected against the live stack.
+# ---------------------------------------------------------------------------
+
+- id: readme-trigger-matrix-exists
+  polarity: positive
+  doc:
+    - doc/readme.md
+  statement: "使用文档有独立的「每一项设计的异常如何触发」章节（§4），逐设计族给触发方式与期望症状"
+  verify:
+    kind: file_contains
+    path: doc/readme.md
+    pattern: "## 4\\. 每一项设计的异常如何触发"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: install-manual-exists
+  polarity: positive
+  doc:
+    - doc/design/安装与打包手册.md
+    - doc/readme.md
+  statement: "打包与安装明细手册存在，并被使用文档引用"
+  verify:
+    kind: file_exists
+    path: doc/design/安装与打包手册.md
+  expect: true
+  last_verified: 2026-10-27
+
+- id: config-audit-folded-into-details11
+  polarity: positive
+  doc:
+    - doc/design/details/11-配置与安全边界.md
+    - doc/process/阶段交接-2026-10-26.md
+  statement: "步骤交接里的秒杀准入/弹性配置表已上收到 details/11 §3.1.1"
+  verify:
+    kind: file_contains
+    path: doc/design/details/11-配置与安全边界.md
+    pattern: "### 3\\.1\\.1 秒杀准入与弹性键"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: handover-no-longer-copies-seckill-keys
+  polarity: negative
+  doc:
+    - doc/process/阶段交接-2026-10-26.md
+  statement: "阶段交接不再复制配置键表（限流/熔断键只应存在于 details/11 §3.1.1 与 application.yml）"
+  verify:
+    kind: grep_count
+    path: doc/process/阶段交接-2026-10-26.md
+    pattern: "SECKILL_RATE_LIMIT_PER_PERIOD"
+  expect: 0
+  last_verified: 2026-10-27
+
+- id: details-readme-owns-open-gaps
+  polarity: positive
+  doc:
+    - doc/design/details/README.md
+    - doc/process/阶段交接-2026-10-26.md
+  statement: "「还有什么没做」的唯一口径是 details/README §3.2 未收口清单"
+  verify:
+    kind: file_contains
+    path: doc/design/details/README.md
+    pattern: "### 3\\.2 未收口清单"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: k6-runner-accepts-nine-scenarios
+  polarity: positive
+  doc:
+    - code/lab/k6/README.md
+    - doc/design/details/09-压测与观测.md
+    - doc/design/安装与打包手册.md
+  statement: "k6 run.sh 的白名单含 ha-failover / db-failover / cache-lab（details/09 的六场景说法已过期，登记在 details/README §3.3）"
+  verify:
+    kind: file_contains
+    path: code/lab/k6/run.sh
+    pattern: "ha-failover\\|db-failover\\|cache-lab"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: readme-does-not-cite-stale-verify-baseline
+  polarity: negative
+  doc:
+    - doc/readme.md
+  statement: "使用文档不再写 104 PASS 的旧 verify 基线（真机现为 109 PASS / 1 WARN / 0 FAIL）"
+  verify:
+    kind: grep_count
+    path: doc/readme.md
+    pattern: "104 PASS"
+  expect: 0
+  last_verified: 2026-10-27
