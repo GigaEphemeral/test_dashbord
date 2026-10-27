@@ -3,7 +3,7 @@
 > 一句话职责：用一块静态 Vue 页面（`/lab/`）驱动场景向导、环境状态、背景流量与只读日志；所有写操作经 Nginx `/lab-api/` 代理到 chaos-controller，并由 `X-Lab-Token` 统一鉴权。
 > 代码基线：`294798a`
 
-控制台是**单页 MVP**：没有 Vue Router，没有设计 §12.1 里的 `/scenario/:id`、`/thread`、`/cache`、`/tuning`、`/jdk`、`/bench` 路由。应用内部的 `/lab/**`（线程实验室、缓存实验室、toggles）**不经过 Nginx**，控制台当前也打不到它们。
+控制台是**单页 MVP**：没有 Vue Router，没有设计 §12.1 里的 `/scenario/:id`、`/thread`、`/cache`、`/tuning`、`/jdk`、`/bench` 路由。应用内部的 `/lab/**`（线程实验室、缓存实验室、toggles）**不经过 Nginx**；线程与缓存实验室经 chaos-controller 的两份显式白名单窄代理进入，`/lab/toggles` 仍然不可达。
 
 ---
 
@@ -13,15 +13,17 @@
 |---|---|---|
 | Vue 应用 | `code/lab/dashboard/src/App.vue` | 状态栏、令牌、容器清单、日志面板、向导挂载、5s 轮询 |
 | 向导组件 | `code/lab/dashboard/src/components/ScenarioWizard.vue` | 场景下拉、进度、步骤列表、explain 四条、五个动作按钮 |
+| 线程页 | `code/lab/dashboard/src/components/ThreadLab.vue` | 实例选择、七种线程故障、生命周期、快照 |
+| 缓存页 | `code/lab/dashboard/src/components/CacheLab.vue` | 实例选择、8 种防御模式、策略参数、播种、预热、D10 深链 |
 | API 客户端 | `code/lab/dashboard/src/api.js` | 统一 `/lab-api` 前缀、`X-Lab-Token`、`Result.data` 解包、`ApiError` |
 | 构建 | `vite.config.js` + `package.json` | `base=/lab/`，`dist` 输出；dev 代理 `/lab-api` |
 | 静态托管 | Nginx `location /lab/` | 从 `dist` 挂载，SPA 回退 `index.html` |
 | 控制器代理 | Nginx `location /lab-api/` | `proxy_pass http://chaos-controller:8081/`（剥前缀） |
 | Prometheus 代理 | Nginx `location /prom/` | `proxy_pass http://prometheus:9090/` |
 | 业务代理 | Nginx `location /api/` | 轮询 `app-1/2/3:8080` |
-| 控制器 API | `chaos/web`, `chaos/guide`, `chaos/traffic` | 容器/日志、向导、背景流量 |
+| 控制器 API | `chaos/web`, `chaos/guide`, `chaos/traffic` | 容器/日志、向导、背景流量、app 窄代理 |
 | 鉴权 | `chaos/auth/TokenFilter` | `X-Lab-Token` 常量时间比较；公开 `/health`、`/metrics`、`/info`、`/actuator*` |
-| 冒烟 | `code/lab/scripts/console-smoke.sh` + `.mjs` | Playwright 真浏览器驱动；37 项断言（含线程实验室页 4 条、动画视图页 7 条） |
+| 冒烟 | `code/lab/scripts/console-smoke.sh` + `.mjs` | Playwright 真浏览器驱动；42 项断言（含线程页 4 条、缓存页 5 条、动画页 7 条） |
 
 ---
 
@@ -39,7 +41,8 @@ flowchart LR
     S -->|"fetch /lab-api/**"| N
     C --> D["Docker API<br/>lab=java-learn 白名单"]
     C --> G["Grafana annotation（best-effort）"]
-    A -.->|"应用内 /lab/** 不经 Nginx"| X2["控制台不可达：/lab/cache · /lab/toggles；/lab/thread 经窄代理可达"]
+    C -->|"窄代理 /chaos/app/{instance}/lab/thread·cache/**"| A
+    A -.->|"应用内 /lab/** 不经 Nginx"| X2["/lab/toggles 不可达"]
 ```
 
 路由细节：
@@ -47,9 +50,25 @@ flowchart LR
 - `/lab` → 301 `/lab/`；`/lab/` 静态目录，未知路径回退 `/lab/index.html`。
 - `/lab-api/` 的 `proxy_pass` 带尾斜杠，因此浏览器 `/lab-api/lab/guide/state` → 控制器 `/lab/guide/state`；`/lab-api/health` → 控制器 `/health`。
 - `/lab-api/` 的读超时 30s（向导 step 可能触发 Docker stop/start）；`/api/` 连接 2s、读 10s。
-- `/lab/(toggles|config)` 被 Nginx 显式 404；其他应用内 `/lab/**`（thread/cache）会落到静态 `/lab/` location，**不会**被代理成 API。
+- `/lab/(toggles|config)` 被 Nginx 显式 404；应用内 `/lab/thread/**`、`/lab/cache/**` 由控制器的显式白名单窄代理访问，Nginx 本身仍不代理这些路径（直接请求会落到静态 location）。
 - `/prom/` 只代理查询/UI；Prometheus 自身 `--web.route-prefix=/`，外部 URL 指向 `/prom/`。
 - 控制台与 API 同源，避免 CORS；Vite dev server 只代理 `/lab-api`（`VITE_LAB_API_TARGET`，默认 `http://127.0.0.1:8080`）。
+
+### 2.1 实验页窄代理（`AppProxyService`）
+
+浏览器只访问 `/lab-api/chaos/app/{instance}/...`，控制器再以 `X-Lab-Token` 转发到 `jl-net` 内的 app。安全边界是**实例白名单 + 方法/路径白名单 + GET/POST + 请求体上限**：
+
+| 分组 | 方法 | 精确路径 |
+|---|---|---|
+| 线程 | GET | `/lab/thread/state`、`/lab/thread/lifecycle` |
+| 线程 | POST | `/lab/thread/fault`、`/lab/thread/stop-all`、`/lab/thread/lifecycle/{start,step,freeze,resume,reset}`、`/lab/thread/snapshot`、`/lab/thread/fault/{deadlock,stuck,cpu-burn,heap-leak,oom,thread-leak,starvation}/{stop,pause,resume}` |
+| 缓存 | GET | `/lab/cache/state`、`/lab/cache/preheat` |
+| 缓存 | POST | `/lab/cache/mode`（JSON body）、`/lab/cache/seed`、`/lab/cache/preheat` |
+
+- 实例只允许 `CHAOS_APP_PROXY_INSTANCES`（默认 `app-1,app-2,app-3`）；未知实例 404/40401。
+- 白名单外路径 404/40401（包括 `GET /lab/cache/mode`、`POST /lab/cache/preheat/run`、尾斜杠、`..`、查询串）；其他方法 405/40501；上游不可达 503/50301；非 JSON 502/50201。
+- 只有 `POST /lab/thread/fault` 与 `POST /lab/cache/mode` 转发请求体，上限 `CHAOS_APP_PROXY_MAX_REQUEST_BYTES`（默认 8192）；其余 POST 即使带 body 也被丢弃。
+- 超时外置：`CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS`（2s）、`CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS`（10s）。播种是同步调用，1000 行通常数秒内完成；极慢主机需调大请求超时。
 
 ---
 
@@ -172,7 +191,7 @@ flowchart TD
 
 `ChaosActionView` 字段：`id, target, action, ttlSeconds, expiresAt, revertAction, status, lastError`。`status` 取值 `applying/active/reverting/reverted/failed/completed`。
 
-### 5.2 应用内 `/lab/**`（不经 Nginx，需在容器内直连）
+### 5.2 应用内 `/lab/**`（Nginx 不代理；线程/缓存经控制器窄代理）
 
 | 方法 | 路径 | 参数 / Body | 响应 |
 |---|---|---|---|
@@ -184,13 +203,17 @@ flowchart TD
 | POST | `/lab/thread/stop-all` | 无 | `Result<List<ThreadActionView>>` |
 | GET | `/lab/thread/lifecycle` | 无 | `Result<LifecycleDemoView>` |
 | POST | `/lab/thread/lifecycle/{start\|step\|freeze\|resume\|reset}` | 无 | `Result<LifecycleDemoView>` |
-| GET | `/lab/cache/mode` | 无 | `Result<CacheModeResponse{mode}>` |
+| GET | `/lab/cache/mode` | 无 | `Result<CacheModeResponse{mode}>`（不在代理白名单） |
 | POST | `/lab/cache/mode` | `{mode}` | `Result<CacheModeResponse>` |
 | POST | `/lab/cache/seed` | 无 | `Result<CacheSeedResponse>`（预留 id 段 90000..90999） |
 | GET | `/lab/cache/state` | 无 | `Result<CacheStateResponse>` |
-| GET | `/lab/toggles` | 无 | `Result<Map<String,Boolean>>` |
-| POST | `/lab/toggles` | `{key, value}` | `Result<Map<String,Boolean>>` |
-| GET | `/lab/config` | 无 | `Result<LabConfigResponse>`（不含密钥） |
+| GET | `/lab/cache/preheat` | 无 | `Result<CachePreheatStateResponse>`（热榜、tracker、最后一次运行） |
+| POST | `/lab/cache/preheat` | 无 | `Result<CachePreheatStateResponse>`（同步跑一次 manual 预热） |
+| GET | `/lab/toggles` | 无 | `Result<Map<String,Boolean>>`（不在代理白名单） |
+| POST | `/lab/toggles` | `{key, value}` | `Result<Map<String,Boolean>>`（不在代理白名单） |
+| GET | `/lab/config` | 无 | `Result<LabConfigResponse>`（不含密钥；不在代理白名单） |
+
+控制台只能访问 §2.1 列出的子集；其余行仍需在 `jl-net` 内直连应用容器。
 
 ### 5.3 端点分组示意
 
@@ -204,7 +227,7 @@ flowchart LR
     API --> TR["背景流量<br/>state / start / stop"]
     UI -. "同一 Nginx，不同前缀" .-> PR["/prom/ → Prometheus"]
     UI -. "业务入口" .-> BIZ["/api/ → app-1/2/3"]
-    subgraph APP["应用内（Nginx 不代理）"]
+    subgraph APP["应用内（Nginx 不代理；thread/cache 经控制器窄代理）"]
         TH["/lab/thread/**"]
         CA["/lab/cache/**"]
         TG["/lab/toggles · /lab/config"]
@@ -236,12 +259,12 @@ flowchart LR
 | 概念/行为 | 类/方法（或脚本函数、配置键） | path:line | 说明 |
 |---|---|---|---|
 | 控制台入口 | `createApp` | `code/lab/dashboard/src/main.js:5` | 挂载 `#app` |
-| 状态栏/轮询 | `SYNC_INTERVAL_MS` | `code/lab/dashboard/src/App.vue:21` | 默认 5000，`VITE_LAB_SYNC_INTERVAL_MS` 可覆盖 |
-| 环境同步 | `syncEnvironment` | `code/lab/dashboard/src/App.vue:141` | 并发拉 guide/faults/traffic |
-| 自动轮询 | `startPolling` | `code/lab/dashboard/src/App.vue:240` | `setInterval`，busy 时跳过 |
-| 全量刷新 | `reloadAll` | `code/lab/dashboard/src/App.vue:258` | 健康 + 场景 + 环境 + 容器 |
-| 令牌输入 | `token` | `code/lab/dashboard/src/App.vue:365` | `localStorage` 键 `ha-lab-token`，默认 `lab-token` |
-| 日志视图 | `log-view` | `code/lab/dashboard/src/App.vue:443` | 只读 `<pre>` |
+| 状态栏/轮询 | `SYNC_INTERVAL_MS` | `code/lab/dashboard/src/App.vue:24` | 默认 5000，`VITE_LAB_SYNC_INTERVAL_MS` 可覆盖 |
+| 环境同步 | `syncEnvironment` | `code/lab/dashboard/src/App.vue:152` | 并发拉 guide/faults/traffic |
+| 自动轮询 | `startPolling` | `code/lab/dashboard/src/App.vue:257` | `setInterval`，busy 时跳过 |
+| 全量刷新 | `reloadAll` | `code/lab/dashboard/src/App.vue:287` | 健康 + 场景 + 环境 + 容器 |
+| 令牌输入 | `token` | `code/lab/dashboard/src/App.vue:426` | `localStorage` 键 `ha-lab-token`，默认 `lab-token` |
+| 日志视图 | `log-view` | `code/lab/dashboard/src/App.vue:504` | 只读 `<pre>` |
 | 向导按钮 | `action-step` | `code/lab/dashboard/src/components/ScenarioWizard.vue:142` | `step/skip/pause` 仅 running |
 | 向导 reset | `action-reset` | `code/lab/dashboard/src/components/ScenarioWizard.vue:160` | 任意状态可用 |
 | 按钮可用性 | `canRun` | `code/lab/dashboard/src/components/ScenarioWizard.vue:23` | `status === 'running'` |
@@ -254,8 +277,18 @@ flowchart LR
 | 向导动作 | `runGuideAction` | `code/lab/dashboard/src/api.js:95` | POST `/lab/guide/{step,skip,pause,resume,reset}` |
 | 拉流量 | `fetchTrafficState` | `code/lab/dashboard/src/api.js:99` | GET `/lab/traffic/state` |
 | 流量动作 | `runTrafficAction` | `code/lab/dashboard/src/api.js:103` | POST `/lab/traffic/{start,stop}` |
-| 活动故障 | `fetchActiveFaults` | `code/lab/dashboard/src/api.js:108` | GET `/chaos/actions` |
-| 全停 | `stopAllFaults` | `code/lab/dashboard/src/api.js:113` | POST `/chaos/stop-all` |
+| 活动故障 | `fetchActiveFaults` | `code/lab/dashboard/src/api.js:122` | GET `/chaos/actions` |
+| 全停 | `stopAllFaults` | `code/lab/dashboard/src/api.js:127` | POST `/chaos/stop-all` |
+| 缓存页实例 | `instance` | `code/lab/dashboard/src/components/CacheLab.vue:45` | 默认 `app-1` |
+| 缓存模式列表 | `MODES` | `code/lab/dashboard/src/components/CacheLab.vue:33` | 8 个 `CacheDefenseMode` key |
+| 缓存页轮询 | `startPolling` | `code/lab/dashboard/src/components/CacheLab.vue:163` | 5s；seed 不占 busy，轮询不中断 |
+| 缓存模式切换 | `applyMode` | `code/lab/dashboard/src/components/CacheLab.vue:202` | POST，等待响应后刷新 |
+| 缓存播种 | `runSeed` | `code/lab/dashboard/src/components/CacheLab.vue:229` | 单独 `seeding` 标志 |
+| 缓存状态 | `fetchCacheState` | `code/lab/dashboard/src/api.js:211` | GET `/lab/cache/state` |
+| 缓存模式写入 | `updateCacheMode` | `code/lab/dashboard/src/api.js:216` | POST `/lab/cache/mode` |
+| 缓存播种 | `seedCache` | `code/lab/dashboard/src/api.js:221` | POST `/lab/cache/seed` |
+| 预热读 | `fetchCachePreheat` | `code/lab/dashboard/src/api.js:226` | GET `/lab/cache/preheat` |
+| 预热触发 | `runCachePreheat` | `code/lab/dashboard/src/api.js:231` | POST `/lab/cache/preheat` |
 | 构建 base | `base` | `code/lab/dashboard/vite.config.js:9` | `/lab/` |
 | dev 代理 | `labApiTarget` | `code/lab/dashboard/vite.config.js:6` | `/lab-api` → 8080 |
 | 容器列表 | `containers` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/web/LabController.java:29` | `lab=java-learn` |
@@ -287,6 +320,10 @@ flowchart LR
 | TTL 冻结 | `pause` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/action/ChaosActionService.java:268` | 取消定时器并记剩余 |
 | TTL 解冻 | `resume` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/action/ChaosActionService.java:294` | 按剩余重排 |
 | 容器白名单 | `LAB_LABEL` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/gateway/DockerContainerGateway.java:40` | `lab=java-learn` |
+| 线程代理白名单 | `THREAD_GET_PATHS` / `THREAD_POST_PATHS` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java:40` | 线程页原有列表不变 |
+| 缓存代理 GET 白名单 | `CACHE_GET_PATHS` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java:61` | `state` / `preheat` |
+| 缓存代理 POST 白名单 | `CACHE_POST_PATHS` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java:66` | `mode` / `seed` / `preheat` |
+| 代理请求体白名单 | `BODY_PATHS` | `code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java:72` | 仅 fault 与 cache mode |
 | 结果信封 | `Result` | `code/platform/platform-common/src/main/java/com/javalearn/lab/common/Result.java:3` | code/message/data |
 | 控制器基础路径 | `base-path` | `code/services/chaos-controller/src/main/resources/application.yml:15` | `/`，因此 `/health` |
 | prometheus 路径映射 | `prometheus` | `code/services/chaos-controller/src/main/resources/application.yml:17` | `/metrics` |
@@ -316,7 +353,7 @@ flowchart LR
 | 配置键 / 变量 | 默认 | 读取位置 |
 |---|---|---|
 | `VITE_LAB_API_TARGET` | `http://127.0.0.1:8080` | `code/lab/dashboard/vite.config.js:6` |
-| `VITE_LAB_SYNC_INTERVAL_MS` | `5000` | `code/lab/dashboard/src/App.vue:21` |
+| `VITE_LAB_SYNC_INTERVAL_MS` | `5000` | `code/lab/dashboard/src/App.vue:24` |
 | `LAB_TOKEN`（控制器） | `lab-token` | `code/services/chaos-controller/src/main/resources/application.yml:23` |
 | `LAB_DOCKER_MAX_CONNECTIONS` | `16` | `code/services/chaos-controller/src/main/resources/application.yml:28` |
 | `LAB_DOCKER_CONNECTION_TIMEOUT_SECONDS` | `5` | `code/services/chaos-controller/src/main/resources/application.yml:29` |
@@ -375,6 +412,16 @@ curl -s -H "X-Lab-Token: $LAB_TOKEN" \
 # 6. 全停（清空 chaos 动作，不影响背景流量与线程实验室）
 curl -s -X POST -H "X-Lab-Token: $LAB_TOKEN" http://127.0.0.1:8080/lab-api/chaos/stop-all
 
+# 6b. 缓存实验室（窄代理；模式按实例，演示后恢复 off）
+curl -s -H "X-Lab-Token: $LAB_TOKEN" \
+  http://127.0.0.1:8080/lab-api/chaos/app/app-1/lab/cache/state
+curl -s -X POST -H "X-Lab-Token: $LAB_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"mode":"null-cache"}' http://127.0.0.1:8080/lab-api/chaos/app/app-1/lab/cache/mode
+curl -s -X POST -H "X-Lab-Token: $LAB_TOKEN" \
+  http://127.0.0.1:8080/lab-api/chaos/app/app-1/lab/cache/seed
+curl -s -X POST -H "X-Lab-Token: $LAB_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"mode":"off"}' http://127.0.0.1:8080/lab-api/chaos/app/app-1/lab/cache/mode
+
 # 7. 浏览器冒烟（需要 Playwright；源比 dist 新时会 npm run build）
 bash code/lab/scripts/console-smoke.sh --no-build
 ```
@@ -386,7 +433,7 @@ bash code/lab/scripts/console-smoke.sh --no-build
 ## 10. 已知缺陷 / 边界
 
 1. **设计路由未实现**：§12.1 的 `/`（拓扑粒子）、`/scenario/:id`、`/thread`、`/cache`、`/tuning`、`/jdk`、`/bench` 都不存在；实际只有 `/lab/` 一个单页，没有 Vue Router。
-2. **缓存实验室不在控制台**：控制器只代理 `/lab/thread/**`，没有 `/lab/cache/**` 代理；Nginx 也不代理应用内 `/lab/**`。线程页经 `/chaos/app/{instance}/lab/thread/**` 可用，缓存实验仍需在容器网络内直连。
+2. **实验页已接入但仍是单页内视图**：线程/缓存实验室都经控制器窄代理可达（无 Vue Router，靠 `view` 切换）；缓存页不内嵌 Grafana D10，只提供新标签页深链，也没有“恢复 off / 清空实验数据”的独立 reset 端点。
 3. **轮询 5s 而非设计 2s**：没有 WebSocket/SSE，拓扑动画与粒子视图不存在。
 4. **没有自动播放**：`atSeconds` 只用于展示与 k6 时间线；向导必须手动 `step`。
 5. **向导只覆盖容器动作**：事件动作白名单是 `kill/start/restart/freeze/resume`，不包含线程/缓存实验室动作。
@@ -403,7 +450,7 @@ bash code/lab/scripts/console-smoke.sh --no-build
 
 ## 11. 关联文档
 
-- `doc/design/details/07-线程实验室.md`：应用内 `/lab/thread/**` 的完整端点与指标（控制台当前不可达）。
+- `doc/design/details/07-线程实验室.md`：应用内 `/lab/thread/**` 的完整端点与指标（控制台经窄代理可达）。
 - `doc/design/details/08-双JDK与JVM调优.md`：JDK 8 不暴露 `/lab/**`。
 - `doc/design/details/09-压测与观测.md`：`/prom/`、D1–D9、`run_id` 与 bench 归档。
 - `doc/process/step-21-chaos-actions.md`、`step-22a-scenario-timeline.md`、`step-22b-guide-state.md`、`step-23-console-mvp.md`：控制器/向导/控制台交接。
