@@ -1,9 +1,9 @@
 # Stage2 改造方案：Java 并发与高可用演练工作台
 
-- 文档版本：v1.3
-- 日期：2026-10-27
+- 文档版本：v1.4
+- 日期：2026-10-28
 - 基线：Stage1 当前实现与设计文档
-- 状态：方案评审稿（已纳入 B0 前置门禁、流量归因、崩溃恢复与负向验收；已纳入 2026-10-27 用户确认的 8 项范围结论，见需求 §十一 与本文件 §15）
+- 状态：方案评审稿（已纳入 B0 前置门禁、流量归因、崩溃恢复与负向验收；已纳入 2026-10-27 用户确认的 8 项范围结论与 2026-10-28 补充确认的 3 项遗留结论，见需求 §十一 与本文件 §15）
 - 范围：在 Stage1 基础上进行增量改造；本文件不代表代码已经实现
 
 ---
@@ -49,7 +49,7 @@ Stage2 将现有 Java 高并发与高可用教学实验室，改造成一套可�
 - 某些业务指标当前只注册未在真实业务路径递增，例如 `stock_oversold_total`；必须修复或由真实库存/订单对账补足，不能把恒为 0 当成通过。
 - 故障动作 TTL、手动保持、单项撤销、超时反馈、恢复后健康确认及状态呈现需要统一。
 - Redis Sentinel / MySQL HA 等部分 exporter 或指标接线需要按当前环境复核，不能只依据仪表盘存在就判定采集正常。
-- 数据库内置 10,000 条基础商品作为每次重置后的基础环境（已确认口径，需求 §十一.3）：由**固定 seed 确定性生成**，库存随 seed 随机、每次重置结果相同；数量与 seed 外置为配置（默认 10,000 与固定种子），不用「写死」实现——与工程规约 §1 配置外置保持一致。是否替换商品 1/20 演示基线与库存具体区间遗留待确认。
+- 数据库内置 10,000 条基础商品作为每次重置后的基础环境（已确认口径，需求 §十一.3）：由**固定 seed 确定性生成**，库存随 seed 随机、每次重置结果相同；数量与 seed 外置为配置（默认 10,000 与固定种子），不用「写死」实现——与工程规约 §1 配置外置保持一致。2026-10-28 补充确认：内置商品**替换现有商品 1/20 演示基线**，引用商品 1/20 的场景与验收脚本（spike/smoke/verify）随 B3-02 一并改指内置商品；库存区间定为 **0–500**（随 seed 确定性生成）。
 
 ### 2.3 Stage2 非目标
 
@@ -742,12 +742,31 @@ DRAFT → VALIDATING → READY → RUNNING → STOPPING → VERIFYING → COMPLE
 控制器重启时：未结束的 RUNNING / STOPPING / VERIFYING → UNKNOWN
 ```
 
-- 台账持久化选型已确认（需求 §十一.1）：**复用栈内 MySQL**——standalone 模式写 `jl-mysql`，db-ha 模式经 Router 6446；账表放独立台账库（与业务 `lab` 数据分离），不引入嵌入式库或新服务，不得只存于 chaos-controller 进程内存。注意：MySQL 主节点故障演练恰会命中台账写入窗口，台账写入必须可重试/可暂存，`UNKNOWN` 恢复逻辑要覆盖"故障事件自身没记上"的情况；standalone/router 的台账目标解析与 B0 复位目标解析走同一口径。
+- 台账持久化选型已确认（需求 §十一.1）：**复用栈内 MySQL**——standalone 模式写 `jl-mysql`，db-ha 模式经 Router 6446；账表放独立台账库（与业务库 `seckill` 物理分库），不引入嵌入式库或新服务，不得只存于 chaos-controller 进程内存。注意：MySQL 主节点故障演练恰会命中台账写入窗口，台账写入必须可重试/可暂存，`UNKNOWN` 恢复逻辑要覆盖"故障事件自身没记上"的情况；standalone/router 的台账目标解析与 B0 复位目标解析走同一口径。
 - 启动 run、停止 run、应用配置、故障注入/撤销均返回 `operationId`。UI 状态明确区分：`REQUESTED`（已请求）、`APPLIED`（已生效）、`RESTORED`（已恢复）、`PENDING_CONFIRMATION`（待确认）、`FAILED`（已确认失败）。
 - 操作需支持幂等键、防重复点击、超时轮询和浏览器刷新后恢复状态。请求超时不等同于动作失败。
 - 默认只允许一个会改变环境的活动 run；配置变更和故障操作使用互斥锁。只读观测可并行。冲突时返回明确的锁持有者、run ID 和解除方式。
 - 控制器重启后，扫描并列出残留 k6/traffic 容器、Toxiproxy toxic、暂停态故障和未确认操作；未能自动确认的状态标为 `UNKNOWN`，不得默认为已恢复。
 - 审计记录操作者（本地环境可记为 `local`）、时间、目标、变更前后值、operationId、结果和失败原因。日志不得记录凭据或完整缓存值。
+
+**台账库与表清单（2026-10-28 定稿，B1-01 实现依据）**
+
+库名 `lab_ledger`（与业务库 `seckill` 同实例分库；db-ha 模式经 Router 6446 写入；Flyway 或等价工具版本化；保留策略默认最近 50 个 run，级联清理，上限配置外置）：
+
+| 表 | 用途 | 关键字段 |
+|---|---|---|
+| `lab_run` | run 主记录 | run_id PK、scenario、status（§10.5 状态机枚举）、source_commit、operator、started_at、ended_at |
+| `lab_run_step` | 状态机/步骤时间线 | run_id FK、step_key、from_state、to_state、occurred_at、dwell_ms |
+| `lab_run_env` | 实例与镜像身份快照（含 B0-08 最小闭环） | run_id FK、container_name、image_tag、image_id、java_version、jvm_args(JSON)、gc(JSON)、captured_at |
+| `lab_run_param` | 参数与配置快照 | run_id FK、group_name（load/cache/thread/tuning…）、payload(JSON)、saved_at |
+| `lab_operation` | 操作契约 | operation_id PK、run_id FK 可空、target_kind、target_name、action、status（REQUESTED/APPLIED/RESTORED/PENDING_CONFIRMATION/FAILED/UNKNOWN）、ttl_seconds、requested_at、applied_at、restored_at、last_error |
+| `lab_fault_event` | 故障事件流 | run_id FK、operation_id 可空、source（guide/k6/manual）、target、event（INJECT/REVERT/PROBE…）、occurred_at、detail(JSON) |
+| `lab_metric_window` | 观测窗聚合（数据质量状态落表） | run_id FK、phase、metric_key、promql、window_start、window_end、stats(JSON)、data_quality（OK/NO_DATA/COLLECTING/DEGRADED） |
+| `lab_run_check` | 对账/校验判定 | run_id FK、check_key、expected、actual、verdict（PASS/FAIL/INFO）、checked_at |
+| `lab_ledger_stash` | 台账不可用时的本地暂存 | id PK、kind、payload(JSON)、created_at、flushed_at（可空） |
+| `lab_env_lock` | 写型 run 环境互斥锁 | lock_key PK、run_id、holder、acquired_at、expires_at |
+
+约束：全部 InnoDB + utf8mb4；JSON 载荷不写凭据与完整缓存值（沿用上条审计约束）；`lab_ledger_stash` 只在 MySQL 可达后补写，补写成功才置 `flushed_at`；表名前缀 `lab_` 避免与业务表冲突。
 
 ## 10.6 流量归因与公平对比规则
 
