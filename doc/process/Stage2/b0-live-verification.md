@@ -425,8 +425,67 @@ BENCH_DOC_DIR=/tmp/r1/bench-doc bash code/lab/scripts/bench.sh smoke --run-id r1
 
 ## 7. 全量闸门 verify.sh
 
-（进行中）
+```bash
+bash code/lab/scripts/verify.sh > /tmp/verify-r1.log 2>&1; echo EXIT=$?
+```
+
+```
+VERIFY PASSED: 109 checks passed, 1 warning(s).
+Stack left running for debugging (default).
+EXIT=0
+WARN  cadvisor container series absent (Docker Desktop/WSL2 limitation; D3 CPU/memory/network panels will show No data)
+FAIL  计数：0
+```
+
+与 B0 基线预期 **109 PASS / 1 WARN / 0 FAIL** 完全一致，唯一 WARN 仍是 cadvisor/WSL2 那条已知限制。
+本轮跑在 §6.2 bench smoke（含 reset-lab）与 §1~§5 的多次应用层 recreate 之后，即验的是
+「新镜像 + 新代码 + 复位后的现场」。
+
+**结论：PASS**
 
 ## 8. 现场复位与收尾
 
-（进行中）
+终态复核（证据 `/tmp/r1/final-state.log`）：
+
+| 检查 | 结果 |
+|---|---|
+| `docker ps -q \| wc -l` | **34**（与开工一致，未增删容器；数据层容器全程未动） |
+| 应用层镜像 | jl-app-1/2/3 = `seckill-app:jdk21` → `sha256:5b18a49d504c…`；jl-chaos-controller = `chaos-controller:jdk21` → `sha256:f83b32f914a6…`（本轮新构建，未回滚） |
+| 数据面指向 | `MYSQL_MODE=standalone`、`MYSQL_HOST=mysql`、`REDIS_HOST=redis`、`DB_{WRITE,READ}_URL` 与开工前逐字一致（未退回、未改指） |
+| 改过的 env（全部复位） | `LAB_CACHE_L2_TTL_SECONDS=300`、`LAB_CACHE_L1_MICROMETER_STATS_ENABLED=true`（`docker inspect` + `/lab/config` 双重读回）；`.env` 文件全程未编辑，覆盖只走 shell env + compose 既有占位 |
+| toggles | 三台 `GET /lab/toggles` 全默认 `{lock,idempotency,mq,ratelimit,circuitbreaker,cache}=true` |
+| 一次性容器 | `docker ps -a --filter ancestor=curlimages/curl:8.10.1` = **0**（全部 `--rm`，用完即走；镜像留在本地供 R2 复用） |
+| Nginx | 已 reload；`/api/products/*` 连续 200，`connect() failed` 计数 0 |
+| 业务数据 | B0-02 造的 2 单已删、product 10 库存回写 100；随后 §6.2 bench smoke 的 reset-lab 把订单/库存/Redis 复位到 bench 基线（终态 `order_order` 4 行来自 smoke 自身流量，库存 100/98/98） |
+| `jl-traffic` | `Exited (2) 4 hours ago`——开工前就存在的按需容器状态，本轮未启动、未改动 |
+| 工作树 | `git status --short` 空 |
+
+留给 R2 / 主会话的现场说明：
+
+1. **本代理未做任何杀/冻结节点演练**，故这些 B0-08 真机项仍在册：db-failover 期间
+   `mysql_cluster_probe_up` 恒 1、探针自检开关 `failure-container-check-enabled` 的真机表现。
+   现栈 MySQL 集群 3 节点 ONLINE、Router 6446/6447 在跑（控制器启动日志：
+   `MySQL cluster probe scheduled every 10s against jl-mysql-3`、`primary mysql-2`），R2 可直接接手。
+2. **B0-03 的「lab `cache` 总开关 off ⇒ 5 条序列连同旧 `cache_l1_*` 全不注册」路径未单独真机做**
+   （本轮按清单做的是 `LAB_CACHE_L1_MICROMETER_STATS_ENABLED=false` 重启一台）。真机补法：
+   `POST /lab/toggles {"key":"cache","value":false}`（只影响收到调用的那一台），等过 5m lookback 再看
+   `count by(instance)`，用完把开关复位回 true。总开关路径单测层已证（`TwoLevelCacheManager` → NoOpCache）。
+3. **B0-04 的 `LAB_CACHE_L2_KEY_PREFIX` 改值真机项未做**（需再一轮 recreate，本轮清单未列）。
+4. **B0-05 的 `/lab/cache/keys?cursor=` 端到端要等 B3**：本轮用 `/lab/cache/state` 与
+   `/lab/thread/state` 两条白名单路径证了透传与「query 不参与白名单」。
+5. 操作口径提醒（本轮踩过）：**单独 recreate 应用层后必须 `docker exec jl-nginx nginx -s reload`**，
+   否则 Nginx 抱着旧容器 IP 静默 failover（§5.0），会污染任何「按实例统计」的真机断言。
+6. 镜像回滚位仍在：`seckill-app:jdk21-pre-b0r1`（`cfb7a164e9b3`）、
+   `chaos-controller:jdk21-pre-b0r1`（`409a4e944856`）、`:jdk21-pre-docs` 等旧位未删。
+
+## 9. 清单项总表
+
+| 清单项 | 结论 | 关键数字 |
+|---|---|---|
+| 应用层镜像重建 + `--force-recreate`（B0-08 真机项） | PASS | 构建 3m7.5s；新 `5b18a49d504c` / `f83b32f914a6`；34 容器不变 |
+| 1. B0-02 超卖样本 | PASS | `stock_oversold_total` 0→11；`increase[5m]`=11.14>0；DB 无负库存、售出=初始 100 |
+| 2. B0-03 Caffeine 序列 | PASS | `count by(instance)` 3→2（stats off）→3（复位）；`absent()`=1；hit 120/miss 20 |
+| 3. B0-04 有效值回读 | PASS | `l2.ttl-seconds` value=45/source=systemEnvironment；Redis TTL 41；state 201=scan 201；热键 280≠45；59 变量下发 |
+| 4. B0-05 query string 经 Nginx | PASS | app span `url.query` 逐字节相同；413/41301（8192）；400/40001 且不出网；404/40401、405/40501 |
+| 5. B0-08a 镜像身份 + bench 归档 | PASS | 脚本与 `docker inspect` 4/4 一致；`manifest.images` 含 tag+id；smoke BENCH_VERDICT=PASS |
+| 6. 全量闸门 verify.sh | PASS | 109 PASS / 1 WARN（cadvisor WSL2）/ 0 FAIL，EXIT=0 |
