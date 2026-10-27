@@ -2,7 +2,7 @@
 > 日期：2026-10-27
 > 分支 / 基线：worktree `agent-general-purpose-40b52b49`，基线 `4d6d5e4`；本文档对应的功能提交 `826a45e`（`feat: add the repeatable HA acceptance script`）
 > 关联：`doc/process/step-24d-sentinel-live-drill.md`（Sentinel 实测）、`doc/process/step-31-mysql-router-live-drill.md`（Router 实测）、`doc/process/step-38-ha-acceptance.md`（M3 验收清单）
-> 验证边界：本会话**没有运行任何容器**，只执行了 `bash -n`、`docker compose config` 和两个 `--dry-run`；另外用本地 mock 的 `docker`/`curl` 跑通了 sentinel/mysql 的完整断言链（不接触 Docker）。真机实跑仍未执行。
+> 验证边界：脚本交付会话**没有运行任何容器**，只执行了 `bash -n`、`docker compose config` 和两个 `--dry-run`，并用本地 mock 的 `docker`/`curl` 跑通了 sentinel/mysql 的完整断言链。真机实跑见第 6 节「真机运行」（2026-10-27，sentinel 38 PASS / mysql 36 PASS）。
 
 # 1. 用法（Usage）
 
@@ -55,7 +55,8 @@ bash code/lab/scripts/ha-acceptance.sh --help
 | `HA_ACCEPT_NGINX_URL` | `http://127.0.0.1:8080` | Nginx 入口。 |
 | `HA_ACCEPT_PRODUCT_PATH` | `/api/products/1` | 商品读探针路径，必须以 `/` 开头。 |
 | `HA_ACCEPT_LAB_TOKEN` | 取 `LAB_TOKEN`（env/.env，最后 `lab-token`） | 一次性覆盖 token；永不打印。 |
-| `HA_ACCEPT_CURL_TIMEOUT_SECONDS` | `5` | 单次 curl 预算。 |
+| `HA_ACCEPT_CURL_TIMEOUT_SECONDS` | `5` | 单次 curl 预算（health/actions 等探针）。 |
+| `HA_ACCEPT_KILL_TIMEOUT_SECONDS` | `30` | **kill POST 专用**预算。controller 的 kill 是同步的（`gateway.stop(target, stop-grace-seconds)`，默认 10s），MySQL 节点关库超过 5s 会让 5s 预算返回 000；该值必须覆盖 stop grace，不改动任何断言。 |
 | `HA_ACCEPT_EXEC_TIMEOUT_SECONDS` | `5` | 容器内 `redis-cli` / `mysql` 的单次预算。 |
 | `HA_ACCEPT_POLL_INTERVAL_SECONDS` | `2` | 拓扑/HTTP/TTL 轮询间隔。 |
 | `HA_ACCEPT_HTTP_RECOVERY_THRESHOLD_SECONDS` | `15` | 首个 200 的验收阈值（step-24d/31 的 ≤15s）。 |
@@ -202,3 +203,116 @@ bash code/lab/scripts/ha-acceptance.sh --help
 5. **错误率口径**：step-38 的 <1% 需要 k6 负载。可在 `code/lab/scenarios/` 增加 `mysql-failover` 场景（目前只有 `redis-sentinel-failover.json`），并复用 `ha-failover` 驱动；本脚本不替代 k6。
 6. **失败注入测试**：mock 已覆盖成功链；还可用 mock 覆盖“kill 被 403”“promotion 不出现”“stop-all 失败”三条负路径，确认 cleanup/退出码。当前只做了成功链的 mock。
 7. **dry-run 的运行时层检查**：dry-run 只用 `docker compose config` 判断 profile 定义是否存在，不探测容器是否 running（按“dry-run 不碰 Docker 生命周期”的约束）；真正的层存在性检查在无 `--dry-run` 的 preflight。
+
+# 6. 真机运行（2026-10-27，本机 live 栈）
+
+环境：worktree `D:\000CODE\JAVA-LEARN`，分支 `feature/ha-lab`；32 个 lab 容器（dev 16 + Redis HA + MySQL db-ha），controller `probe_up=1`。两次演练共用同一 `code/lab/docker/.env`，只改 `MYSQL_MODE`（值不记录），`DB_WRITE_URL`/`DB_READ_URL` 沿用既有 Router 值。
+
+## 6.1 Sentinel 演练
+
+app 三实例进入 sentinel 模式的命令即本文前置 2 的 `--profile ha up -d app-1 app-2 app-3`；本轮开始时它们已在该模式（env `REDIS_MODE=sentinel`、双网络、日志 `Redis access mode: sentinel`），因此直接运行。演练前主为 `jl-redis-2`，replica `jl-redis-1/3` 均 `master_link_status=up`。
+
+```bash
+bash code/lab/scripts/ha-acceptance.sh sentinel
+```
+
+逐行 PASS/FAIL（verbatim，节选 drill 段与摘要；完整输出 38 PASS / 0 FAIL）：
+
+```text
+PASS exactly one Redis master is visible (jl-redis-2)
+PASS sentinel drill target resolved (jl-redis-2 (live master))
+PASS Sentinel address matches the live master container (172.28.190.12:6379 -> jl-redis-2)
+PASS target is in the controller datastore allow-list (jl-redis-2 matches "^jl-(redis|mysql)-[1-3]$"; idempotent start -> HTTP 202)
+PASS chaos accepted the Sentinel kill (target=jl-redis-2 ttl=45s HTTP=202 status=active)
+PASS kill stopped the master container (jl-redis-2: exited unhealthy)
+PASS Sentinel promoted a different master (172.28.190.12:6379 -> 172.28.190.13:6379 (jl-redis-3) in 3.003s)
+PASS new Sentinel master address matches its container (172.28.190.13:6379 -> jl-redis-3)
+PASS all Sentinels agree on the new master (172.28.190.13:6379)
+PASS Nginx product read recovered within the threshold (first 200 at 12.436s <= 15s)
+PASS TTL restarted the old master (jl-redis-2 is running at 46.564s (ttl=45s))
+PASS old master rejoined as a replica (role=slave master_link_status=up master_host=172.28.190.11 at 50.068s)
+PASS TTL revert left no active action (GET /chaos/actions -> data:[])
+PASS POST /chaos/stop-all reverted every action (failed=0 pending=0)
+PASS no active chaos action remains (GET /chaos/actions -> data:[])
+PASS cleanup left the datastore running (jl-redis-2: running healthy)
+PASS cleanup restored the Sentinel replica link (jl-redis-2: role=slave master_link_status=up)
+
+== Summary ==
+38 PASS / 0 FAIL
+Promotion: 3.003s after kill
+Nginx product 200: 12.436s after kill (threshold 15s)
+TTL restart: 46.564s after kill
+Old node rejoined: 50.068s after kill
+```
+
+## 6.2 MySQL 演练（含两次脚本修复）
+
+置 `MYSQL_MODE=router`（仅改 gitignored `.env` 的值），用 base+dev 重建 app 三实例（同时把 Redis 拉回 standalone），日志确认 `MySQL access mode: router (write endpoint jdbc:mysql://jl-mysql-router:6446/seckill, read endpoint jdbc:mysql://jl-mysql-router:6447/seckill)`。
+
+**第一次运行失败（27 PASS / 2 FAIL），暴露两个脚本缺陷：**
+
+```text
+FAIL chaos accepted the MySQL kill (target=jl-mysql-2 HTTP=000 body=curl: (28) Operation timed out after 5010 milliseconds with 0 bytes received)
+FAIL POST /chaos/stop-all reverted every action (failed=0 pending=1 body={"code":"0","message":"OK","data":{"reverted":0,"failed":0,"pending":1,...}})
+27 PASS / 2 FAIL
+```
+
+- **缺陷 A（会杀错节点）**：`cluster_primary_container` 原用 `grep 'ONLINE PRIMARY' | head -1 | awk '{print $1}'`。`db-cluster-status.sh` 的每个节点行都带整段 `GROUP_CONCAT` membership，当时 PRIMARY 是 `mysql-2`，但第一行是 `jl-mysql-1`，于是脚本把 **SECONDARY `jl-mysql-1`** 当作“live PRIMARY”，会杀副本。用 live 输出直接复现：脚本解析 `jl-mysql-1`，成员事实 `mysql-2:3306 ONLINE PRIMARY`。同一原因让重加入断言 `cluster_line_for` 匹配整行里的**别的成员**的 `ONLINE SECONDARY`，等于恒真。
+  修复（`e86286d`）：新增 `mysql_member_token <container>`，按 `jl-mysql-N` 的 service 名匹配该节点**自己**的 `host:port STATE ROLE` token；`cluster_primary_container` 遍历节点找自己 token 含 `ONLINE PRIMARY` 的那个，`cluster_line_for` 直接返回自身 token。修复后 live 解析 `jl-mysql-2`、三节点 token 正确。
+- **缺陷 B（kill POST 预算过小）**：controller 的 kill 是**同步**的（`gateway.stop(target, chaos.stop-grace-seconds=10)`）；Redis 秒停所以 5s 够，MySQL 关 InnoDB 超过 5s，curl 返回 000 但动作已生效，脚本随即在 kill 未落地时 `stop-all`，得到 `pending=1`。断言本身没错，是客户端预算错。
+  修复（`24dcad0`）：新增 `HA_ACCEPT_KILL_TIMEOUT_SECONDS`（默认 30s，可覆盖），只用于 kill POST；其余探针预算与所有 PASS 条件不变。
+
+**第二次运行（36 PASS / 0 FAIL）：**
+
+```text
+PASS current InnoDB Cluster PRIMARY is resolvable (jl-mysql-1)
+PASS mysql drill target resolved (jl-mysql-1 (live PRIMARY))
+WARN controller MySQL cluster probe sits on the kill target (jl-mysql-1 == jl-mysql-1; ...)
+PASS Router 6446 starts in READ_WRITE (server_id=1 read_only=0)
+PASS chaos accepted the MySQL kill (target=jl-mysql-1 ttl=45s HTTP=202 status=active)
+PASS kill stopped the PRIMARY container (jl-mysql-1: exited unhealthy)
+PASS Router 6446 moved to the new PRIMARY (server_id 1 -> 2 READ_WRITE in 11.986s)
+PASS Nginx product read recovered within the threshold (first 200 at 11.986s <= 15s)
+PASS TTL restarted the old PRIMARY (jl-mysql-1 is running at 45.418s (ttl=45s))
+PASS old PRIMARY rejoined as ONLINE SECONDARY (mysql-1:3306 ONLINE SECONDARY at 62.457s)
+PASS db-cluster-status.sh is back to RESULT: ok (RESULT: ok - 3/3 node(s) answering, exactly one PRIMARY.)
+PASS Router 6446 still serves READ_WRITE after the rejoin (server_id=2)
+PASS TTL revert left no active action (GET /chaos/actions -> data:[])
+PASS POST /chaos/stop-all reverted every action (failed=0 pending=0)
+PASS no active chaos action remains (GET /chaos/actions -> data:[])
+PASS cleanup left the datastore running (jl-mysql-1: running healthy)
+PASS cleanup restored the InnoDB Cluster (db-cluster-status.sh -> RESULT: ok)
+
+== Summary ==
+36 PASS / 0 FAIL
+Router 6446 switch: 11.986s after kill
+Nginx product 200: 11.986s after kill (threshold 15s)
+TTL restart: 45.418s after kill
+Old node rejoined: 62.457s after kill
+```
+
+口径说明：kill POST 自身阻塞到容器停下（约 10s），所以 “after kill” 以 **POST 发出**为起点，比真正的停机时刻保守；11.986s 里约 10s 是优雅停机，Nginx 恢复窗口实际更短。WARN 是已知的 controller 探针接线问题（见第 5 节第 3 条），不影响 Router 断言。
+
+## 6.3 还原确认（verbatim）
+
+```text
+[jl-app-1] MYSQL_MODE=standalone, 无 REDIS_MODE, 单网络 jl-net; 日志 Redis access mode: standalone / MySQL access mode: standalone
+[jl-app-2] 同上
+[jl-app-3] 同上
+Nginx GET /api/products/1 -> 200
+default compose services: 16
+GET /chaos/actions -> {"code":"0","message":"OK","data":[],"success":true}
+db-cluster-status.sh -> RESULT: ok - 3/3 node(s) answering, exactly one PRIMARY.  (PRIMARY jl-mysql-2, 6446 -> mysql-2 READ_WRITE)
+Sentinel -> 1 master jl-redis-3 + 2 replicas jl-redis-1/2, master_link_status=up
+drill 数据：order_order 中 drill% 行 0 条；inventory_stock product_id=1 available=100, reserved=0
+```
+
+本步只用了 `--profile ha` / base+dev 重建 app 三实例，未 `down --purge`、未删卷、未改 Java/compose/观测栈；主节点漂移（Redis 主 `jl-redis-3`、MySQL 主 `jl-mysql-2`）是演练的正确结果。
+
+## 6.4 仍未完成
+
+1. **CI 接线**：同第 5 节第 2 条；真机 job 需要 Docker runner 与 `.env` 注入，token 不得进日志。
+2. **错误率 <1%**：脚本是单请求探针，只覆盖“首个 200 ≤15s”；错误率口径仍归 k6（需补 `mysql-failover` 场景）。
+3. **`CHAOS_MYSQL_CLUSTER_CONTAINER`**：仍为 WARN；修好 compose 转发后 mysql 演练可把探针固定到非目标节点，并补 Prometheus 断言。
+4. **阈值机器相关性**：本机 MySQL 停库约 10s，故 kill 预算设 30s；若在更慢的磁盘/CI runner 上首次 200 逼近 15s，应通过 `HA_ACCEPT_HTTP_RECOVERY_THRESHOLD_SECONDS` 显式上调并在报告中说明，不要改断言逻辑。
+5. **失败注入测试**：仍未覆盖“kill 被 403”“promotion 不出现”“stop-all 失败”的负路径（本轮的自然失败提供了 `pending=1` 的一次真实样本）。
