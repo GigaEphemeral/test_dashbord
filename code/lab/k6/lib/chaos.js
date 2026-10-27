@@ -115,7 +115,11 @@ if (token.length === 0) {
 const scenarioDir = text('CHAOS_SCENARIO_DIR', '/chaos-scenarios').replace(/\/+$/, '');
 const scenarioFile = text('CHAOS_SCENARIO_FILE', 'ha-app-failover.json');
 const httpTimeout = (() => {
-  const raw = text('CHAOS_HTTP_TIMEOUT', '5s');
+  // `kill`/`freeze` answer only after the Docker call returns, and a datastore
+  // container needs the whole `chaos.stop-grace-seconds` (default 10s) to shut
+  // down: a 5s client timeout aborts the timeline with "HTTP 0" even though the
+  // fault was applied. Keep the default above the stop grace plus Docker margin.
+  const raw = text('CHAOS_HTTP_TIMEOUT', '20s');
   parseDurationMs(raw, 'CHAOS_HTTP_TIMEOUT');
   return raw;
 })();

@@ -35,6 +35,7 @@ globalThis.__ITER = 0;
 
 const scenario = await import('../scenarios/db-failover.js');
 const flow = await import('../lib/flow.js');
+const { parseDurationMs } = await import('../lib/config.js');
 const k6HttpStub = await import('./stubs/k6-http.mjs');
 const k6Stub = await import('./stubs/k6.mjs');
 
@@ -109,6 +110,24 @@ test('teardown always calls the global stop-all with the lab token', () => {
   assert.equal(request.method, 'POST');
   assert.match(request.url, /\/chaos\/stop-all$/);
   assert.equal(request.params.headers['X-Lab-Token'], 'test-token');
+});
+
+test('the kill call outlives the controller\'s synchronous Docker stop', () => {
+  resetAll();
+  k6HttpStub.script([{ status: 202, body: { code: '0', message: 'OK', data: {} } }]);
+  scenario.chaosTimeline();
+  assert.equal(k6HttpStub.state.requests.length, 1);
+  const request = k6HttpStub.state.requests[0];
+  assert.match(request.url, /\/chaos\/instances\/jl-mysql-2\/actions$/);
+  assert.deepEqual(request.body, { action: 'kill', ttlSeconds: 30 });
+  // The action endpoint answers only after Docker returns, and a datastore
+  // container needs the whole chaos.stop-grace-seconds (default 10s) to shut
+  // down. A shorter client budget reports "HTTP 0" for a kill that was applied
+  // and aborts the rest of the timeline (live drill 2026-10-27).
+  assert.ok(
+    parseDurationMs(request.params.timeout, 'CHAOS_HTTP_TIMEOUT') >= 15000,
+    `kill timeout ${request.params.timeout} must stay above the 10s stop grace`,
+  );
 });
 
 test('order writes use a fresh idempotency key on every attempt', () => {
