@@ -202,30 +202,30 @@
   expect: false
   last_verified: 2026-10-27
 
-- id: cache-console-page-missing
-  polarity: negative
+- id: cache-console-page-exists
+  polarity: positive
   doc:
     - doc/design/details/README.md
-    - doc/process/retrospective-2026-10-27.md
+    - doc/design/details/10-操作台与API.md
     - doc/readme.md
-  statement: "缓存实验控制台页未实现（前端不调用 /lab/cache/seed|mode|state）"
+  statement: "缓存实验控制台页已实现（CacheLab.vue，经 /lab-api 代理调用 /lab/cache/**）"
   verify:
-    kind: grep_count
-    path: code/lab/dashboard/src
-    pattern: "/lab/cache/(seed|mode|state)"
-  expect: 0
+    kind: file_contains
+    path: code/lab/dashboard/src/components/CacheLab.vue
+    pattern: "lab/cache"
+  expect: true
   last_verified: 2026-10-27
 
-- id: lab-cache-proxy-missing
-  polarity: negative
+- id: lab-cache-proxy-exists
+  polarity: positive
   doc:
-    - doc/process/retrospective-2026-10-27.md
     - doc/design/details/03-缓存体系.md
     - doc/design/details/10-操作台与API.md
-  statement: "chaos-controller 尚未代理 /lab/cache/**（只代理 /lab/thread/**）"
+    - doc/process/step-50-cache-console.md
+  statement: "chaos-controller 已代理 /lab/cache/**（state/preheat GET，mode/seed/preheat POST）"
   verify:
-    kind: grep_count
+    kind: file_contains
     path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java
-    pattern: "/lab/cache"
-  expect: 0
+    pattern: "\"/lab/cache\""
+  expect: true
   last_verified: 2026-10-27
