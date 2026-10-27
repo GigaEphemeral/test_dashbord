@@ -56,10 +56,27 @@ const healthPillClass = computed(() => {
 
 const guideStatus = computed(() => guide.value?.status || 'unknown')
 const runningFaults = computed(() => faults.value.length)
-// jl-traffic is profile-gated and created-but-stopped by design, so it is
-// normal for it to be down. The rollup only promises the always-on services.
+// Profile-gated and one-shot services are down by design: jl-traffic is
+// created-but-stopped, the db-ha init jobs and the toxiproxy init exit(0) after
+// bootstrapping. The rollup only promises the always-on services, so the
+// exclusion list is configurable (comma separated) instead of hardcoded.
+const onDemandContainerNames = computed(() => {
+  const configured = (import.meta.env.VITE_LAB_ON_DEMAND_CONTAINERS || '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+  const names = new Set(
+    configured.length > 0
+      ? configured
+      : ['jl-traffic', 'jl-mysql-cluster-init', 'jl-mysql-router-init', 'jl-toxiproxy-init', 'jl-seckill-app-jdk8'],
+  )
+  if (traffic.value?.container) {
+    names.add(traffic.value.container)
+  }
+  return names
+})
 const steadyContainers = computed(() =>
-  containers.value.filter((item) => item.name !== traffic.value?.container)
+  containers.value.filter((item) => !onDemandContainerNames.value.has(item.name))
 )
 const healthyContainers = computed(
   () => steadyContainers.value.filter((item) => item.state === 'running').length

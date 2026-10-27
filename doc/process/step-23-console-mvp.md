@@ -213,3 +213,15 @@ cherry-pick 回主分支（`e2e45fc` → 主会话 `ab09a63`）。
   `VITE_LAB_SYNC_INTERVAL_MS`，无新增硬编码端口/超时/池大小。
 - 评审回报未按约定格式给出完整分级清单（子代理在等待全 reactor 复跑时结束），
   因此上述"其余项"由主会话以定向 grep + 复跑冒烟补齐，未发现其它待修项。
+
+---
+
+## 补充（2026-10-27）：常驻容器汇总把一次性/按需容器算成「掉线」
+
+批次闸门跑 `console-smoke.sh` 时出现 `FAIL every always-on container is running: 32/35`。原因不是服务真的挂了，而是状态栏的「常驻容器」只排除了 `jl-traffic`；db-ha 的两个一次性 init job（`jl-mysql-cluster-init`、`jl-mysql-router-init`）以及 D7 的 `jl-seckill-app-jdk8`（`dual-jdk` profile 按需启动、跑完即退出）都被当成常驻，于是 35 个里总有几个是 `exited`，汇总永远达不到 35/35。
+
+修复（`App.vue`）：把「按需/一次性容器」做成可配置排除列表，默认 `jl-traffic,jl-mysql-cluster-init,jl-mysql-router-init,jl-toxiproxy-init,jl-seckill-app-jdk8`，可用 `VITE_LAB_ON_DEMAND_CONTAINERS`（逗号分隔）覆盖；`jl-traffic` 仍会从流量状态里动态补进集合。
+
+验证：`npm run build` 后复跑 `console-smoke.sh` → **26 PASS / 0 FAIL**（与 Task 23 基线一致）。
+
+经验：**profile 门控或一次性退出的容器都不属于「常驻」**；以后新增同类服务（Toxiproxy init、JDK8 外壳等）时，要么给它一个可识别的标签，要么补进这个排除列表，否则状态栏会长期显示 warn。
