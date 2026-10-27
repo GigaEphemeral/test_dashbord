@@ -646,17 +646,39 @@ run_cluster_status() { # [probe-container] -> CLUSTER_STATUS_OUTPUT / CLUSTER_ST
   return 0
 }
 
-cluster_primary_container() { # from CLUSTER_STATUS_OUTPUT
-  local line
-  line="$(printf '%s\n' "$CLUSTER_STATUS_OUTPUT" | grep -E 'ONLINE[[:space:]]+PRIMARY' | head -n 1 || true)"
-  [[ -n "$line" ]] || return 0
-  awk '{print $1}' <<<"$line"
+mysql_member_token() { # <container> -> "mysql-2:3306 ONLINE PRIMARY" or empty
+  # db-cluster-status.sh prints the whole GROUP_CONCAT membership on EVERY node
+  # row, so a grep over a row either returns the reporting container (wrong when
+  # the PRIMARY is mysql-2 but row 1 is jl-mysql-1) or matches another member's
+  # role. Resolve the token whose host is this container's own service name:
+  # container jl-mysql-2 -> member host mysql-2.
+  local container="$1" member host
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    host="${member%%:*}"
+    if [[ "$container" == *"$host" ]]; then
+      printf '%s\n' "$member"
+      return 0
+    fi
+  done < <(printf '%s\n' "$CLUSTER_STATUS_OUTPUT" \
+    | grep -oE '[A-Za-z0-9_.-]+:[0-9]+ ONLINE [A-Z]+' | sort -u || true)
+  return 0
 }
 
-cluster_line_for() { # <container> -> membership row (not the container rollup)
-  printf '%s\n' "$CLUSTER_STATUS_OUTPUT" \
-    | grep -E "^${1}[[:space:]].*ONLINE" \
-    | head -n 1 || true
+cluster_primary_container() { # from CLUSTER_STATUS_OUTPUT
+  local container member
+  for container in $MYSQL_NODES; do
+    member="$(mysql_member_token "$container")"
+    if [[ "$member" == *" ONLINE PRIMARY" ]]; then
+      printf '%s\n' "$container"
+      return 0
+    fi
+  done
+  return 0
+}
+
+cluster_line_for() { # <container> -> that member's own "host:port STATE ROLE"
+  mysql_member_token "$1"
 }
 
 select_mysql_probe() { # <target> -> container name (non-target, running)
