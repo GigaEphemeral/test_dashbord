@@ -361,9 +361,67 @@ Tempo 中亦无对应 app span），响应体是 Tomcat 的 HTML 而非 `Result`
 
 **结论：PASS**（另记 5.0 Nginx 需 reload 的操作坑与 5.5 `|` 入站 400 的口径落差）
 
-## 6. B0-08a 镜像身份脚本与 bench 归档
+## 6. B0-08a 镜像身份记录 + bench 归档
 
-（进行中）
+### 6.1 `image-identity.sh` 对重建后的栈跑一次
+
+```bash
+bash code/lab/scripts/image-identity.sh --out /tmp/r1/images.json \
+     --containers "app-1 app-2 app-3 chaos-controller" --project java-learn-lab
+# EXIT=0，逐台 (ok)：
+#   Image identity: app-1 -> jl-app-1 tag=java-learn-lab/seckill-app:jdk21 id=sha256:5b18a49d504c…(ok)
+#   ... app-2 / app-3 同一 id；chaos-controller -> jl-chaos-controller tag=…chaos-controller:jdk21 id=sha256:f83b32f914a6…(ok)
+```
+
+与 `docker inspect --format '{{.Image}}'` 逐台比对（证据 `/tmp/r1/imageidentity-run.log`）：
+
+| 容器 | 脚本记录 imageId | `docker inspect` | 一致 |
+|---|---|---|---|
+| jl-app-1 / 2 / 3 | `sha256:5b18a49d504c…4ab2e` | 同 | ✓ |
+| jl-chaos-controller | `sha256:f83b32f914a6…fcc3` | 同 | ✓ |
+
+`resolvedBy` 全部为 `labAlias`（本栈每个服务都钉了 `container_name: jl-<service>`，按脚本的解析顺序
+「真名 → `jl-` 别名 → compose service 标签」永远先命中别名）。⇒ **`com.docker.compose.service`
+标签解析分支在本栈上真机不可达**，这条 unverified 只能由 `test-image-identity.sh` 覆盖，本轮如实记为未覆盖
+（不是实现问题，是现栈命名方式使然）。
+
+### 6.2 `bench.sh` 最小场景（smoke）
+
+```bash
+BENCH_DOC_DIR=/tmp/r1/bench-doc bash code/lab/scripts/bench.sh smoke --run-id r1-b0-smoke
+# 关键输出：
+#   Preflight: 16 compose service(s) running/healthy
+#   Image identity recorded: code/lab/k6/reports/r1-b0-smoke/image-identity.json
+#   Reset targets (resolved from the current stack topology):
+#     declared modes : MYSQL_MODE=standalone REDIS_MODE=standalone
+#     MySQL target : container=jl-mysql …   Redis targets : jl-redis (FLUSHDB)
+#   BENCH_VERDICT=PASS   EXIT=0   duration 16s   checks rate=100% flow_errors 0% server_errors 0%
+```
+
+归档 `code/lab/k6/reports/r1-b0-smoke/`：`manifest.json`、`image-identity.json`、`summary.json`、
+`k6.log`、`report.html`、`reset.log`（`code/lab/k6/reports/` 已 gitignore，不入库）。
+
+- `manifest.json.images.containers[]` 含 4 台 `imageTag` + `imageId`，且与 6.1 之后、reset 重启应用层之后的
+  `docker inspect --format '{{.Image}}'` 再次逐台比对一致（`jl-app-1` 创建时间 17:39:01Z、`jl-app-2`
+  18:02:02Z、`jl-app-3` 17:58:16Z 各不相同，但镜像 digest 同为 `5b18a49d504c…`——归档记的是镜像身份，
+  与「哪一次 recreate 起的容器」正交）。
+- `manifest.json.git` = `9f0a36e` / `feature/stage2-workbench`，即代码身份也在档内。
+- bench 自带的 reset-lab 顺带把数据面复位（订单清空、库存回 100、Redis FLUSHDB），
+  并核对了 `MYSQL_MODE=standalone` / `REDIS_MODE=standalone` 与 §1 的重建前后一致（拓扑感知解析生效）。
+- reset 停启应用层后 Nginx 上游健康：连续 6 次 `GET /api/products/3` 全 200，
+  `docker logs jl-nginx` 近 3 分钟 `connect() failed` 计数 0（本轮无需再 reload）。
+
+### 6.3 B0-08 其余 unverified 项（本轮范围外，留给 R2）
+
+| 项 | 状态 |
+|---|---|
+| `--force-recreate` 实际重建行为 | **PASS**（§1，app 层三台 + 控制器真机重建） |
+| 真机 bench/tune 端到端归档（tag/id 与运行容器一致） | **PASS**（§6.2；tune 未跑，只跑 bench） |
+| 真机 `composeService` 标签解析路径 | 未覆盖（现栈命名使然，见 6.1） |
+| db-failover 期间 `mysql_cluster_probe_up` 恒 1 | **未做**——需杀 MySQL 节点，属 R2 范围（本代理不杀数据层容器）。现场留给 R2。 |
+| 探针自检开关 `failure-container-check-enabled` 真机表现 | 未做（同样需要杀/冻结探针目标节点，R2 范围） |
+
+**结论：PASS**（镜像身份最小闭环在真机成立；两项依赖杀节点的留在 R2）
 
 ## 7. 全量闸门 verify.sh
 
