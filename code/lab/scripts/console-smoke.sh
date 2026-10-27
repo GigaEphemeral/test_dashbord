@@ -2,10 +2,12 @@
 # Browser smoke test for the lab console (code/lab/dashboard).
 #
 # Drives the built 实验操作台 with Playwright against the running stack:
-# wizard load -> skip -> reset, background traffic start/stop and the log
-# panel. Nothing is ever injected, so the shared lab containers stay up and the
-# script is safe to run while another demo is in progress (it does reset the
-# wizard and stop background traffic at the end).
+# wizard load -> skip -> reset, background traffic start/stop, the log panel,
+# the thread lab and the animation view (topology / instances / cache flow).
+# The animation block injects one 10s `freeze` on jl-app-2 to assert the fault
+# badge, then calls chaos stop-all; start and exit both call stop-all, so the
+# script leaves no active fault and the app instances healthy. It does reset the
+# wizard and stop background traffic at the end.
 #
 # Every value can be overridden from the environment or the lab .env file
 # (environment wins). The token is never printed.
