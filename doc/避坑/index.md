@@ -19,6 +19,7 @@
 | 12 | [Testcontainers 临时容器](12-testcontainers-temp-containers.md) | 随机名容器不是实验室容器，别误判/清理 | 已写 |
 | 13 | [并发构建让线程指纹测试抖动](13-thread-fingerprint-flake.md) | 相位锁步导致 BLOCKED 偶发不出现；需相位偏移 + 精准采样 | 已写 |
 | 14 | [文档断言必须证伪](14-docs-must-be-falsified.md) | 多份 step 文档曾写"未接线/未实现"，后来被推翻 | 已写 |
+| 15 | [k6 动作超时短于 Docker stop](15-k6-action-timeout-vs-docker-stop.md) | kill 已生效却报 `HTTP 0`；客户端超时必须大于 stop grace | 已写 |
 
 ## 维护约定
 
@@ -28,4 +29,4 @@
 
 ## 完成情况
 
-14 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/step-*.md`，再提炼到这里并登记。
+15 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/step-*.md`，再提炼到这里并登记。

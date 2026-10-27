@@ -151,7 +151,7 @@ Schema, field semantics and validation rules:
 | `CHAOS_SCENARIO_FILE` | `ha-app-failover.json` | Bare name under `CHAOS_SCENARIO_DIR`, or an absolute path. |
 | `CHAOS_SCENARIO_DIR` | `/chaos-scenarios` | Container mount point of `code/lab/scenarios` (set by `run.sh`). |
 | `CHAOS_START_OFFSET` | `0s` | Delay before the timeline VU starts (k6 `startTime`); any zero form (`0`, `0.0`, `00`) is normalized to `0s`. |
-| `CHAOS_HTTP_TIMEOUT` | `5s` | Per-action HTTP timeout. |
+| `CHAOS_HTTP_TIMEOUT` | `20s` | Per-action HTTP timeout. Must stay above the controller's synchronous Docker budget: `POST /chaos/instances/{target}/actions` answers only after the stop returns, and `chaos.stop-grace-seconds` defaults to 10s (a MySQL kill measured 11s). A too-small value reports `HTTP 0` for a fault that **was** applied and aborts the remaining timeline events — see `doc/避坑/15-k6-action-timeout-vs-docker-stop.md`. |
 | `CHAOS_TEARDOWN_TIMEOUT` | `10s` | Timeout for the `stop-all` teardown call. |
 | `CHAOS_MAX_TTL` | `600` | Schema ceiling for `ttlSeconds` (matches `chaos.max-ttl-seconds`). |
 | `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; a datastore-shaped name needs the allow-list too, even if this is widened. |
@@ -190,6 +190,46 @@ the JSON files (target pattern, datastore allow-list, TTL ceiling), so there is
 no new JSON to edit. Datastore targets remain **closed by default**: a run needs
 both gates widened by the operator.
 
+### Prerequisites (this drill only)
+
+1. **The app tier must run through the Router.** In the default
+   `MYSQL_MODE=standalone` both pools point at the dev `jl-mysql`, so killing a
+   cluster node changes nothing on the request path. Set in
+   `code/lab/docker/.env` (gitignored): `MYSQL_MODE=router`,
+   `DB_WRITE_URL=jdbc:mysql://jl-mysql-router:6446/<db>`,
+   `DB_READ_URL=jdbc:mysql://jl-mysql-router:6447/<db>`, then recreate the tier
+   and reload Nginx (Nginx caches the upstream IPs):
+
+   ```bash
+   cd code/lab/docker && docker compose -f compose.base.yml -f compose.dev.yml \
+     up -d --no-deps --wait app-1 app-2 app-3
+   docker exec jl-nginx nginx -s reload
+   docker logs jl-app-1 2>&1 | grep -o 'MySQL access mode: [a-z]*'   # -> router
+   ```
+
+2. **`DB_FAILOVER_TARGET` must be the current PRIMARY.** Confirm first, or the
+   drill stops a replica and teaches nothing:
+
+   ```bash
+   bash code/lab/scripts/db-cluster-status.sh    # RESULT: ok + the PRIMARY row
+   ```
+
+3. **Both datastore gates must be widened for the run** — `CHAOS_TARGET_PATTERN`
+   (k6-side schema check) and `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` (mirrors
+   the controller's `chaos.datastore.allowed-target-pattern`, which refuses
+   independently). The cluster probe container
+   (`CHAOS_MYSQL_CLUSTER_CONTAINER`, default `jl-mysql-3`) must not be the target,
+   or D11 loses its `mysql_cluster_*` series during the drill.
+
+4. **Writes consume real stock.** Each run creates roughly `duration /
+   DB_FAILOVER_WRITE_INTERVAL` orders for `PRODUCT_ID` (a 3m run ≈ 85). Check the
+   remaining `inventory_stock.available` or run
+   `bash code/lab/scripts/reset-lab.sh --yes` first; a sold-out product turns
+   writes into business rejections and fails the success-rate threshold for the
+   wrong reason. `reset-lab.sh` targets the **standalone** `jl-mysql` by default
+   — in router mode point it at the cluster (`RESET_MYSQL_CONTAINER`) or pick a
+   `PRODUCT_ID` that still has stock.
+
 ```bash
 TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
 LAB_TOKEN="$TOKEN" \
@@ -197,17 +237,51 @@ LAB_TOKEN="$TOKEN" \
   CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
   DB_FAILOVER_TARGET=jl-mysql-2 DB_FAILOVER_TTL_SECONDS=45 \
   DB_FAILOVER_KILL_AT=20s DB_FAILOVER_ERROR_WINDOW=30s \
-  DB_FAILOVER_DURATION=2m \
+  DB_FAILOVER_DURATION=3m \
   bash code/lab/k6/run.sh db-failover
 ```
+
+Restore `MYSQL_MODE=standalone` afterwards and recreate the tier the same way,
+otherwise `verify.sh`'s MySQL content checks run against the cluster and its
+Redis/MySQL baselines no longer match the documented defaults.
 
 **Threshold rationale.** `http_req_failed{flow:product}` must be `rate==0`:
 the whole point of the Router is that reads stay available while the write port
 moves. Writes are different — the election window is allowed to lose writes, so
 the verdict is `db_failover_write_success: rate>DB_FAILOVER_WRITE_MIN_SUCCESS_RATE`
-(default `0.85`). With 1 write VU every 2s over 2m (about 60 writes), a 30s
-election window can lose at most ~15 writes; the 85% floor accepts that
-documented window and still fails a run whose writes stay broken afterwards.
+(default `0.85`). The budget is arithmetic, not guesswork: with one write VU
+sleeping `DB_FAILOVER_WRITE_INTERVAL` (2s), a window of `W` seconds loses ≈ `W/2`
+of the ≈ `duration/2` writes, so the success rate is ≈ `1 - W/duration`. The 0.85
+floor therefore tolerates `W ≤ 0.15 × duration` — **18s at the 2m default, 27s at
+3m**. `DB_FAILOVER_ERROR_WINDOW=30s` is the *classification* window (which 5xx
+count as expected), not the budget: at 2m a genuinely 30s-long election would
+cross the threshold, so use `DB_FAILOVER_DURATION=3m` unless the promotion is
+known to be fast. Measured on this host: promotion ≤ 17s from the kill request,
+one lost write, 98.8% success.
+
+### Live run (2026-10-27, `jl-mysql-1` PRIMARY, `PRODUCT_ID=2`)
+
+`run_id=k6-20261027-161756-dbfo2`, archive
+`code/lab/k6/reports/20261027-161756-db-failover/` (gitignored), k6 exit **0**,
+all five thresholds passed:
+
+| Evidence | Value |
+|---|---|
+| `chaos_events{action=kill,target=jl-mysql-1,result=accepted}` | 1 (`status=202`, 11s after the POST) |
+| `http_req_failed{flow=product}` | **0** over 3580 reads |
+| product read p95 / p99 / max | 8.30ms / 17.08ms / 504.8ms |
+| `db_failover_writes` | 85 → 84 `created`, 1 `expected-election-error`, **0 `failed`** |
+| `db_failover_expected_write_errors{status=500}` | 1 at `08:18:25`, i.e. 7s after the kill and inside the window |
+| `db_failover_write_success` | 0.9882 (> 0.85) |
+| `mysql_cluster_member_count` | 3 → 2 at `08:18:35` → 3 at `08:19:35` |
+| `mysql_cluster_primary{member}` | `mysql-1` → `mysql-2` at `08:18:35`; Router 6446 followed |
+| old primary | TTL-restarted, `ONLINE SECONDARY` again; teardown `stop-all reverted=0 failed=0` |
+| post-run | `GET /chaos/actions` → `[]`, Nginx `/api/products/2` → 200 |
+
+The first attempt (`20261027-160742-db-failover`, target `jl-mysql-2`) applied the
+kill but reported `HTTP 0` because `CHAOS_HTTP_TIMEOUT` was still 5s — shorter
+than the controller's synchronous Docker stop. That is
+`doc/避坑/15-k6-action-timeout-vs-docker-stop.md`.
 
 The expected 5xx list (`DB_FAILOVER_WRITE_EXPECTED_STATUSES`, default
 `500,502,503,504`) is passed to `http.expectedStatuses` **only** between
@@ -224,18 +298,19 @@ are counted separately:
 | `db_failover_expected_write_errors{status}` | 5xx accepted inside the window. |
 | `db_failover_write_failures{status}` | every other write failure, inside or outside the window. |
 
-Orders consume stock for `PRODUCT_ID`; run `reset-lab.sh` before repeating a
-long drill. `DB_FAILOVER_TTL_SECONDS` auto-starts the old primary, but if the
-TTL ends after the load window the teardown `stop-all` restores it first.
+Orders consume stock for `PRODUCT_ID` (see prerequisite 4 above: `reset-lab.sh`
+resets the **standalone** `jl-mysql` unless you repoint it at the cluster).
+`DB_FAILOVER_TTL_SECONDS` auto-starts the old primary, but if the TTL ends after
+the load window the teardown `stop-all` restores it first.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `LAB_TOKEN` | unset (required) | `X-Lab-Token` for the chaos-controller. |
-| `DB_FAILOVER_TARGET` | `jl-mysql-2` | MySQL container to kill; must match both gates above. |
+| `DB_FAILOVER_TARGET` | `jl-mysql-2` | MySQL container to kill; must match both gates above **and** be the current PRIMARY (`db-cluster-status.sh`). |
 | `DB_FAILOVER_TTL_SECONDS` | `45` | Auto-`start` TTL, bounded by `CHAOS_MAX_TTL`. |
 | `DB_FAILOVER_KILL_AT` | `20s` | Offset from load start to the kill. |
-| `DB_FAILOVER_ERROR_WINDOW` | `30s` | Window in which configured write 5xx are expected. |
-| `DB_FAILOVER_DURATION` | `2m` (or `CHAOS_DURATION`) | Total load window; kill+error window must fit. |
+| `DB_FAILOVER_ERROR_WINDOW` | `30s` | Window in which configured write 5xx are *classified* as expected; the threshold budget is `0.15 × duration`. |
+| `DB_FAILOVER_DURATION` | `2m` (or `CHAOS_DURATION`) | Total load window; kill+error window must fit. Use `3m` so a slow election still clears the 0.85 write floor. |
 | `DB_FAILOVER_READ_VUS` | `20` | Constant read VUs. |
 | `DB_FAILOVER_WRITE_VUS` | `1` | Constant write VUs. |
 | `DB_FAILOVER_WRITE_INTERVAL` | `2s` | Sleep between order creates per VU. |
@@ -487,7 +562,7 @@ run manifest are deferred to Task 21/22 (chaos).
 | `spike.js` | 50 baseline → 800 VU for 60s, then down | seckill product `SECKILL_PRODUCT_ID` | 5xx/error < 1%; 409/429 are expected and counted |
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
 | `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
-| `db-failover.js` | 20 read VU + 1 write VU for `DB_FAILOVER_DURATION=2m`, plus one timeline VU | product reads + idempotent orders + MySQL kill | read failures exactly 0; write success > 85% |
+| `db-failover.js` | 20 read VU + 1 write VU for `DB_FAILOVER_DURATION=2m` (3m recommended), plus one timeline VU | product reads + idempotent orders + MySQL kill | read failures exactly 0; write success > 85% |
 | `cache-lab.js` | 10 read VU for modes × dwell (default 8 × 20s), plus one mode VU | seeded 90001+ reads + `/lab/cache/mode` schedule | flow errors < 1%; per-mode `cache_lab_*` markers |
 | `traffic.js` | `TRAFFIC_VUS=50` constant for `TRAFFIC_DURATION=30m` | login → product read only (no stock consumed) | errors < 1%, product P95/P99 from Task 19; started/stopped from the console |
 | `d7.js` | identical to `load.js` (same stages/thresholds) | product reads only, **no login** | errors < 1%, product P95 < 300ms, P99 < 800ms |
@@ -642,10 +717,11 @@ LAB_TOKEN="$TOKEN" CHAOS_SCENARIO_FILE=quick-failover.json \
   CHAOS_DURATION=30s CHAOS_VUS=6 bash code/lab/k6/run.sh ha-failover
 
 # MySQL primary failover (opt-in; widens the datastore gates)
+# Confirm the PRIMARY first, and run the app tier in MYSQL_MODE=router.
 LAB_TOKEN="$TOKEN" \
   CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
   CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
-  DB_FAILOVER_TARGET=jl-mysql-2 DB_FAILOVER_DURATION=2m \
+  DB_FAILOVER_TARGET=jl-mysql-2 DB_FAILOVER_DURATION=3m \
   bash code/lab/k6/run.sh db-failover
 
 # Cache experiment (opt-in; seeds data and flips the defense mode)

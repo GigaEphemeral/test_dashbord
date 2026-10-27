@@ -116,6 +116,30 @@ bash code/lab/scripts/db-ha-up.sh && bash code/lab/scripts/db-cluster-status.sh 
 ```
 期望：写 6446 落到主、读 6447 轮转到从；杀主后本组重新选主、Router 重定向，读请求 70/70 保持 200；TTL 回滚后旧主以 SECONDARY 归队；`mysql_cluster_primary` 指标随之跳变。
 
+**带压测的版本**（k6 `db-failover`：读 20 VU + 写 1 VU 每 2s 一单，同时杀主）：
+
+```bash
+bash code/lab/scripts/db-cluster-status.sh          # 先确认当前 PRIMARY 是谁
+TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
+LAB_TOKEN="$TOKEN" \
+  CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
+  DB_FAILOVER_TARGET=jl-mysql-1 DB_FAILOVER_TTL_SECONDS=45 \
+  DB_FAILOVER_DURATION=3m PRODUCT_ID=2 \
+  bash code/lab/k6/run.sh db-failover
+```
+
+三个前提：app 层必须 `MYSQL_MODE=router`（改完 `.env` 要重建 app 层并 `docker exec jl-nginx nginx -s reload`）；
+`DB_FAILOVER_TARGET` 必须是**当前主**且不是探针容器（默认 `jl-mysql-3`）；写会真实扣库存（3m ≈ 85 单），
+router 模式下 `reset-lab.sh` 默认清的是 standalone `jl-mysql`，所以换个还有库存的 `PRODUCT_ID` 最省事。
+
+实测（2026-10-27，`run_id=k6-20261027-161756-dbfo2`）：k6 退出 0，读 **3580 次零失败**、p95 8.3ms；
+写 85 次里只有 **1 次**落在选举窗口内（`status=500`，kill 后 7s），成功率 **98.8%**；
+`mysql_cluster_member_count` 3→2→3（60s 内旧主以 `ONLINE SECONDARY` 回组），
+`mysql_cluster_primary` 由 `mysql-1` 翻到 `mysql-2`，Router 6446 跟随；
+teardown 后 `/chaos/actions` 为空。证据与阈值预算的算术见
+`doc/process/step-48-k6-ha-cache-scenarios.md` 第 6 节，命令细节见 `code/lab/k6/README.md`。
+
 ### 4.4 线程实验室（D6）
 
 ```bash
@@ -157,7 +181,7 @@ curl -s -X POST http://127.0.0.1:8080/lab-api/chaos/toxiproxy/mysql/toxics \
 | 控制面 | `http://127.0.0.1:8080/lab-api/**` | chaos-controller：`/chaos/**`、`/lab/guide/**`、`/lab/traffic/**`、`/containers`、`/logs/{name}`、`/metrics` |
 | 应用内 lab API | 仅 `jl-net` 内 | `/lab/toggles`、`/lab/config`、`/lab/cache/*`、`/lab/thread/*`（Nginx 不代理） |
 | Prometheus 代理 | `http://127.0.0.1:8080/prom/` | 面板与查询 |
-| Grafana | `http://127.0.0.1:3000` | D1–D7、D9–D11（D8 未实现） |
+| Grafana | `http://127.0.0.1:3000` | D1–D4、D6–D11 已置备（D5 由 Tempo UI 承担，无面板文件） |
 | RabbitMQ 管理 | `http://127.0.0.1:15672` | 队列与消息 |
 
 所有 `/lab-api/**` 与 `/lab/**` 都要求 `X-Lab-Token`（默认值见 `.env.example`，生产勿用）。
@@ -174,6 +198,7 @@ curl -s -X POST http://127.0.0.1:8080/lab-api/chaos/toxiproxy/mysql/toxics \
 | D5 链路 | Tempo service graph（由 Tempo UI 承担） |
 | D6 线程实验室 | 两套状态机时间线、blocked/waiting/runnable 指纹、堆/CPU/池 |
 | D7 双 JDK | 两 runtime 的吞吐/延迟/GC/堆/线程/启动 |
+| D8 JVM 调优 | 同一实例在不同 `-Xmx` / GC 预设下的堆、GC 停顿与频率、分配/晋升速率、最长停顿、线程、CPU、RPS、P95/P99、Hikari、启动耗时（配合 `tune.sh` 采样与 annotation） |
 | D9 压测 | k6 VUs/RPS/P95/P99、run_id 切换、故障标注 |
 | D10 缓存实验室 | L1/L2 命中、DB fallback 按 reason、布隆、空值缓存、击穿/雪崩策略、预热 |
 | D11 数据库高可用 | 集群成员状态/主节点/探针健康/节点可达/Redis 主从/故障动作 |

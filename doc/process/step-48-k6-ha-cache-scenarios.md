@@ -3,8 +3,8 @@
 > 日期：2026-10-27
 > 分支 / HEAD：worktree `agent-general-purpose-67256333`，基线 `2980874`（`docs: close out the 2026-10-27 batch ...`）
 > 关联任务：M3-2 MySQL Router 切换（step-31）、M4 缓存实验（step-25/26/27/28）、step-37 D10；本步只补 k6 场景、Node 测试与文档
-> 边界：**只改 `code/lab/k6/**` 与本文档**；未新增/修改场景 JSON；未执行任何 Docker、k6 实跑、`verify.sh` / `smoke.sh` / `console-smoke.sh`
-> 验证：`node --test "code/lab/k6/test/*.test.mjs"` → **59 pass / 0 fail**（基线 41 + 新增 18）；`node --check` 覆盖全部新增/修改 JS；`bash -n code/lab/k6/run.sh` 通过
+> 边界：**只改 `code/lab/k6/**` 与本文档**；未新增/修改场景 JSON；原始交付未执行任何 Docker、k6 实跑、`verify.sh` / `smoke.sh` / `console-smoke.sh`（`db-failover` 的真机运行见第 6 节补充，2026-10-27）
+> 验证：`node --test "code/lab/k6/test/*.test.mjs"` → **60 pass / 0 fail**（原始 59 = 基线 41 + 新增 18；第 6 节补 1 个超时契约）；`node --check` 覆盖全部新增/修改 JS；`bash -n code/lab/k6/run.sh` 通过；`db-failover` 真机两轮 + `verify.sh` **104 PASS / 1 WARN / 0 FAIL**
 
 # 1. 契约
 
@@ -141,13 +141,97 @@ LAB_TOKEN="$TOKEN" \
 
 # 5. 仍未完成 / 后续
 
-1. **live run 未做**：本步只做 authoring + Node 测试；`db-failover`、`cache-lab` 都没有对活栈执行，阈值与 D10 曲线没有实栈证据。Docker 由另一会话负责。
-2. **D10 相关性未验收**：`cache_lab_*` gauge 依赖 `/actuator/prometheus` 与 `/lab/cache/state` 的真实序列；需要在真栈确认 `cache_db_fallbacks_total`、`cache_l1_requests_total` 等名称/标签与 step-37 一致，并确认 remote-write 后 PromQL 能按 `run_id` + `mode` 聚合。当前 D10 没有 annotation，切换时间点仍靠 k6 日志与 gauge 时间窗。
-3. **模式切换是单实例 API**：要整层一致必须传 `CACHE_LAB_APP_URLS` 三个实例；不传时 1/3 流量命中被切模式，D10 的 `instance` 变量会显示差异，这是预期但容易误读。
-4. **读的 mode 标签是时间表推导**：与 app 实际切换有毫秒级偏差；没有从响应头/state 回读每个请求的真实模式。
-5. **actuator 采样的边界**：若 management endpoint 未暴露、返回 404 或 app 重启，差值会跳过或跨模式累积；`CACHE_LAB_SAMPLE_ACTUATOR=0` 可关闭，state gauge 不受影响。
-6. **db-failover 目标需人工确认**：默认 `jl-mysql-2` 是 step-31 演练后的主节点，不是永远的主；重放前必须 `bash code/lab/scripts/db-cluster-status.sh`（或等价脚本）确认，否则会停副本、失去教学意义。
-7. **datastore 安全边界**：两个 gate 都必须由 operator 显式放宽；`jl-mysql`（无数字后缀）、`*-exporter`、`jl-mysql-10` 仍应被拒。`run.sh` 只是转发，不替代控制器的白名单。
-8. **库存 / 数据清理**：db 写会扣库存，cache seed 会写 1000 行；当前没有自动 reset 集成到这两个场景，重复演示前分别跑 `reset-lab.sh` 与手工清理。
-9. **未新增 JSON**：`db-failover` 用 env 合成事件，所以实验操作台的 `GET /lab/guide/scenarios` 不会自动出现该场景；若要在控制台逐步演示，需要另加 schema v1 JSON（本步未做，避免把目标写死）。
-10. **未跑门禁**：`verify.sh` / `smoke.sh` / `console-smoke.sh` 未执行；本步的验证边界是 59 个 Node 测试 + 语法检查 + `bash -n`。
+## 5.1 `db-failover` live run 已完成
+
+见第 6 节；`cache-lab` 仍未真机执行。
+
+## 5.2 其余条目
+
+1. **D10 相关性未验收**：`cache_lab_*` gauge 依赖 `/actuator/prometheus` 与 `/lab/cache/state` 的真实序列；需要在真栈确认 `cache_db_fallbacks_total`、`cache_l1_requests_total` 等名称/标签与 step-37 一致，并确认 remote-write 后 PromQL 能按 `run_id` + `mode` 聚合。当前 D10 没有 annotation，切换时间点仍靠 k6 日志与 gauge 时间窗。
+2. **模式切换是单实例 API**：要整层一致必须传 `CACHE_LAB_APP_URLS` 三个实例；不传时 1/3 流量命中被切模式，D10 的 `instance` 变量会显示差异，这是预期但容易误读。
+3. **读的 mode 标签是时间表推导**：与 app 实际切换有毫秒级偏差；没有从响应头/state 回读每个请求的真实模式。
+4. **actuator 采样的边界**：若 management endpoint 未暴露、返回 404 或 app 重启，差值会跳过或跨模式累积；`CACHE_LAB_SAMPLE_ACTUATOR=0` 可关闭，state gauge 不受影响。
+5. **db-failover 目标需人工确认**：默认 `jl-mysql-2` 是 step-31 演练后的主节点，不是永远的主；重放前必须 `bash code/lab/scripts/db-cluster-status.sh`（或等价脚本）确认，否则会停副本、失去教学意义。（两次真机演练分别打到 `jl-mysql-2` 与 `jl-mysql-1`，主节点确实会变。）
+6. **datastore 安全边界**：两个 gate 都必须由 operator 显式放宽；`jl-mysql`（无数字后缀）、`*-exporter`、`jl-mysql-10` 仍应被拒。`run.sh` 只是转发，不替代控制器的白名单。
+7. **库存 / 数据清理**：db 写会扣库存，cache seed 会写 1000 行；当前没有自动 reset 集成到这两个场景。**router 模式下 `reset-lab.sh` 默认打的是 standalone `jl-mysql`**（`RESET_MYSQL_CONTAINER`），清不到集群里的订单/库存——真机演练时改用还有库存的 `PRODUCT_ID` 规避。
+8. **未新增 JSON**：`db-failover` 用 env 合成事件，所以实验操作台的 `GET /lab/guide/scenarios` 不会自动出现该场景；若要在控制台逐步演示，需要另加 schema v1 JSON（本步未做，避免把目标写死）。
+
+# 6. 补充 · `db-failover` 真机运行（2026-10-27）
+
+> 执行环境：本机 Windows 10 + Docker，32 个 lab 容器（dev + ha + db-ha 同时开），
+> app 层 `MYSQL_MODE=router`（写 6446 / 读 6447），演练前 `db-cluster-status.sh` → `RESULT: ok`。
+> 演练后已还原 `MYSQL_MODE=standalone` 并 `nginx -s reload`，`verify.sh` 回到 **104 PASS / 1 WARN / 0 FAIL**。
+
+## 6.1 第一次运行：暴露一个真缺陷（`CHAOS_HTTP_TIMEOUT` 太短）
+
+归档 `code/lab/k6/reports/20261027-160742-db-failover/`，target `jl-mysql-2`（当时的 PRIMARY），
+`DB_FAILOVER_DURATION=3m`，k6 退出码 **0**（阈值全过），但时间线报错：
+
+```
+08:08:04 [db-failover] t=+20.0s action=kill target=jl-mysql-2 ttl=45s
+08:08:09 [db-failover] failed action=kill target=jl-mysql-2:
+         POST /chaos/instances/jl-mysql-2/actions returned HTTP 0 (expected 200/202)
+```
+
+同一时刻容器确实被停了（`db-cluster-status.sh`：`jl-mysql-2 ... is not running`，
+Router 6446 已指向 `mysql-1`）。根因：动作接口是**同步**的，要等 Docker stop 返回才回 202，
+而 `chaos.stop-grace-seconds` 默认 10s、MySQL 刷 InnoDB 实测 **11s**；k6 侧
+`CHAOS_HTTP_TIMEOUT` 默认只有 5s，于是「慢但成功」被读成失败，
+`chaos_events{result="failed"}` 计 1、`server_errors` 计 1，不满足第 4.1 节第 1 条验收。
+
+**修复**：`code/lab/k6/lib/chaos.js` 默认 `CHAOS_HTTP_TIMEOUT` 5s → **20s**（stop grace 10s + Docker 余量），
+并在 `code/lab/k6/test/db-failover-scenario.test.mjs` 加回归：断言 kill 请求的 `params.timeout` 解析后 ≥ 15000ms。
+Node 测试 **59 → 60 pass / 0 fail**。坑位成文 `doc/避坑/15-k6-action-timeout-vs-docker-stop.md`。
+
+## 6.2 第二次运行：修复后的完整证据
+
+`run_id=k6-20261027-161756-dbfo2`，归档 `code/lab/k6/reports/20261027-161756-db-failover/`，
+target `jl-mysql-1`（当时的 PRIMARY），`PRODUCT_ID=2`（product 1 的库存已被第一次跑掉 83 件），
+`DB_FAILOVER_TTL_SECONDS=45`、kill at 20s、error window 30s、duration 3m。k6 退出码 **0**，五个阈值全过。
+
+对照第 4.1 节的五条验收：
+
+| # | 验收项 | 实测 |
+|---|---|---|
+| 1 | `chaos_events{result=accepted}` ≥ 1，无 failed | `k6_chaos_events_total{action="kill",target="jl-mysql-1",result="accepted"} = 1`；日志 `08:18:18` 发出 → `08:18:29` 收到 **202**（stop 耗时 11s） |
+| 2 | 读零失败、延迟在阈值内 | `http_req_failed{flow:product} = 0`（3580 次读）；p95 **8.30ms** / p99 **17.08ms** / max 504.8ms |
+| 3 | 写成功率 > 0.85，窗口内 expected，窗口外无失败 | `db_failover_write_success = 0.9882`（84/85）；`db_failover_expected_write_errors{status="500"} = 1`，发生在 `08:18:25`（kill 后 7s，落在窗口内）；`db_failover_write_failures_total` **无序列**（从未 +1） |
+| 4 | Router 切主 + 旧主 TTL 回队 + 指标跳变 | `mysql_cluster_member_count` 3 → **2**（`08:18:35`）→ **3**（`08:19:35`）；`mysql_cluster_primary{member}` 由 `mysql-1` 翻到 `mysql-2`（`08:18:35`）；Router 6446 → `mysql-2`；旧主 `ONLINE SECONDARY` 回组 |
+| 5 | teardown stop-all，`/chaos/actions` 为空 | `teardown stop-all reverted=0 failed=0`（TTL 已先恢复）；`GET /lab-api/chaos/actions` → `data: []`；Nginx `/api/products/2` → 200 |
+
+补充读数：`checks` 3686/3686（100%）、`flow_errors = 0`、`http_reqs = 3688`、
+`k6_db_failover_reads_total{result="ok"} = 3580`（无 `result="error"` 序列）。
+remote write 正常，上述 `k6_*` 序列都能在 Prometheus 按 `run_id` 查到（D9/D11 可对齐同一窗口）。
+
+## 6.3 阈值预算的算术修正（文档与实现口径一致）
+
+原文写「2m ≈ 60 次写，30s 窗口最多损失 ~15 次（25%），85% 下限接受该窗口」——**这句是错的**：
+25% 损失对应 75% 成功率，低于 0.85。正确口径是：1 写 VU、间隔 2s，
+窗口 `W` 秒约损失 `W/2` 次、总写约 `duration/2` 次，成功率 ≈ `1 - W/duration`，
+所以 0.85 下限等价于 **`W ≤ 0.15 × duration`**：2m 只能容忍 ~18s 选举，3m 才能容忍 ~27s。
+`DB_FAILOVER_ERROR_WINDOW=30s` 是「哪些 5xx 算预期」的**分类窗口**，不是预算。
+实测本机晋升 ≤17s、只丢 1 次写，故两次运行都过；README 与场景表已按此改写，
+并推荐演示用 `DB_FAILOVER_DURATION=3m`。
+
+## 6.4 前置条件（README 已补，重放必看）
+
+1. app 层必须 `MYSQL_MODE=router`（否则杀集群节点对请求路径毫无影响），重建后 **必须 `nginx -s reload`**（Nginx 缓存上游 IP）。
+2. `DB_FAILOVER_TARGET` 必须是**当前** PRIMARY（`db-cluster-status.sh`），且不能是探针容器 `CHAOS_MYSQL_CLUSTER_CONTAINER`（默认 `jl-mysql-3`），否则 D11 在演练期间失去 `mysql_cluster_*` 序列。
+3. 两个 gate（`CHAOS_TARGET_PATTERN` + `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN`）都要显式放宽；控制器仍会独立校验。
+4. 写会真实扣库存：3m ≈ 85 单。router 模式下 `reset-lab.sh` 默认打 standalone `jl-mysql`，清不到集群数据；换 `PRODUCT_ID` 或把 `RESET_MYSQL_CONTAINER` 指到集群节点。
+5. 演练后把 `MYSQL_MODE` 还原 standalone 并重建 app 层 + reload Nginx，再跑 `verify.sh`（本次 **104 PASS / 1 WARN**）。
+
+## 6.5 本次改动的文件
+
+| 文件 | 改动 |
+|---|---|
+| `code/lab/k6/lib/chaos.js` | `CHAOS_HTTP_TIMEOUT` 默认 5s → 20s，注释说明必须大于服务端同步 stop 预算 |
+| `code/lab/k6/test/db-failover-scenario.test.mjs` | 新增回归：kill 请求超时 ≥ 15s（`parseDurationMs` 解析后比较） |
+| `code/lab/k6/README.md` | db-failover 前置条件、阈值预算算术修正、真机证据表、env 表（超时/窗口/时长/目标）与命令示例更新 |
+| `doc/避坑/15-k6-action-timeout-vs-docker-stop.md` + `index.md` | 新坑成文并登记（15 条） |
+| `doc/readme.md` | §4.3 补 k6 数据库切换压测入口；修正 D8 的过期陈述 |
+| 本文档 | 第 5 节收口 + 第 6 节真机运行 |
+
+**未改动**：控制器与 app 代码（缺陷在 k6 客户端超时，服务端同步语义是设计选择）；
+`cache-lab` 场景与其真机运行仍是待办。
+

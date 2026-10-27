@@ -273,3 +273,16 @@
     pattern: "\"/lab/cache\""
   expect: true
   last_verified: 2026-10-27
+
+- id: k6-chaos-action-timeout
+  polarity: positive
+  doc:
+    - code/lab/k6/README.md
+    - doc/process/step-48-k6-ha-cache-scenarios.md
+  statement: "k6 动作客户端默认超时为 20s，大于控制器同步 Docker stop 预算（chaos.stop-grace-seconds 默认 10s，实测 kill MySQL 用 11s）"
+  verify:
+    kind: file_contains
+    path: code/lab/k6/lib/chaos.js
+    pattern: "CHAOS_HTTP_TIMEOUT', '20s'"
+  expect: true
+  last_verified: 2026-10-27
