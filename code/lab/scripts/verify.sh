@@ -1141,7 +1141,9 @@ else
   fail "grafana Prometheus datasource health is OK" "HTTP ${ds_code:-000} body: ${ds_body:0:160}"
 fi
 
-for uid in ha-d1 ha-d2 ha-d3 ha-d4 ha-d7 ha-d9; do
+# Every provisioned dashboard file must be served by Grafana. ha-d5 is absent
+# on purpose: tracing is answered by the Tempo UI, so no dashboard JSON exists.
+for uid in ha-d1 ha-d2 ha-d3 ha-d4 ha-d6 ha-d7 ha-d8 ha-d9 ha-d10 ha-d11; do
   dash_code=""
   for attempt in $(seq 1 10); do
     dash_code="$(dashboard_http_code "$uid")"
