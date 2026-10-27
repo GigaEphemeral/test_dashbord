@@ -43,7 +43,15 @@ public final class ProcessJvmCommandExecutor implements JvmCommandExecutor {
         command.add(Long.toString(pid));
         command.addAll(args);
 
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        // The app container exports JAVA_TOOL_OPTIONS=-Xmx512m; the jcmd launcher
+        // is a JVM too and would prepend "Picked up JAVA_TOOL_OPTIONS: ..." to
+        // every dump, heap-info and histogram file. The tool needs no heap
+        // settings, so strip the launcher-only variables from the child.
+        builder.environment().remove("JAVA_TOOL_OPTIONS");
+        builder.environment().remove("_JAVA_OPTIONS");
+        builder.environment().remove("JDK_JAVA_OPTIONS");
+        Process process = builder.start();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         Thread drain = new Thread(() -> drain(process, output), "thread-snapshot-jcmd-drain");
         drain.setDaemon(true);

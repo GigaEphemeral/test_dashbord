@@ -203,7 +203,13 @@ public final class ThreadSnapshotService {
         metadata.put("jvmVendor", runtime.getVmVendor());
         metadata.put("uptimeMs", runtime.getUptime());
         metadata.put("pid", ProcessHandle.current().pid());
-        metadata.put("files", List.copyOf(written));
+        // The manifest describes the complete bundle, not just the jcmd outputs:
+        // metadata.json and the analysis template are written right after this
+        // call, and a reader must be able to enumerate all five files.
+        List<String> bundleFiles = new ArrayList<>(written);
+        bundleFiles.add(FILE_METADATA);
+        bundleFiles.add(FILE_ANALYSIS_TEMPLATE);
+        metadata.put("files", List.copyOf(bundleFiles));
         Map<String, String> commands = new LinkedHashMap<>();
         for (Command command : COMMANDS) {
             commands.put(command.file(), "jcmd " + ProcessHandle.current().pid() + " "
