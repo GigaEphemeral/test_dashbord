@@ -128,6 +128,61 @@ class SnapshotPropertiesValidationTest {
         assertThat(properties.isLiveHistogram()).isFalse();
     }
 
+    @Test
+    void annotationUrlIsExpandedAndTrailingSlashesAreStripped() {
+        SnapshotProperties properties = validProperties();
+        properties.getAnnotation().setUrl("http://grafana:3000//");
+
+        assertThat(properties.getAnnotation()
+                .buildAnnotationUri("app.lab.snapshot.annotation.url").toString())
+                .isEqualTo("http://grafana:3000/api/annotations");
+    }
+
+    @Test
+    void blankAnnotationUrlIsOffNotAnError() {
+        SnapshotProperties properties = validProperties();
+        properties.getAnnotation().setUrl("");
+
+        assertThatCode(properties::validate).doesNotThrowAnyException();
+        assertThat(properties.getAnnotation()
+                .buildAnnotationUri("app.lab.snapshot.annotation.url")).isNull();
+    }
+
+    @Test
+    void relativeAnnotationUrlIsRejected() {
+        SnapshotProperties properties = validProperties();
+        properties.getAnnotation().setUrl("grafana:3000");
+
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("app.lab.snapshot.annotation.url");
+    }
+
+    @Test
+    void nonHttpAnnotationUrlIsRejected() {
+        SnapshotProperties properties = validProperties();
+        properties.getAnnotation().setUrl("ftp://grafana:3000");
+
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("absolute http(s)");
+    }
+
+    @Test
+    void nonPositiveAnnotationTimeoutsAreRejected() {
+        SnapshotProperties connect = validProperties();
+        connect.getAnnotation().setConnectTimeoutMs(0L);
+        assertThatThrownBy(connect::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("annotation.connect-timeout-ms");
+
+        SnapshotProperties read = validProperties();
+        read.getAnnotation().setReadTimeoutMs(-1L);
+        assertThatThrownBy(read::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("annotation.read-timeout-ms");
+    }
+
     private static SnapshotProperties validProperties() {
         SnapshotProperties properties = new SnapshotProperties();
         properties.setEnabled(true);
@@ -141,6 +196,8 @@ class SnapshotPropertiesValidationTest {
         properties.setJcmdPath("jcmd");
         properties.setTemplatePath(
                 Paths.get("doc", "process", "snapshot-analysis-template.md").toString());
+        properties.getAnnotation().setConnectTimeoutMs(2_000L);
+        properties.getAnnotation().setReadTimeoutMs(3_000L);
         return properties;
     }
 }

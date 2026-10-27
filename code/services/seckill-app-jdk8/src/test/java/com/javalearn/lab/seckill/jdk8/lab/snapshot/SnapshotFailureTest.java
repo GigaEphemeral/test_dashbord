@@ -134,7 +134,7 @@ class SnapshotFailureTest {
     private ThreadSnapshotService newService(JvmCommandExecutor executor) {
         return new ThreadSnapshotService(properties, "app-jdk8", SnapshotTestSupport.PID,
                 java.time.Clock.systemUTC(), executor, new ObjectMapper(),
-                new SnapshotMetrics(registry));
+                new SnapshotMetrics(registry), view -> { });
     }
 
     private List<String> snapshotFolderNames() throws IOException {

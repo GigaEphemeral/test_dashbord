@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -168,9 +169,52 @@ class ThreadSnapshotServiceTest {
         assertThat(ThreadSnapshotService.currentPid()).isEqualTo(expected).isPositive();
     }
 
+    @Test
+    void aSuccessfulCaptureIsAnnotatedWithItsView() {
+        List<SnapshotView> annotated = new ArrayList<SnapshotView>();
+        ThreadSnapshotService annotatedService = newService("app-jdk8", annotated::add);
+
+        SnapshotView view = annotatedService.capture();
+
+        assertThat(annotated).hasSize(1);
+        assertThat(annotated.get(0).getDirectory()).isEqualTo(view.getDirectory());
+        assertThat(annotated.get(0).getTrigger()).isEqualTo("manual");
+        assertThat(annotated.get(0).getCapturedAtEpochMs()).isEqualTo(1_000_000L);
+    }
+
+    @Test
+    void aThrowingAnnotatorNeverFailsTheCapture() {
+        ThreadSnapshotService annotatedService = newService("app-jdk8", view -> {
+            throw new IllegalStateException("grafana exploded");
+        });
+
+        SnapshotView view = annotatedService.capture();
+
+        assertThat(view.isCaptured()).isTrue();
+        assertThat(view.getError()).isNull();
+        assertThat(triggerCounter("thread_lab_snapshot_success_total")).isEqualTo(1D);
+        assertThat(triggerCounter("thread_lab_snapshot_failures_total")).isZero();
+    }
+
+    @Test
+    void aFailedCaptureIsNeverAnnotated() {
+        executor.failOnInvocation = 1;
+        List<SnapshotView> annotated = new ArrayList<SnapshotView>();
+        ThreadSnapshotService annotatedService = newService("app-jdk8", annotated::add);
+
+        SnapshotView view = annotatedService.capture();
+
+        assertThat(view.isCaptured()).isFalse();
+        assertThat(annotated).isEmpty();
+    }
+
     private ThreadSnapshotService newService(String instanceId) {
+        return newService(instanceId, view -> { });
+    }
+
+    private ThreadSnapshotService newService(String instanceId, SnapshotAnnotator annotator) {
         return new ThreadSnapshotService(properties, instanceId, SnapshotTestSupport.PID, clock,
-                executor, objectMapper, new SnapshotMetrics(registry));
+                executor, objectMapper, new SnapshotMetrics(registry), annotator);
     }
 
     private double triggerCounter(String name) {

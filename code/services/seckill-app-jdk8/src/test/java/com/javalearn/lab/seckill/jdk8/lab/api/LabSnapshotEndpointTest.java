@@ -68,7 +68,7 @@ class LabSnapshotEndpointTest {
         executor = new FakeExecutor();
         ThreadSnapshotService snapshots = new ThreadSnapshotService(properties, "app-jdk8",
                 4_242L, Clock.systemUTC(), executor, objectMapper,
-                new SnapshotMetrics(registry));
+                new SnapshotMetrics(registry), view -> { });
 
         LabProperties lab = new LabProperties();
         lab.setToken(TOKEN);

@@ -110,7 +110,8 @@ class SnapshotRetentionTest {
         failing.failAll = true;
         ThreadSnapshotService failingService = new ThreadSnapshotService(properties, "app-jdk8",
                 SnapshotTestSupport.PID, clock, failing,
-                new com.fasterxml.jackson.databind.ObjectMapper(), new SnapshotMetrics(registry));
+                new com.fasterxml.jackson.databind.ObjectMapper(), new SnapshotMetrics(registry),
+                view -> { });
 
         assertThat(failingService.capture().isCaptured()).isFalse();
 
@@ -121,7 +122,8 @@ class SnapshotRetentionTest {
     private ThreadSnapshotService newService() {
         return new ThreadSnapshotService(properties, "app-jdk8", SnapshotTestSupport.PID, clock,
                 new SnapshotTestSupport.FakeExecutor(),
-                new com.fasterxml.jackson.databind.ObjectMapper(), new SnapshotMetrics(registry));
+                new com.fasterxml.jackson.databind.ObjectMapper(), new SnapshotMetrics(registry),
+                view -> { });
     }
 
     private Path seed(Instant at, String instance) throws IOException {
