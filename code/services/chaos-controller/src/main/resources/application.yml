@@ -109,7 +109,9 @@ chaos:
   # the console reaches both labs only through this controller hop. The instance
   # allow-list and the two explicit path allow-lists in AppProxyService are the
   # security boundary; GET and POST are the only forwarded methods, and only
-  # POST /lab/thread/fault and POST /lab/cache/mode carry a body.
+  # POST /lab/thread/fault and POST /lab/cache/mode carry a body. The raw query
+  # string is relayed verbatim (allow-list matching never sees it), so app GET
+  # endpoints can be paginated via ?cursor=... without another proxy change.
   app-proxy:
     instances: ${CHAOS_APP_PROXY_INSTANCES:app-1,app-2,app-3}
     scheme: ${CHAOS_APP_PROXY_SCHEME:http}
@@ -118,7 +120,13 @@ chaos:
     # Seed runs synchronously in the app; keep this above the worst-case 1000-row
     # seed. Override in .env if the lab host seeds slower.
     request-timeout-seconds: ${CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS:10}
+    # Request body cap: oversized console bodies are refused 413/41301 before
+    # reaching the app (the fault/mode JSON envelopes are tiny by design).
     max-request-bytes: ${CHAOS_APP_PROXY_MAX_REQUEST_BYTES:8192}
+    # Response body cap: an upstream answer larger than this is refused
+    # 502/50202, never truncated (truncation would break the Result envelope).
+    # Raise via env when B3 key-list pages need a wider relay.
+    max-response-bytes: ${CHAOS_APP_PROXY_MAX_RESPONSE_BYTES:2097152}
   # MySQL InnoDB Cluster membership metrics for panel D11 (design §8.3).
   # Read-only: one SELECT every interval through `docker exec` into one node.
   # Enabled by default so the db-ha stack exposes the metrics without extra

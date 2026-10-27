@@ -2,7 +2,7 @@ package com.javalearn.lab.chaos.appproxy;
 
 import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
-import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
+import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.UnknownAppInstanceException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -26,14 +26,15 @@ class AppProxyServiceTest {
 
     @Test
     void readPathsAreForwardedToTheSelectedInstance() {
-        ProxyResponse response = service.forward("app-2", "GET", "/lab/thread/state", new byte[0]);
+        ProxyResponse response = service.forward("app-2", "GET", "/lab/thread/state", null, new byte[0]);
         assertThat(response.status()).isEqualTo(200);
         assertThat(gateway.instance).isEqualTo("app-2");
         assertThat(gateway.method).isEqualTo("GET");
         assertThat(gateway.path).isEqualTo("/lab/thread/state");
+        assertThat(gateway.query).isNull();
         assertThat(gateway.body).isNull();
 
-        service.forward("app-3", "get", "/lab/thread/lifecycle", new byte[0]);
+        service.forward("app-3", "get", "/lab/thread/lifecycle", null, new byte[0]);
         assertThat(gateway.instance).isEqualTo("app-3");
         assertThat(gateway.method).isEqualTo("GET");
         assertThat(gateway.path).isEqualTo("/lab/thread/lifecycle");
@@ -50,7 +51,7 @@ class AppProxyServiceTest {
             "/lab/thread/snapshot"
     })
     void bodylessPostPathsAreForwardedWithoutABody(String path) {
-        service.forward("app-1", "POST", path, new byte[0]);
+        service.forward("app-1", "POST", path, null, new byte[0]);
         assertThat(gateway.method).isEqualTo("POST");
         assertThat(gateway.path).isEqualTo(path);
         assertThat(gateway.body).isNull();
@@ -67,32 +68,32 @@ class AppProxyServiceTest {
             "starvation,resume"
     })
     void everyDocumentedFaultModeAndActionIsForwarded(String mode, String action) {
-        service.forward("app-1", "POST", "/lab/thread/fault/" + mode + "/" + action, new byte[0]);
+        service.forward("app-1", "POST", "/lab/thread/fault/" + mode + "/" + action, null, new byte[0]);
         assertThat(gateway.path).isEqualTo("/lab/thread/fault/" + mode + "/" + action);
     }
 
     @Test
     void faultBodyIsForwardedVerbatim() {
-        service.forward("app-1", "POST", "/lab/thread/fault", FAULT_BODY);
+        service.forward("app-1", "POST", "/lab/thread/fault", null, FAULT_BODY);
         assertThat(gateway.body).isEqualTo(FAULT_BODY);
     }
 
     @Test
     void bodiesOnOtherPostPathsAreDropped() {
-        service.forward("app-1", "POST", "/lab/thread/stop-all", FAULT_BODY);
+        service.forward("app-1", "POST", "/lab/thread/stop-all", null, FAULT_BODY);
         assertThat(gateway.body).isNull();
     }
 
     @Test
     void cacheReadPathsAreForwardedToTheSelectedInstance() {
-        ProxyResponse response = service.forward("app-2", "GET", "/lab/cache/state", new byte[0]);
+        ProxyResponse response = service.forward("app-2", "GET", "/lab/cache/state", null, new byte[0]);
         assertThat(response.status()).isEqualTo(200);
         assertThat(gateway.instance).isEqualTo("app-2");
         assertThat(gateway.method).isEqualTo("GET");
         assertThat(gateway.path).isEqualTo("/lab/cache/state");
         assertThat(gateway.body).isNull();
 
-        service.forward("app-3", "get", "/lab/cache/preheat", new byte[0]);
+        service.forward("app-3", "get", "/lab/cache/preheat", null, new byte[0]);
         assertThat(gateway.instance).isEqualTo("app-3");
         assertThat(gateway.method).isEqualTo("GET");
         assertThat(gateway.path).isEqualTo("/lab/cache/preheat");
@@ -105,7 +106,7 @@ class AppProxyServiceTest {
             "/lab/cache/preheat"
     })
     void cacheBodylessPostPathsAreForwardedWithoutABody(String path) {
-        service.forward("app-1", "POST", path, new byte[0]);
+        service.forward("app-1", "POST", path, null, new byte[0]);
         assertThat(gateway.method).isEqualTo("POST");
         assertThat(gateway.path).isEqualTo(path);
         assertThat(gateway.body).isNull();
@@ -113,7 +114,7 @@ class AppProxyServiceTest {
 
     @Test
     void cacheModeBodyIsForwardedVerbatim() {
-        service.forward("app-1", "POST", "/lab/cache/mode", CACHE_MODE_BODY);
+        service.forward("app-1", "POST", "/lab/cache/mode", null, CACHE_MODE_BODY);
         assertThat(gateway.method).isEqualTo("POST");
         assertThat(gateway.path).isEqualTo("/lab/cache/mode");
         assertThat(gateway.body).isEqualTo(CACHE_MODE_BODY);
@@ -125,7 +126,7 @@ class AppProxyServiceTest {
             "/lab/cache/preheat"
     })
     void cacheBodiesOnSeedAndPreheatAreDropped(String path) {
-        service.forward("app-1", "POST", path, CACHE_MODE_BODY);
+        service.forward("app-1", "POST", path, null, CACHE_MODE_BODY);
         assertThat(gateway.body).isNull();
     }
 
@@ -140,7 +141,7 @@ class AppProxyServiceTest {
             "PUT,/lab/cache/mode"
     })
     void cacheOffListMethodPathPairsAreRejected(String method, String path) {
-        assertThatThrownBy(() -> service.forward("app-1", method, path, new byte[0]))
+        assertThatThrownBy(() -> service.forward("app-1", method, path, null, new byte[0]))
                 .isInstanceOf(AppPathNotAllowedException.class)
                 .hasMessageContaining("allow-list");
         assertThat(gateway.path).isNull();
@@ -148,7 +149,7 @@ class AppProxyServiceTest {
 
     @Test
     void unknownInstanceIsRejectedBeforeTheGateway() {
-        assertThatThrownBy(() -> service.forward("app-9", "GET", "/lab/thread/state", new byte[0]))
+        assertThatThrownBy(() -> service.forward("app-9", "GET", "/lab/thread/state", null, new byte[0]))
                 .isInstanceOf(UnknownAppInstanceException.class)
                 .hasMessageContaining("app-9")
                 .hasMessageContaining("app-1");
@@ -173,7 +174,7 @@ class AppProxyServiceTest {
             "PUT,/lab/thread/state"
     })
     void offListMethodPathPairsAreRejected(String method, String path) {
-        assertThatThrownBy(() -> service.forward("app-1", method, path, new byte[0]))
+        assertThatThrownBy(() -> service.forward("app-1", method, path, null, new byte[0]))
                 .isInstanceOf(AppPathNotAllowedException.class)
                 .hasMessageContaining("allow-list");
         assertThat(gateway.path).isNull();
@@ -181,15 +182,50 @@ class AppProxyServiceTest {
 
     @Test
     void emptyPathIsRejected() {
-        assertThatThrownBy(() -> service.forward("app-1", "GET", "", new byte[0]))
+        assertThatThrownBy(() -> service.forward("app-1", "GET", "", null, new byte[0]))
                 .isInstanceOf(AppPathNotAllowedException.class);
+    }
+
+    // ------------------------------------------------------------ query string
+
+    @Test
+    void rawQueryStringIsRelayedVerbatimToTheGateway() {
+        service.forward("app-2", "GET", "/lab/thread/state", "cursor=v2:8&limit=50", new byte[0]);
+        assertThat(gateway.path).isEqualTo("/lab/thread/state");
+        assertThat(gateway.query).isEqualTo("cursor=v2:8&limit=50");
+
+        // percent-encoded and '+'-containing queries are copied, not decoded;
+        // an empty value and a bare flag keep their exact bytes
+        service.forward("app-2", "GET", "/lab/cache/state", "q=a%20b&f&x=1+2=", new byte[0]);
+        assertThat(gateway.query).isEqualTo("q=a%20b&f&x=1+2=");
+    }
+
+    @Test
+    void nullAndEmptyQueryStringsArePassedThroughUnchanged() {
+        service.forward("app-1", "GET", "/lab/thread/state", null, new byte[0]);
+        assertThat(gateway.query).isNull();
+
+        service.forward("app-1", "GET", "/lab/thread/state", "", new byte[0]);
+        assertThat(gateway.query).isEmpty();
+    }
+
+    @Test
+    void theQueryStringNeverParticipatesInAllowListing() {
+        // an on-list path stays allowed with any query...
+        service.forward("app-1", "GET", "/lab/cache/state", "cursor=abc", new byte[0]);
+        assertThat(gateway.path).isEqualTo("/lab/cache/state");
+
+        // ...and an off-list path is still rejected even with an empty query
+        assertThatThrownBy(() -> service.forward("app-1", "GET", "/lab/cache/keys", "", new byte[0]))
+                .isInstanceOf(AppPathNotAllowedException.class)
+                .hasMessageContaining("allow-list");
     }
 
     @Test
     void oversizedBodyIsRejectedBeforeTheGateway() {
         config.setMaxRequestBytes(8);
-        assertThatThrownBy(() -> service.forward("app-1", "POST", "/lab/thread/fault", FAULT_BODY))
-                .isInstanceOf(InvalidAppProxyRequestException.class)
+        assertThatThrownBy(() -> service.forward("app-1", "POST", "/lab/thread/fault", null, FAULT_BODY))
+                .isInstanceOf(AppProxyRequestTooLargeException.class)
                 .hasMessageContaining("at most 8 bytes");
         assertThat(gateway.path).isNull();
         assertThat(service.maxRequestBytes()).isEqualTo(8);
@@ -200,13 +236,15 @@ class AppProxyServiceTest {
         private String instance;
         private String method;
         private String path;
+        private String query;
         private byte[] body;
 
         @Override
-        public ProxyResponse exchange(String instance, String method, String path, byte[] body) {
+        public ProxyResponse exchange(String instance, String method, String path, String query, byte[] body) {
             this.instance = instance;
             this.method = method;
             this.path = path;
+            this.query = query;
             this.body = body;
             return new ProxyResponse(200, "{\"code\":\"0\",\"message\":\"OK\",\"data\":null}");
         }
