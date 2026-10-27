@@ -88,6 +88,33 @@
   expect: true
   last_verified: 2026-10-27
 
+# step-55: D10 gained a run_id template variable plus a k6 cache-lab row so the
+# per-mode k6 series (k6_cache_lab_*) can be read next to the app-side cache
+# counters on one dashboard; step-48 §7.1 row 4 recorded the former gap.
+- id: d10-k6-runid-variable
+  polarity: positive
+  doc:
+    - doc/process/step-55-d10-cache-lab-runid.md
+  statement: "D10 已暴露 run_id 模板变量（label_values(k6_cache_lab_reads_total, run_id)，见 step-55）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/grafana/dashboards/ha-d10.json
+    pattern: "label_values\\(k6_cache_lab_reads_total, run_id\\)"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: d10-k6-cache-lab-panels
+  polarity: positive
+  doc:
+    - doc/process/step-55-d10-cache-lab-runid.md
+  statement: "D10 已包含按 run_id/mode 过滤的 k6 cache-lab 对照面板（reads 速率与模式切换计数，见 step-55）"
+  verify:
+    kind: grep_count
+    path: code/lab/docker/grafana/dashboards/ha-d10.json
+    pattern: "k6_cache_lab_(reads_total|mode_switches_total)"
+  expect: 2
+  last_verified: 2026-10-27
+
 - id: d11-db-ha-dashboard-exists
   doc:
     - doc/design/details/09-压测与观测.md

@@ -1159,6 +1159,27 @@ for uid in ha-d1 ha-d2 ha-d3 ha-d4 ha-d7 ha-d9; do
   fi
 done
 
+# D10 must expose the k6 cache-lab run_id template variable (step-55). The
+# body comes from the running Grafana, so this also proves the provisioned
+# copy of ha-d10 is the current one.
+d10_body=""
+for attempt in $(seq 1 10); do
+  d10_body="$(curl -sS --max-time 5 \
+    -u "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+    http://127.0.0.1:3000/api/dashboards/uid/ha-d10 2>/dev/null || true)"
+  if grep -Eq '"name":[[:space:]]*"run_id"' <<<"$d10_body"; then
+    break
+  fi
+  if (( attempt < 10 )); then
+    sleep 1
+  fi
+done
+if grep -Eq '"name":[[:space:]]*"run_id"' <<<"$d10_body"; then
+  pass "grafana dashboard ha-d10 exposes the run_id template variable"
+else
+  fail "grafana dashboard ha-d10 exposes the run_id template variable" "body: ${d10_body:0:160}"
+fi
+
 # 9. Prometheus sees cAdvisor, and cAdvisor container series exist when the
 #    Docker Desktop/WSL2 runtime allows them (absence is a WARN, not a failure).
 cadvisor_up_body=""
