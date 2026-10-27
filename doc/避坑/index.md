@@ -21,6 +21,8 @@
 | 14 | [文档断言必须证伪](14-docs-must-be-falsified.md) | 多份 step 文档曾写"未接线/未实现"，后来被推翻 | 已写 |
 | 15 | [k6 动作超时短于 Docker stop](15-k6-action-timeout-vs-docker-stop.md) | kill 已生效却报 `HTTP 0`；客户端超时必须大于 stop grace | 已写 |
 | 16 | [app 运行镜像里没有 curl](16-app-image-has-no-curl.md) | Alpine 只有 BusyBox wget；文档里的 `docker exec ... curl` 照抄即失败 | 已写 |
+| 17 | [k6 的 per-vu-iterations 默认 maxDuration 截断时间线](17-k6-per-vu-iterations-max-duration.md) | `exit 0` + `checks 100%` 也会少跑一个 dwell；预算必须由 dwell 推导 | 已写 |
+| 18 | [`K6_SUMMARY_EXPORT` 是容器内路径](18-k6-summary-export-is-container-path.md) | 指到宿主路径会 exit 107：`/scripts` 是 `:ro` 挂载，必须落在 `/reports/` 下 | 已写 |
 
 ## 维护约定
 
@@ -30,4 +32,4 @@
 
 ## 完成情况
 
-16 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/step-*.md`，再提炼到这里并登记。
+18 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/step-*.md`，再提炼到这里并登记。

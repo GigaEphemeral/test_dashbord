@@ -11,8 +11,9 @@ the console-driven background load (`traffic.js` + the profile-gated
 `jl-traffic` compose service). Step 48 adds the two remaining HA/cache drills:
 `db-failover.js` (reads + idempotent writes while a MySQL node is killed) and
 `cache-lab.js` (seed once, then walk every `/lab/cache/mode` defense while
-reading the seeded range). Both are **opt-in**: they change cluster or cache
-state and are not part of the bench baseline.
+manufacturing the penetration, breakdown and avalanche traffic those defenses
+exist to catch). Both are **opt-in**: they change cluster or cache state and are
+not part of the bench baseline.
 
 ## Layout
 
@@ -333,6 +334,19 @@ This scenario drives the D10 cache experiment end to end:
 4. At the end of each dwell it samples `GET /lab/cache/state` and
    `/actuator/prometheus`, then finally resets to `off`; `teardown()` resets
    `off` again even if the timeline aborted.
+5. Inside those dwells it **manufactures the three defects the defenses exist to
+   catch** (step 56). Without this the scenario only ever read ids that exist
+   and are still warm, so every defense counter stayed at zero by construction:
+
+   | Defect | How the run creates it | What should absorb it |
+   |---|---|---|
+   | 穿透 (penetration) | every `CACHE_LAB_PROBE_EVERY`-th read targets an id from `CACHE_LAB_ABSENT_IDS` (`cache_probe` flow, expects `404` + code `40401`) | null-value cache, bloom filter |
+   | 击穿 (breakdown) | every `CACHE_LAB_HOT_KEY_EVERY`-th read targets the seed's hot key (`hotKeyId` from the seed response; `CACHE_LAB_HOT_KEY_ID` overrides) | mutex rebuild, logical expire |
+   | 雪崩 (avalanche) | dwells listed in `CACHE_LAB_RESEED_MODES` re-call `POST /lab/cache/seed` at dwell start, so `CACHE_LAB_SEED_COUNT` keys with one identical TTL expire **inside that same dwell** | ttl-jitter, L1 cache, DB-fallback limiter |
+
+   Probing an id that also appears in the read range would silently turn the
+   penetration probe into a normal hit, so `CACHE_LAB_ABSENT_IDS` overlapping
+   `[CACHE_LAB_SEED_START_ID, +CACHE_LAB_SEED_COUNT)` is rejected at init.
 
 ```bash
 TOKEN=$(grep -E '^LAB_TOKEN=' code/lab/docker/.env | cut -d= -f2-)
@@ -341,6 +355,39 @@ LAB_TOKEN="$TOKEN" \
   CACHE_LAB_MODE_DURATION=20s \
   bash code/lab/k6/run.sh cache-lab
 ```
+
+That quick-start walks the modes but **arms nothing** (20s dwell is below the
+avalanche TTL). For the full before/after comparison, re-seed inside every dwell:
+
+```bash
+LAB_TOKEN="$TOKEN" \
+  CACHE_LAB_APP_URLS='http://app-1:8080,http://app-2:8080,http://app-3:8080' \
+  CACHE_LAB_MODE_DURATION=90s \
+  CACHE_LAB_RESEED_MODES='off,null-cache,bloom,mutex,logical-expire,ttl-jitter,l1-cache,db-fallback' \
+  bash code/lab/k6/run.sh cache-lab
+```
+
+`run.sh` prints the effective arming parameters on every run
+(`cache reseed:`, `cache probe:`, `cache dwell:`) — check those lines first
+when a defense counter comes back empty. A 90s dwell over the canonical 8-mode
+list is ~12 minutes, outside the 5-minute teaching window; narrow it with
+`CACHE_LAB_MODES='off,bloom'` (the subset must keep the canonical order) rather
+than shortening the dwell, because the arm guard below rejects short dwells.
+
+**Guards that fail at init, not mid-run**
+
+- `CACHE_LAB_RESEED_MODES` non-empty requires
+  `CACHE_LAB_MODE_DURATION ≥ CACHE_LAB_AVALANCHE_TTL_SECONDS×1000 + CACHE_LAB_ARM_MARGIN`
+  (default ≥ 75s). Below that the re-seeded keys expire in the *next* dwell and
+  pollute that dwell's comparison instead of arming this one.
+- `CACHE_LAB_ARM_MARGIN` must exceed `CACHE_LAB_STORM_SAMPLE_DELAY`, or the
+  storm sample is taken before the keys have expired.
+- The `modes` scenario uses `per-vu-iterations`, whose `maxDuration` defaults to
+  **10m0s**. The loop runs `modes × dwell`, so the budget is derived from it
+  (`+CACHE_LAB_TIMELINE_SLACK`, default 30s) — otherwise k6 interrupts the
+  timeline mid-loop, the last mode never arms and the final `mode=off` reset is
+  skipped, all while exiting 0 with every check passing. See
+  `doc/避坑/17-k6-per-vu-iterations-max-duration.md`.
 
 This is **opt-in**: it writes 1000 experiment rows (`catalog_product`
 90000..90999 by default), warms Redis keys and flips the instance-level defense
@@ -360,10 +407,18 @@ Per-mode metrics (all also carry `run_id` from `baseOptions.tags`):
 | `cache_lab_read_errors{mode,status}` | Counter | unexpected read statuses. |
 | `cache_lab_mode_switches{mode,result}` | Counter | accepted/failed switch per app URL set. |
 | `cache_lab_db_fallback_rejections{mode}` | Counter | `42901` fast fails in db-fallback. |
+| `cache_lab_probes{mode,result}` | Counter | penetration probes issued (`404` is the expected outcome). |
+| `cache_lab_hot_key_reads{mode,result}` | Counter | reads routed to the seed's hot key. |
+| `cache_lab_reseeds{mode,result}` | Counter | avalanche re-arms, one per armed dwell. |
 | `cache_lab_db_fallbacks{mode}` | Gauge | Δ `cache_db_fallbacks_total` over the dwell (actuator). |
 | `cache_lab_l1_hits{mode}` / `cache_lab_l1_requests{mode}` | Gauge | Δ L1 hits / L1 requests. |
 | `cache_lab_bloom_absents{mode}` | Gauge | Δ bloom `absent` rejections. |
+| `cache_lab_null_cache_hits{mode}` | Gauge | Δ null-value cache hits. |
 | `cache_lab_mutex_rebuilds{mode}` | Gauge | Δ mutex `rebuild` outcomes. |
+| `cache_lab_mutex_double_check_hits{mode}` | Gauge | Δ rebuilds skipped because a concurrent writer already filled the slot. |
+| `cache_lab_logical_stale_serves{mode}` | Gauge | Δ logical-expire serves of a logically stale value. |
+| `cache_lab_logical_cold_rebuilds{mode}` | Gauge | Δ logical-expire synchronous cold rebuilds. |
+| `cache_lab_refresh_submitted{mode}` | Gauge | Δ asynchronous refreshes submitted. |
 | `cache_lab_limiter_rejections{mode}` | Gauge | Δ avalanche limiter `rejected`. |
 | `cache_lab_state_l2_keys{mode}` | Gauge | live L2 experiment keys at dwell end. |
 | `cache_lab_state_l1_keys{mode}` | Gauge | live L1 experiment keys at dwell end. |
@@ -376,6 +431,17 @@ The actuator gauges are **deltas over each dwell**, so D10 can compare
 reachable the driver logs a warning and skips those gauges; state gauges still
 come from `/lab/cache/state`.
 
+Reading those gauges back has three traps (all cost a debugging session once):
+
+- `summary.json` keeps only the **last** dwell's value per `mode`; `max` is the
+  cross-dwell peak. Use Prometheus for the per-mode comparison.
+- An app-side counter only appears on `/actuator/prometheus` after its first
+  non-zero increment, so "series missing" and "series at 0" mean the same thing
+  in the before-state and neither proves the wiring is broken.
+- Instant PromQL queries look back only 5m. Querying an ended run hours later
+  returns **no series**, not `0`. Use `max_over_time(<metric>[6h])`, or the
+  series may have left the retention window entirely.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `LAB_TOKEN` | unset (required) | `X-Lab-Token` for `/lab/cache/**`. |
@@ -384,6 +450,17 @@ come from `/lab/cache/state`.
 | `CACHE_LAB_SEED_COUNT` | `200` | Number of consecutive ids read. |
 | `CACHE_LAB_MODES` | canonical 8-mode list | Ordered subset; duplicates/reordering are rejected. |
 | `CACHE_LAB_MODE_DURATION` | `20s` | Dwell per mode; read duration = modes × dwell. |
+| `CACHE_LAB_TIMELINE_SLACK` | `30s` | Extra headroom on the mode timeline's `maxDuration` (see the guard above). |
+| `CACHE_LAB_ABSENT_IDS` | `99990..99999` | Penetration probe id set; must not overlap the read range. |
+| `CACHE_LAB_PROBE_EVERY` | `10` | One probe per N reads; `0` disables penetration traffic. |
+| `CACHE_LAB_PROBE_EXPECTED_STATUSES` | `404,429` | Accepted probe statuses (`404` is the point of the probe). |
+| `CACHE_LAB_PROBE_EXPECTED_CODE` | `40401` | Accepted business code on a probe miss. |
+| `CACHE_LAB_HOT_KEY_EVERY` | `25` | One hot-key read per N iterations; `0` disables breakdown traffic. |
+| `CACHE_LAB_HOT_KEY_ID` | `0` | `0` = take `hotKeyId` from the seed response; non-zero forces it. |
+| `CACHE_LAB_RESEED_MODES` | unset (no re-arm) | Dwells that re-call `POST /lab/cache/seed` to arm the avalanche. |
+| `CACHE_LAB_AVALANCHE_TTL_SECONDS` | `60` | Must match the app's `LAB_CACHE_SEED_AVALANCHE_TTL_SECONDS`; mismatched it logs the app value as authoritative. |
+| `CACHE_LAB_ARM_MARGIN` | `15s` | Slack above the avalanche TTL that a dwell must have to be armable. |
+| `CACHE_LAB_STORM_SAMPLE_DELAY` | `2s` | Delay after the TTL at which the mid-dwell `sample=storm` snapshot is taken. |
 | `CACHE_LAB_VUS` | `10` | Constant read VUs. |
 | `CACHE_LAB_THINK_TIME` | `200ms` | Sleep between reads per VU. |
 | `CACHE_LAB_READ_EXPECTED_STATUSES` | `200,429` | Accepted read statuses. |
@@ -563,7 +640,7 @@ run manifest are deferred to Task 21/22 (chaos).
 | `soak.js` | 100 VU for `SOAK_DURATION=30m` (acceptance: 2m) | product reads only | errors < 1%, checks > 99% |
 | `ha-failover.js` | 20 VU constant (`CHAOS_VUS`) for `CHAOS_DURATION=4m`, plus one timeline VU | product reads + scenario JSON actions | errors < 1%, product P95/P99 from Task 19 |
 | `db-failover.js` | 20 read VU + 1 write VU for `DB_FAILOVER_DURATION=2m` (3m recommended), plus one timeline VU | product reads + idempotent orders + MySQL kill | read failures exactly 0; write success > 85% |
-| `cache-lab.js` | 10 read VU for modes × dwell (default 8 × 20s), plus one mode VU | seeded 90001+ reads + `/lab/cache/mode` schedule | flow errors < 1%; per-mode `cache_lab_*` markers |
+| `cache-lab.js` | 10 read VU for modes × dwell (default 8 × 20s), plus one mode VU capped at that duration + slack | seeded 90001+ reads, absent-id probes, hot-key reads, per-dwell re-seed + `/lab/cache/mode` schedule | flow errors < 1%; per-mode `cache_lab_*` markers |
 | `traffic.js` | `TRAFFIC_VUS=50` constant for `TRAFFIC_DURATION=30m` | login → product read only (no stock consumed) | errors < 1%, product P95/P99 from Task 19; started/stopped from the console |
 | `d7.js` | identical to `load.js` (same stages/thresholds) | product reads only, **no login** | errors < 1%, product P95 < 300ms, P99 < 800ms |
 
