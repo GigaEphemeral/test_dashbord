@@ -63,3 +63,96 @@
 - **策略切换时间轴**：若确实需要 annotation，需在 `provisioning/dashboards` 之外新增 Grafana annotation 数据源/查询（涉及 provisioning 改动，超出本任务边界，未做）。
 - **策略 gauge**：若教学上需要"当前策略"常驻面板，应在应用侧新增 `cache_defense_mode{mode=off|mutex|logical-expire}` 之类的 gauge（Java 改动，超出本任务边界），而不是在面板里查询非指标端点。
 - **视觉复核**：图表宽度、legend 数量（mutex 5 条、刷新 5 条、空值 4 条）与阈值颜色需要在真实 Grafana 里确认；本环境无法渲染。
+
+---
+
+# 补充（D10 真机取数）
+
+> 日期：2026-10-27 · 分支 `feature/ha-lab`（主 worktree `D:\000CODE\JAVA-LEARN`）· Prometheus `http://127.0.0.1:8080/prom` · 只改本仪表盘与本文件，未改 Java / compose / 脚本 / `.env*`。
+
+## 前置更正：运行镜像比 HEAD 旧
+
+真机取数前先核对容器内 jar：`docker exec jl-app-1 sh -c 'unzip -l /app/app.jar | grep -i avalanche'` 返回 0 行，`/actuator/prometheus` 也没有任何 `cache_avalanche_*` 序列。也就是说 `java-learn-lab/seckill-app:jdk21`（2026-10-27 05:21 构建）虽然晚于 `064cea4`，但构建缓存里的源码并不含 M4-2b。为保证四个雪崩面板能对活栈取数，本次做了一次镜像刷新：
+
+1. `docker build --target build -t d10-app-build:tmp -f services/seckill-app-jdk21/Dockerfile .`（复用 Maven 层，产出含 `Avalanche*` 类的 jar）；
+2. 旧镜像备份为 `java-learn-lab/seckill-app:jdk21-pre-d10`，用临时 Dockerfile `FROM ...:jdk21-pre-d10` + `COPY d10-app.jar /app/app.jar` 覆盖同名 `:jdk21`（不改仓库 Dockerfile）；
+3. `docker compose ... up -d --no-build --no-deps --wait app-1 app-2 app-3` 重建三实例；容器 IP 变化导致 Nginx 仍指向旧 IP，执行 `docker exec jl-nginx nginx -s reload` 后三实例恢复轮询。
+
+刷新后 `cache_avalanche_ttl_jitter_total` / `cache_avalanche_l1_total` / `cache_avalanche_l1_refresh_total` / `cache_avalanche_limiter_total` 与 `cache_db_fallbacks_total{reason="avalanche"}` 均出现，指标名与源码一致（Prometheus 对 counter 追加 `_total`）。
+
+## 修正清单
+
+1. **面板 11「预热耗时 P95」原 PromQL 永远为空**：`Timer.builder("cache_preheat_duration")` 未开 `publishPercentileHistogram()`，导出只有 `cache_preheat_duration_seconds_{count,sum,max}`，没有 `_bucket`。改为 `max by (trigger) (cache_preheat_duration_seconds_max{...})`，标题改为「预热耗时（最大值）」，图例 `{{trigger}} 最大`，单位仍为 `s`。
+2. **四个雪崩面板 legend 是 `__auto`**：Grafana 不会把 `__auto` 当模板，会原样显示。面板 105–107 改为 `{{result}}`；面板 108 第一条 `{{result}}`、第二条（`cache_db_fallbacks_total{reason="avalanche"}`）改为 `avalanche 落库/s`。单位 `reqps` 正确，无需改。
+3. **文案过时**：顶部说明与面板 4 描述仍写「雪崩未合并、合并后才会出现」，改为 M4-2b 已合并、`reason="avalanche"` 已出现。
+4. **三个存疑指标名全部确认存在，未改名**：
+   - `hikaricp_connections_idle`：存在，`sum by (instance)` 观测 5–7；
+   - `hikaricp_connections_max`：存在，`max by (instance)` 观测 10；
+   - `mysql_global_status_questions{job="mysqld-exporter"}`：存在，`instance="mysqld-exporter:9104"`，观测 149961。
+   - 注意 Hikari 指标带 `pool=read-pool|write-pool`，现有 `sum/max by (instance)` 会把两个池合并，这是面板口径而非指标名错误。
+
+## 逐面板取数（`$instance` 取 All，即 `instance=~".*"`）
+
+| # | 面板 | PromQL（节选） | 观测：序列数 / 样例值 | 结论 |
+|---|---|---|---|---|
+| 1 | L1 / L2 命中率 | `sum by (instance,cache)(rate(cache_l1_requests_total{result="hit"}[1m])) / clamp_min(sum by (...)(rate(...[1m])),1e-9)`；L2 同构 | 各 3 序列；L1：app-3 0.0286、app-1/2 0；L2：app-2 0.371、app-3 0.333、app-1 0.0714 | 有数据 |
+| 2 | 缓存请求速率 | `sum by (instance)(rate(cache_l1_requests_total[1m]))`；L2 同构 | 各 3 序列；L1：app-1 3.56/s、app-2/3 0.636/s；L2：3.56 / 0.636 / 0.655 | 有数据 |
+| 3 | DB 回落占比 | `sum(rate(cache_db_fallbacks_total[1m])) / clamp_min(sum(rate(cache_l1_requests_total[1m])),1e-9)` | 1 序列，观测 **1.22（>100%）** | 有数据；口径坑见下 |
+| 4 | DB 回落按原因 | `sum by (reason)(rate(cache_db_fallbacks_total[1m]))` | 4 序列：miss 4.11/s、penetration 0.0536/s、breakdown 0.782/s、avalanche 0.964/s | 有数据，`avalanche` 已并入 |
+| 5 | 布隆结果 | `sum(rate(cache_bloom_requests_total{result="absent"}[1m]))` 等 | absent 0.358/s；hit 计数器 1（5 分钟 rate 0.0033/s）；error 0 | 有数据 |
+| 6 | 空值缓存 | `cache_null_cache_requests_total{result=hit/miss}`、`writes`、`errors` 的 rate | hit 0.107/s、miss 0.0536/s、writes 0.0536/s、errors 0 | 有数据 |
+| 7 | mutex | `cache_breakdown_mutex_total{result=...}` 的 rate | rebuild 0.687/s；双检命中计数器 46、timeout 6、stale 0、error 0 | 有数据；双检/超时已实测 |
+| 8 | logical-expire | `cache_breakdown_logical_total{result=...}` 的 rate | cold 计数器 18、fresh 0、stale 0.0364/s | 有数据 |
+| 15 | 互斥重建份额 | `rebuild / clamp_min(全部 mutex 事件)` | 1 序列 0.926 | 有数据 |
+| 9 | logical 异步刷新 | `cache_breakdown_refresh_total{result=...}` 的 rate | submitted 20、success 20；deduped/failure/rejected 0 | 有数据 |
+| 10 | 预热运行与每轮加载 | `sum by (trigger)(rate(cache_preheat_runs_total[1m]))*60`；`loaded/runs` | 3 序列；manual 1.02 次/分、loaded/run 1；periodic/startup 该窗口为 0 | 有数据 |
+| 11 | 预热耗时（最大值） | **修正后** `max by (trigger)(cache_preheat_duration_seconds_max{...})` | 3 序列；manual 0.00646s、periodic 0.00533s、startup 0 | **原 P95 表达式为空，已修** |
+| 12 | 热榜大小与发布 | `sum by (instance)(cache_preheat_hot_list_size)`；`rate(cache_hotkey_publish_total{result=...}[1m])` | 3 序列：8/8/110（窗口内本地 Top-N）；发布成功 0.218/s、失败 0 | 有数据 |
+| 13 | HikariCP | `hikaricp_connections_active/pending/idle/max{...}` | 各 3 序列；active 0、pending 0、idle 5–7、max 10 | 有数据 |
+| 14 | DB QPS 与回源 | `rate(mysql_global_status_questions{job="mysqld-exporter"}[1m])`；`sum(rate(cache_db_fallbacks_total[1m]))` | 各 1 序列；MySQL 15.9/s、缓存回源 5.9/s | 有数据 |
+| 105 | TTL 抖动（雪崩） | `sum by (result)(rate(cache_avalanche_ttl_jitter_total[1m]))` | 3 序列；applied 0.0172/s（累计 40）、skipped/error 0 | 有数据 |
+| 106 | L1 优先（雪崩） | `sum by (result)(rate(cache_avalanche_l1_total[1m]))` | 3 序列；cold-rebuild 0.0364/s（累计 20）、fresh/stale 0 | 有数据；fresh/stale 未触发见下 |
+| 107 | L1 异步刷新（雪崩） | `sum by (result)(rate(cache_avalanche_l1_refresh_total[1m]))` | 5 序列，全部 0（计数器 0） | 序列存在但无事件，原因见下 |
+| 108 | DB 兜底限流（雪崩） | `sum by (result)(rate(cache_avalanche_limiter_total[1m]))`；`sum(rate(cache_db_fallbacks_total{reason="avalanche"}[1m]))` | acquired 0.909/s、rejected 0.841/s；avalanche 回源 0.964/s | 有数据；限流已实测 429 快失败 |
+
+## 仍然为 0 / 无法生成的数据
+
+1. **面板 106 `fresh-serve` / `stale-serve`、面板 107 全部结果为 0**：`l1-cache` 的计数器只在 `@Cacheable` miss、进入 `ProductAvalancheDefense.withL1Cache` 时自增；而 L1 Caffeine `expire-after-write=60s` 与 L1 stale window `60s` 相同，L1 未过期时读请求直接命中缓存，不会进入 loader。用「删 L2 + 等 L1 过期」实测时两者同时到期，只能得到 `cold-rebuild`（累计 20），拿不到 fresh/stale；`cache_avalanche_l1_refresh_*` 因此也没有 submitted/success。要演示需把 `LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS` 调到小于 refresh interval（10s）或做 L1 淘汰，属于配置/实现改动，本次未做。
+2. **面板 8 `fresh-serve` 为 0**：logical TTL 30s 小于 L1 60s，命中缓存时同样不进 loader；`stale-serve` 已实测（删 L2 后直接读源实例，累计 20 并产生 20 次 refresh success）。
+3. **面板 9 `deduped` / `failure` / `rejected` 为 0**：没有对同一 key 的并发刷新，也没有把 2 线程刷新池打满，属预期。
+4. **面板 5 `error`、面板 7 `stale-serve/error`、面板 12 `failure`、面板 13 `active/pending` 为 0**：Redis 正常、锁正常、发布正常、无并发 DB 占用，属健康基线。
+5. **`seckill-app-jdk8` 目标 down**（`Get http://seckill-app-jdk8:8080/actuator/prometheus: dial tcp ...`），`up=0`；不影响三实例面板，但 `job=~"seckill-app.*"` 会把它算进 `up` 类查询，D10 的缓存查询由于它无序列而不受影响。
+6. **口径坑（不是指标名错误）**：一次「两级都 miss 且保护放行查库」会先由 `TwoLevelCache` 记 `reason="miss"`，再由 `ProductPenetrationDefense`/`ProductBreakdownDefense`/`ProductAvalancheDefense` 记 `penetration|breakdown|avalanche`。因此面板 3 对全部 reason 求和会重复计数（实测 1.22 > 100%），面板 4 堆叠也不是互斥分解。按 reason 逐条看、或把 `miss` 当「两级缓存未命中」而非「最终落库」更准确；本次只做真机核对，未改这两个面板的口径。
+
+## 生成信号用的命令（token 只在容器内读取）
+
+```bash
+# 基线读 + seed（seed 只写 90000..90999，保留）
+for r in 1 2 3; do for p in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:8080/api/products/$p; done; done
+docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-data="" localhost:8080/lab/cache/seed'
+
+# 切模式（app-1/2/3 各执行一次；mode=off|null-cache|bloom|mutex|logical-expire|ttl-jitter|l1-cache|db-fallback）
+docker exec jl-app-N sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --header="Content-Type: application/json" --post-data="{\"mode\":\"ttl-jitter\"}" localhost:8080/lab/cache/mode'
+
+# 手动预热
+docker exec jl-app-1 sh -c 'wget -qO- --header="X-Lab-Token: $LAB_TOKEN" --post-data="" localhost:8080/lab/cache/preheat'
+
+# 并发打点（mutex 双检 / ttl-jitter 写 / db-fallback 限流）
+seq 90400 90430 | xargs -P 20 -I{} curl -s -o /dev/null http://127.0.0.1:8080/api/products/{}
+docker exec jl-app-1 sh -c 'for i in $(seq 1 30); do wget -qO- localhost:8080/api/products/91340 >/dev/null 2>&1 & done; wait'
+docker exec jl-app-3 sh -c 'for i in $(seq 1 100); do wget -qO- localhost:8080/api/products/$((91000+i)) >/dev/null 2>&1 & done; wait'
+
+# 删 L2 模拟过期（当前 master=jl-redis-2，键 cache:product:<id>；密码只在容器内展开）
+docker exec jl-redis-2 sh -c 'redis-cli -a "$REDIS_HA_PASSWORD" --no-auth-warning DEL cache:product:90300'
+
+# 逐条取数
+curl -s --get http://127.0.0.1:8080/prom/api/v1/query --data-urlencode 'query=cache_l1_requests_total'
+docker exec jl-app-1 sh -c 'wget -qO- localhost:8080/actuator/prometheus | grep -E "^cache_avalanche|^hikaricp_|^mysql_global_status_questions"'
+```
+
+## 恢复状态与遗留
+
+- 三个实例 `GET /lab/cache/mode` 均为 `off`（已核对）；容器全部 running/healthy，Prometheus 三个 `seckill-app` 目标 `up=1`。
+- 实验数据保留：MySQL 90000..90999 共 1000 行、Bloom（1022 个 id）、热榜 ZSet 与 L2 缓存键（部分键被本次删除/重写，5 分钟 TTL 会自然收敛，未手工清理）。
+- 镜像：`java-learn-lab/seckill-app:jdk21` 已换成含 M4-2b 的 app.jar（旧镜像保留为 `:jdk21-pre-d10`）；未提交任何镜像/构建产物。
+- 未做：Grafana 视觉截图（仍无浏览器渲染证据）、mode 指标/annotation（原结论不变）。
