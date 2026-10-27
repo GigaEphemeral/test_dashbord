@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AnimationLab from './components/AnimationLab.vue'
 import ScenarioWizard from './components/ScenarioWizard.vue'
 import ThreadLab from './components/ThreadLab.vue'
 import {
@@ -39,6 +40,8 @@ const faults = ref([])
 const busy = ref('')
 const autoSync = ref(true)
 const view = ref('console')
+// Instance the animation view hands to the thread page ("filter to this app").
+const threadInstance = ref('')
 
 watch(token, (value) => {
   localStorage.setItem(TOKEN_STORAGE_KEY, value)
@@ -235,6 +238,12 @@ function selectContainer(name) {
   refreshLogs()
 }
 
+/** The instance view links into the thread lab with the same app preselected. */
+function openThread(instance) {
+  threadInstance.value = instance
+  view.value = 'thread'
+}
+
 let syncTimer = null
 
 function stopPolling() {
@@ -297,7 +306,7 @@ onBeforeUnmount(stopPolling)
         <div class="brand-mark">HA</div>
         <div>
           <h1>HA Lab · 实验操作台</h1>
-          <p class="subtitle">M2 · 场景向导、故障状态、背景流量与只读日志</p>
+          <p class="subtitle">M2–M6 · 场景向导、故障状态、线程实验室与动画视图</p>
         </div>
       </div>
       <div class="topbar-meta">
@@ -322,6 +331,13 @@ onBeforeUnmount(stopPolling)
         data-testid="nav-thread"
         @click="view = 'thread'"
       >线程实验室</button>
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: view === 'animation' }"
+        data-testid="nav-animation"
+        @click="view = 'animation'"
+      >动画视图</button>
     </nav>
 
     <main class="content">
@@ -483,7 +499,18 @@ onBeforeUnmount(stopPolling)
       </div>
       </template>
 
-      <ThreadLab v-else :token="token.trim()" :active="view === 'thread'" />
+      <ThreadLab
+        v-else-if="view === 'thread'"
+        :token="token.trim()"
+        :active="view === 'thread'"
+        :focus-instance="threadInstance"
+      />
+      <AnimationLab
+        v-else
+        :token="token.trim()"
+        :active="view === 'animation'"
+        @open-thread="openThread"
+      />
     </main>
 
     <footer class="footer">

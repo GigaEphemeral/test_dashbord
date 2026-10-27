@@ -13,7 +13,9 @@ import {
 
 const props = defineProps({
   token: { type: String, default: '' },
-  active: { type: Boolean, default: false }
+  active: { type: Boolean, default: false },
+  /** Instance preselected by another page (e.g. the instance cards). */
+  focusInstance: { type: String, default: '' }
 })
 
 // Same polling budget as the console so both views feel identical. The timer
@@ -171,6 +173,18 @@ function demoChipClass(index) {
   if (demoIndex.value >= 0 && index < demoIndex.value) return 'done'
   return ''
 }
+
+// Runs before the activation watcher so the first fetch already targets the
+// instance another page asked for, instead of fetching app-1 then re-fetching.
+watch(
+  () => props.focusInstance,
+  (value) => {
+    if (value && INSTANCES.includes(value) && value !== instance.value) {
+      instance.value = value
+    }
+  },
+  { immediate: true }
+)
 
 watch(
   () => props.active,
