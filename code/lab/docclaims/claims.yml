@@ -187,19 +187,20 @@
 # Negative claims: the capability is still missing, so the docs may say so.
 # If the verification suddenly matches, the claim is STALE: the feature
 # shipped and every doc listed above must be revisited.
+#
+# step-51: the former d8-tuning-panel-missing negative claim was flipped to
+# positive below; no negative claims remain in this registry.
 # ---------------------------------------------------------------------------
 
-- id: d8-tuning-panel-missing
-  polarity: negative
+- id: d8-tuning-panel-exists
   doc:
-    - doc/design/details/09-压测与观测.md
-    - doc/design/details/README.md
-    - doc/process/retrospective-2026-10-27.md
-  statement: "D8 调优实验面板未实现（没有 ha-d8.json）"
+    - doc/process/step-51-jvm-tuning.md
+  statement: "D8 调优实验面板已实现（ha-d8.json，含 tuning annotation 图层）"
   verify:
-    kind: file_exists
+    kind: file_contains
     path: code/lab/docker/grafana/dashboards/ha-d8.json
-  expect: false
+    pattern: '"uid": "ha-d8"'
+  expect: true
   last_verified: 2026-10-27
 
 - id: cache-console-page-exists
