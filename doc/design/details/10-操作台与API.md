@@ -21,7 +21,7 @@
 | 业务代理 | Nginx `location /api/` | 轮询 `app-1/2/3:8080` |
 | 控制器 API | `chaos/web`, `chaos/guide`, `chaos/traffic` | 容器/日志、向导、背景流量 |
 | 鉴权 | `chaos/auth/TokenFilter` | `X-Lab-Token` 常量时间比较；公开 `/health`、`/metrics`、`/info`、`/actuator*` |
-| 冒烟 | `code/lab/scripts/console-smoke.sh` + `.mjs` | Playwright 真浏览器驱动；30 项断言（含线程实验室页 4 条） |
+| 冒烟 | `code/lab/scripts/console-smoke.sh` + `.mjs` | Playwright 真浏览器驱动；37 项断言（含线程实验室页 4 条、动画视图页 7 条） |
 
 ---
 

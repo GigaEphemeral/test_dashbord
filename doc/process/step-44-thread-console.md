@@ -2,7 +2,7 @@
 > 日期：2026-10-27
 > 分支 / HEAD：`feature/ha-lab`（主工作树 `D:\000CODE\JAVA-LEARN`）/ 本次提交 `feat: proxy the app thread lab to the console and add the thread page`、`test: cover the thread proxy allow-list and extend the console smoke`、`docs: record the thread console handover (step-44)`
 > 关联任务：M5 线程实验室（设计 §9.1/§9.2/§9.3、§12.1 `/thread`、§12.2 交互约定）；上游 step-32（故障注入）、step-34（生命周期）、step-35（快照）、step-36（D6 面板）
-> 验证：`cd code && JAVA_HOME=jdk-21.0.12.1 mvn -pl services/chaos-controller -am test` → **244 tests, 0 failures / 0 errors / 0 skipped / BUILD SUCCESS**（基线 191，本步新增 53）；`npm run build`（`code/lab/dashboard`）→ **成功**；`bash code/lab/scripts/console-smoke.sh` → **30 PASS / 0 FAIL**（基线 26 + 新增 4）；三个实例 `GET /lab/thread/state` 经代理均为空数组
+> 验证：`cd code && JAVA_HOME=jdk-21.0.12.1 mvn -pl services/chaos-controller -am test` → **244 tests, 0 failures / 0 errors / 0 skipped / BUILD SUCCESS**（基线 191，本步新增 53）；`npm run build`（`code/lab/dashboard`）→ **成功**；`bash code/lab/scripts/console-smoke.sh` → **30 PASS / 0 FAIL**（基线 26 + 新增 4；M6-1 动画视图落地后为 **37 PASS**，见 `step-46-animation-views.md` §6）；三个实例 `GET /lab/thread/state` 经代理均为空数组
 
 # 1. 代理契约（proxy contract）
 
@@ -60,7 +60,7 @@ Nginx 仍**不**代理应用 `/lab/**`（`code/lab/docker/nginx/conf.d/default.c
 
 - 重建 `java-learn-lab/chaos-controller:jdk21` 并 `up -d --build --no-deps chaos-controller` 重建 `jl-chaos-controller`，健康状态 `healthy`；未改 compose、未动其他容器。
 - 三个应用实例 `jl-app-1/2/3` 均 `healthy`，且为 standalone 拓扑（`MYSQL_MODE=standalone`，无 `jl-toxiproxy` 容器、未加载 chaos-proxy overlay）。dashboard `dist` 重新构建后由 Nginx 只读挂载直接生效，无需重建 Nginx。
-- `bash code/lab/scripts/console-smoke.sh` → **30 PASS / 0 FAIL**（基线 26 PASS，本步 +4）：
+- `bash code/lab/scripts/console-smoke.sh` → **30 PASS / 0 FAIL**（基线 26 PASS，本步 +4；M6-1 动画视图落地后为 **37 PASS**，见 `step-46-animation-views.md` §6）：
   1. `thread lab page opens with the six-state display`
   2. `injected cpu-burn fault is listed as ACTIVE`（页面注入 `cpu-burn`，hold=auto，TTL=5）
   3. `stopping the fault empties the thread fault list`

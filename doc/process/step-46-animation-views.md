@@ -2,7 +2,7 @@
 > 日期：2026-10-27
 > 分支 / HEAD：`feature/ha-lab` 隔离 worktree `agent-general-purpose-1f0addcf` / 功能提交 `2150e91`
 > 关联任务：M6-1；设计 §12.1（页面）、§12.3（实时性）、§7.4（面板）；`doc/design/details/diagrams/01-deployment-topology.mmd`、`04-cache-read-path.mmd`
-> 验证：`cd code/lab/dashboard && npm ci && npm run build` → **成功**（18 modules；`index.html` 0.46 kB、CSS 19.95 kB / gzip 4.27 kB、JS 122.93 kB / gzip 45.63 kB）。**未启动容器、未跑 Playwright**（实栈归另一会话）；`console-smoke.mjs` 未改。
+> 验证：`cd code/lab/dashboard && npm ci && npm run build` → **成功**（18 modules；`index.html` 0.46 kB、CSS 19.95 kB / gzip 4.27 kB、JS 122.93 kB / gzip 45.63 kB）。**未启动容器、未跑 Playwright**（实栈归另一会话）；`console-smoke.mjs` 当时未改（2026-10-27 真栈验收已扩展为 37 PASS，见 §6）。
 > 运行状态：只做作者态与构建；栈未在本 worktree 启动。
 
 # 1. 三个视图各显示什么
@@ -89,7 +89,7 @@ sum by (reason) (rate(cache_db_fallbacks_total{job="seckill-app"}[1m]))
 
 # 5. 延后的实栈冒烟（deferred live smoke）
 
-本步按约定不启动 Docker、不跑 Playwright；`console-smoke.mjs` 未扩展。待拥有栈的会话完成 `npm run build` 部署后，建议补以下 **6 条**断言（都只用现有 `data-testid`，无需改实现）：
+本步按约定不启动 Docker、不跑 Playwright；`console-smoke.mjs` 当时未扩展。待拥有栈的会话完成 `npm run build` 部署后，建议补以下 **6 条**断言（都只用现有 `data-testid`，无需改实现）。**2026-10-27 已在真栈落地为 7 个 PASS（第 1 条拆成「打开」与「节点计数」两项），见 §6。**
 
 1. `nav-animation` 打开 `animation-page`，默认 `animation-tab-topology` 激活；`topology-node-jl-nginx` 与 `topology-node-jl-app-1` 可见，节点总数等于 `/lab-api/containers` 的 `data.length`（证明没有画不存在的组件）。
 2. 经 API 对 `jl-app-2` 注入 `freeze`（TTL 5s）→ 下一次 5s 轮询后 `topology-faults-jl-app-2` 出现且文本含 `freeze`；`stop-all` 后徽标消失、告警不残留。
@@ -106,3 +106,21 @@ sum by (reason) (rate(cache_db_fallbacks_total{job="seckill-app"}[1m]))
 - 拓扑的绿色来自 Docker health，不来自 Prometheus `up`；容器 running 但未被抓取时仍显示绿。需要在拓扑上表达「抓取是否成功」时，下一版可加 `up{job=...}`。
 - 实例卡只覆盖 `jl-app-*`；`jl-seckill-app-jdk8` 只在拓扑里出现（D7 的范围），避免把 JDK 8 的数值混进三实例对比。
 - 拓扑是「层次 + 带标签的脊」，不是逐节点边路由：边信息不在 `/containers` 里，硬画会造假。
+
+# 6. 浏览器验收（2026-10-27，真栈）
+
+`bash code/lab/scripts/console-smoke.sh` → **37 PASS / 0 FAIL**（基线 30，本页新增 7；全程约 25s）。新增断言与证明点：
+
+1. `animation view opens on the live topology` — `nav-animation` 打开 `animation-page`，默认 `animation-tab-topology` 带 `aria-current="page"`，`topology-node-jl-nginx` 与 `topology-node-jl-app-1` 可见。证明路由/挂载与默认 tab，且不是空态。
+2. `topology draws one node per /lab-api/containers entry` — DOM 中 `[data-testid^="topology-node-"]` 的数量与 API `data.length` **精确相等**（实测 36 = 32 running + 4 按需/一次性：`jl-traffic`、两个 mysql init、`jl-seckill-app-jdk8`）。**不留容差**：API 会返回 exited 的按需容器，拓扑也照画；探针每轮同时重读两侧，容器正在切换时重试而不是放过。
+3. `freeze badge appears on jl-app-2 and stop-all clears it` — 经 `/lab-api/chaos/instances/jl-app-2/actions` 注入 `freeze`（TTL 10s，仅作保险），手动同步后 `topology-faults-jl-app-2` 出现且文本含 `freeze`；随后 `POST /chaos/stop-all`，徽标、`animation-fault-count`、API `/chaos/actions` 三者同时归零，`jl-app-2` 回到 `running/healthy`。证明 target 匹配、故障可见、清理闭环。
+4. `three instance cards show live metrics and open thread lab at app-2` — 实例 tab 恰好 `instance-card-app-1/2/3` 三张，`instance-cpu-app-1` 与 `instance-rate-app-1` 不是「无数据」；点 `instance-open-thread-app-2` 进入 `thread-page` 且 `thread-instance=app-2`。证明 PromQL 对齐与跨页 focusInstance，不注入故障。
+5. `cache flow shows moving data or an explicit idle/empty state` — `cache-flow` 存在；若 Prometheus 无序列则 `cache-empty` 可见；否则三条 lane 都有格式化速率（`/s` 或「无数据」）、命中率是百分比或「无数据」，且 `idle` 类只在速率 0/无数据时出现；l1 非 idle 时粒子 `transform` 两帧内必须变化。证明「有数据会动、没数据有明确空态」，不出现 NaN/坏渲染。
+6. `pause freezes the particles while the 5s poller keeps syncing` — 先确认 l1 粒子在动（若 1m 窗口内速率已归零，经 `/lab/traffic/start` 生成读流量，测试后停掉）；点 `animation-toggle` 后 `aria-pressed=true`、状态文案「动画暂停」；等 rAF 缓动收敛后粒子 `transform` 两帧不变；暂停期间 `animation-last-sync` 仍推进（5s 轮询未被冻结），轮询后再验一次仍冻结；最后点回播放。
+7. `reduced motion starts paused and the play button overrides it` — 新建 `reducedMotion: 'reduce'` 上下文（无本地偏好）进入缓存 tab：`cache-reduced-motion` 可见、`cache-motion-state` 为「动画暂停」、`aria-pressed=true`；手动点击后变为「动画播放中」，证明可显式覆盖。
+
+全局检查同步扩展：`no failed /lab-api or /prom requests` 同时拦截两类代理的网络失败与 ≥400 响应（切页/关页导致的 `ERR_ABORTED` 不算）；`no in-page error banner` 同时检查 `animation-error`；`no uncaught page errors` 覆盖主页面与 reduced-motion 上下文。
+
+**验收中发现并修复的缺陷**：`CacheFlow.vue` 在首次进入缓存 tab 时先以 `available=false` 挂载（查询还在路上），`measure()` 在 `.flow-track` 尚未渲染时执行，之后数据到达也不会重新测量——粒子在整个首次访问里没有任何 `transform`。修复：`measure()` 检测粒子元素列表变化时重建 frames；监听 `available`，变为 true 后 `nextTick` 再测量并把 `ResizeObserver` 挂到新轨道上；变为 false 时清空 frames。视觉与数据语义不变。
+
+**清理**：脚本启动前与 `finally` 都调用 `/chaos/stop-all`（另有线程 stop-all、向导 reset、流量 stop）；实跑结束后 `/chaos/actions` 为空、三个 app `running/healthy`、`jl-traffic` exited、向导 idle。
