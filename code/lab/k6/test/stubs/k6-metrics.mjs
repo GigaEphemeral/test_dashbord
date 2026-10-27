@@ -19,3 +19,5 @@ class Metric {
 export class Rate extends Metric {}
 
 export class Counter extends Metric {}
+
+export class Gauge extends Metric {}
