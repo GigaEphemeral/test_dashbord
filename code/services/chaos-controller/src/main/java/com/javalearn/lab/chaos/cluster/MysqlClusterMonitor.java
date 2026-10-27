@@ -272,7 +272,8 @@ public class MysqlClusterMonitor implements AutoCloseable {
             Observation old = lastMembers.get(name);
             if (old == null) {
                 log.warn("MySQL cluster member appeared: {} ({}/{})", name, now.role(), now.state());
-            } else if (old != now) {
+            } else if (!old.equals(now)) {
+                // equals, not ==: every poll allocates a new Observation record.
                 log.warn("MySQL cluster member {} changed: {}/{} -> {}/{}",
                         name, old.role(), old.state(), now.role(), now.state());
             }
