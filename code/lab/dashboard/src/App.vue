@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ScenarioWizard from './components/ScenarioWizard.vue'
+import ThreadLab from './components/ThreadLab.vue'
 import {
-  ApiError,
+  describeError,
   fetchActiveFaults,
   fetchContainers,
   fetchGuideScenarios,
@@ -37,6 +38,7 @@ const traffic = ref(null)
 const faults = ref([])
 const busy = ref('')
 const autoSync = ref(true)
+const view = ref('console')
 
 watch(token, (value) => {
   localStorage.setItem(TOKEN_STORAGE_KEY, value)
@@ -82,18 +84,6 @@ const healthyContainers = computed(
   () => steadyContainers.value.filter((item) => item.state === 'running').length
 )
 const trafficRunning = computed(() => Boolean(traffic.value?.running))
-
-function describeError(err) {
-  if (err instanceof ApiError) {
-    if (err.status === 401) return '401 未授权：X-Lab-Token 不正确，修改令牌后重试。'
-    if (err.status === 403) return `403 禁止访问：${err.message}`
-    if (err.status === 404) return `404 未找到：${err.message}`
-    if (err.status === 409) return `409 状态冲突：${err.message}`
-    if (err.status === 503) return `503 服务不可用：${err.message}`
-    return `${err.status}：${err.message}`
-  }
-  return err?.message || '请求失败，请检查网络或控制器状态。'
-}
 
 function stateClass(state) {
   return state === 'running' ? 'ok' : 'warn'
@@ -272,6 +262,18 @@ watch(autoSync, (enabled) => {
   }
 })
 
+// The thread page owns its own 5s poll (same busy rule); only one view polls.
+watch(view, (value) => {
+  if (value === 'console') {
+    syncEnvironment()
+    if (autoSync.value) {
+      startPolling()
+    }
+  } else {
+    stopPolling()
+  }
+})
+
 async function reloadAll() {
   await checkHealth()
   await Promise.all([syncEnvironment(), refreshScenarios(), refreshContainers()])
@@ -305,7 +307,25 @@ onBeforeUnmount(stopPolling)
       </div>
     </header>
 
+    <nav class="console-nav" aria-label="控制台视图">
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: view === 'console' }"
+        data-testid="nav-console"
+        @click="view = 'console'"
+      >实验操作台</button>
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: view === 'thread' }"
+        data-testid="nav-thread"
+        @click="view = 'thread'"
+      >线程实验室</button>
+    </nav>
+
     <main class="content">
+      <template v-if="view === 'console'">
       <section class="status-bar">
         <div class="status-item">
           <span class="status-label">向导</span>
@@ -461,6 +481,9 @@ onBeforeUnmount(stopPolling)
           <p class="hint">只读 · tail 1–1000 · 经 Docker API 读取 stdout/stderr</p>
         </section>
       </div>
+      </template>
+
+      <ThreadLab v-else :token="token.trim()" :active="view === 'thread'" />
     </main>
 
     <footer class="footer">

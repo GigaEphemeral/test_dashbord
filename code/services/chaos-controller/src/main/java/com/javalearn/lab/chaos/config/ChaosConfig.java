@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.annotation.ChaosAnnotator;
 import com.javalearn.lab.chaos.annotation.HttpGrafanaAnnotator;
 import com.javalearn.lab.chaos.annotation.NoOpChaosAnnotator;
+import com.javalearn.lab.chaos.appproxy.AppProxyGateway;
+import com.javalearn.lab.chaos.appproxy.AppProxyService;
+import com.javalearn.lab.chaos.appproxy.HttpAppProxyGateway;
 import com.javalearn.lab.chaos.cluster.MysqlClusterMonitor;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.toxiproxy.HttpToxiproxyGateway;
 import com.javalearn.lab.chaos.toxiproxy.ToxiproxyGateway;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -58,6 +62,23 @@ public class ChaosConfig {
     @Bean
     public ToxiproxyGateway toxiproxyGateway(ChaosProperties properties, ObjectMapper objectMapper) {
         return new HttpToxiproxyGateway(properties.getToxiproxy(), objectMapper);
+    }
+
+    /**
+     * Thread-lab proxy (console → controller → one app instance). The gateway
+     * receives the controller's own {@code lab.token}; callers never supply it.
+     * No app URL is hardcoded: scheme/port/instance list come from
+     * {@code chaos.app-proxy.*}.
+     */
+    @Bean
+    public AppProxyGateway appProxyGateway(ChaosProperties properties, ObjectMapper objectMapper,
+                                           @Value("${lab.token}") String labToken) {
+        return new HttpAppProxyGateway(properties.getAppProxy(), labToken, objectMapper);
+    }
+
+    @Bean
+    public AppProxyService appProxyService(ChaosProperties properties, AppProxyGateway appProxyGateway) {
+        return new AppProxyService(properties.getAppProxy(), appProxyGateway);
     }
 
     /**

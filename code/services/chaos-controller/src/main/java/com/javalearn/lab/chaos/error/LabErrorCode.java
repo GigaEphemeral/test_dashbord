@@ -4,7 +4,9 @@ import com.javalearn.lab.common.ErrorCode;
 
 public enum LabErrorCode implements ErrorCode {
 
-    FORBIDDEN("40301", "Forbidden");
+    FORBIDDEN("40301", "Forbidden"),
+    METHOD_NOT_ALLOWED("40501", "Method not allowed"),
+    BAD_GATEWAY("50201", "Bad gateway");
 
     private final String code;
     private final String message;

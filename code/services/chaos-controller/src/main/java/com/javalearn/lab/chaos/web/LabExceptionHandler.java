@@ -1,9 +1,13 @@
 package com.javalearn.lab.chaos.web;
 
+import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
+import com.javalearn.lab.chaos.error.AppResponseNotJsonException;
+import com.javalearn.lab.chaos.error.AppUnreachableException;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
+import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
@@ -13,6 +17,7 @@ import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
 import com.javalearn.lab.chaos.error.ToxiproxyNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyUnavailableException;
+import com.javalearn.lab.chaos.error.UnknownAppInstanceException;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import org.slf4j.Logger;
@@ -20,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -114,5 +120,47 @@ public class LabExceptionHandler {
         log.warn("Toxiproxy operation failed: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Result.failure(CommonErrorCode.SERVICE_UNAVAILABLE, ex.getMessage()));
+    }
+
+    // ---------------------------------------------------- thread-lab proxy
+
+    @ExceptionHandler(UnknownAppInstanceException.class)
+    public ResponseEntity<Result<Void>> handleUnknownAppInstance(UnknownAppInstanceException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    /** Deny-by-default: an off-list path is indistinguishable from a missing one. */
+    @ExceptionHandler(AppPathNotAllowedException.class)
+    public ResponseEntity<Result<Void>> handleAppPathNotAllowed(AppPathNotAllowedException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidAppProxyRequestException.class)
+    public ResponseEntity<Result<Void>> handleInvalidAppProxyRequest(InvalidAppProxyRequestException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(AppUnreachableException.class)
+    public ResponseEntity<Result<Void>> handleAppUnreachable(AppUnreachableException ex) {
+        log.warn("App proxy target unreachable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Result.failure(CommonErrorCode.SERVICE_UNAVAILABLE, ex.getMessage()));
+    }
+
+    @ExceptionHandler(AppResponseNotJsonException.class)
+    public ResponseEntity<Result<Void>> handleAppResponseNotJson(AppResponseNotJsonException ex) {
+        log.warn("App proxy upstream returned a non-JSON answer: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Result.failure(LabErrorCode.BAD_GATEWAY, ex.getMessage()));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Result.failure(LabErrorCode.METHOD_NOT_ALLOWED,
+                        "Method '" + ex.getMethod() + "' is not allowed; the proxy forwards GET and POST only"));
     }
 }

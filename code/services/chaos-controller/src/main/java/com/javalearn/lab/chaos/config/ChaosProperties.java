@@ -59,6 +59,8 @@ public class ChaosProperties {
 
     private final Toxiproxy toxiproxy = new Toxiproxy();
 
+    private final AppProxy appProxy = new AppProxy();
+
     /**
      * Fails the context fast on a nonsensical probe configuration instead of
      * surfacing it as a recurring probe failure at runtime.
@@ -66,6 +68,7 @@ public class ChaosProperties {
     @PostConstruct
     public void validate() {
         toxiproxy.validate();
+        appProxy.validate();
         mysqlCluster.validate();
     }
 
@@ -155,6 +158,126 @@ public class ChaosProperties {
 
     public Toxiproxy getToxiproxy() {
         return toxiproxy;
+    }
+
+    public AppProxy getAppProxy() {
+        return appProxy;
+    }
+
+    /**
+     * Narrow forwarding of the app-tier thread lab ({@code /lab/thread/**}) to
+     * one application instance. Nginx deliberately never proxies the app's
+     * {@code /lab/**} paths, so this controller-side hop is the console's only
+     * way in; it is therefore limited to an instance allow-list, a path
+     * allow-list, GET+POST and the shared token.
+     */
+    public static class AppProxy {
+
+        /** App instance host names this proxy may reach; anything else is a 404. */
+        private List<String> instances = new ArrayList<>(List.of("app-1", "app-2", "app-3"));
+
+        /** Transport to the app instance; http on jl-net, https only for completeness. */
+        private String scheme = "http";
+
+        /** App HTTP port. */
+        private int port = 8080;
+
+        /** TCP connect timeout for one forwarded call. */
+        private int connectTimeoutSeconds = 2;
+
+        /** Whole-request timeout for one forwarded call. */
+        private int requestTimeoutSeconds = 10;
+
+        /** Upper bound for the forwarded request body (the fault JSON is tiny). */
+        private int maxRequestBytes = 8192;
+
+        public List<String> getInstances() {
+            return instances;
+        }
+
+        public void setInstances(List<String> instances) {
+            this.instances = instances;
+        }
+
+        public String getScheme() {
+            return scheme;
+        }
+
+        public void setScheme(String scheme) {
+            this.scheme = scheme;
+        }
+
+        public int getPort() {
+            return port;
+        }
+
+        public void setPort(int port) {
+            this.port = port;
+        }
+
+        public int getConnectTimeoutSeconds() {
+            return connectTimeoutSeconds;
+        }
+
+        public void setConnectTimeoutSeconds(int connectTimeoutSeconds) {
+            this.connectTimeoutSeconds = connectTimeoutSeconds;
+        }
+
+        public int getRequestTimeoutSeconds() {
+            return requestTimeoutSeconds;
+        }
+
+        public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
+            this.requestTimeoutSeconds = requestTimeoutSeconds;
+        }
+
+        public int getMaxRequestBytes() {
+            return maxRequestBytes;
+        }
+
+        public void setMaxRequestBytes(int maxRequestBytes) {
+            this.maxRequestBytes = maxRequestBytes;
+        }
+
+        /** Typed startup validation; messages name the property and its env variable. */
+        public void validate() {
+            if (instances == null || instances.isEmpty()) {
+                throw new IllegalStateException("chaos.app-proxy.instances must list at least one app instance; "
+                        + "env CHAOS_APP_PROXY_INSTANCES");
+            }
+            Set<String> seen = new HashSet<>();
+            for (String instance : instances) {
+                if (instance == null || !CONTAINER_NAME.matcher(instance).matches()) {
+                    throw new IllegalStateException("chaos.app-proxy.instances contains an invalid instance name '"
+                            + instance + "' (expected " + CONTAINER_NAME.pattern() + "); env CHAOS_APP_PROXY_INSTANCES");
+                }
+                if (!seen.add(instance)) {
+                    throw new IllegalStateException("chaos.app-proxy.instances contains duplicate instance '"
+                            + instance + "'");
+                }
+            }
+            String normalizedScheme = scheme == null ? "" : scheme.trim().toLowerCase();
+            if (!("http".equals(normalizedScheme) || "https".equals(normalizedScheme))) {
+                throw new IllegalStateException("chaos.app-proxy.scheme must be http or https (was '"
+                        + scheme + "'); env CHAOS_APP_PROXY_SCHEME");
+            }
+            if (port < 1 || port > 65535) {
+                throw new IllegalStateException("chaos.app-proxy.port must be between 1 and 65535 (was "
+                        + port + "); env CHAOS_APP_PROXY_PORT");
+            }
+            if (connectTimeoutSeconds < 1 || connectTimeoutSeconds > 60) {
+                throw new IllegalStateException("chaos.app-proxy.connect-timeout-seconds must be between 1 and 60 (was "
+                        + connectTimeoutSeconds + "); env CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS");
+            }
+            if (requestTimeoutSeconds < 1 || requestTimeoutSeconds > 60) {
+                throw new IllegalStateException("chaos.app-proxy.request-timeout-seconds must be between 1 and 60 (was "
+                        + requestTimeoutSeconds + "); env CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS");
+            }
+            if (maxRequestBytes < 1 || maxRequestBytes > 1_048_576) {
+                throw new IllegalStateException("chaos.app-proxy.max-request-bytes must be between 1 and 1048576 (was "
+                        + maxRequestBytes + "); env CHAOS_APP_PROXY_MAX_REQUEST_BYTES");
+            }
+        }
     }
 
     /**

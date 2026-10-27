@@ -104,6 +104,18 @@ chaos:
     max-bandwidth-kbps: ${CHAOS_TOXIPROXY_MAX_BANDWIDTH_KBPS:10240}
     default-timeout-ms: ${CHAOS_TOXIPROXY_DEFAULT_TIMEOUT_MS:1000}
     max-timeout-ms: ${CHAOS_TOXIPROXY_MAX_TIMEOUT_MS:60000}
+  # Narrow proxy to the app tier's /lab/thread/** API (thread console). Nginx
+  # deliberately does not proxy app /lab/** paths, so the console reaches the
+  # thread lab only through this controller hop. The instance allow-list and the
+  # path allow-list in AppProxyService are the security boundary; GET and POST
+  # are the only forwarded methods.
+  app-proxy:
+    instances: ${CHAOS_APP_PROXY_INSTANCES:app-1,app-2,app-3}
+    scheme: ${CHAOS_APP_PROXY_SCHEME:http}
+    port: ${CHAOS_APP_PROXY_PORT:8080}
+    connect-timeout-seconds: ${CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS:2}
+    request-timeout-seconds: ${CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS:10}
+    max-request-bytes: ${CHAOS_APP_PROXY_MAX_REQUEST_BYTES:8192}
   # MySQL InnoDB Cluster membership metrics for panel D11 (design §8.3).
   # Read-only: one SELECT every interval through `docker exec` into one node.
   # Enabled by default so the db-ha stack exposes the metrics without extra
