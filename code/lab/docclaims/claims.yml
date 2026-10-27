@@ -163,6 +163,20 @@
   expect: true
   last_verified: 2026-10-27
 
+# step-53: the JDK 8 shell now produces the same five-file bundle with the
+# JDK 8 tools (jstack/jmap) behind the token-guarded /lab/snapshot endpoints.
+- id: jdk8-snapshot-capability
+  polarity: positive
+  doc:
+    - doc/process/step-53-jdk8-snapshots.md
+  statement: "JDK 8 外壳已实现 jstack/jmap 快照能力（token 保护的 POST/GET /lab/snapshot，五件套与 JDK 21 同构，见 step-53）"
+  verify:
+    kind: file_contains
+    path: code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/lab/snapshot/SnapshotCommands.java
+    pattern: "getJstackPath\\(\\)"
+  expect: true
+  last_verified: 2026-10-27
+
 - id: ha-acceptance-script-exists
   doc:
     - doc/process/step-45-ha-acceptance-script.md
