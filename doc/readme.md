@@ -3,6 +3,8 @@
 > 这是一个**教学演示**用的本地实验室，不是生产秒杀系统。
 > 目标是固定的一条链路：**制造缺陷/故障 → 观察症状 → 执行处理 → 对比效果**，任何实验都应在 5 分钟内完成。
 > 不做权限体系、审计、多租户、真实支付；不做录屏/旁白，讲解文字在操作台与本文档里。
+> **Stage2** 正在把这套能力整合为可由 UI 配置、启动、注入故障、压测、实时观测、对比和复盘的演练工作台（见 §10）；
+> 本文档其余章节描述的都是 Stage1 已实现的现状，Stage2 规划中的能力一律标明「规划，未实现」。
 
 ---
 
@@ -41,12 +43,13 @@ doc/
   design/
     Stage1/               总体设计、数据库方案对比 + details/01–11（每篇带代码对照表）
                           + diagrams/（Mermaid 图集）
-    Stage2/               本轮改造方案稿（开工时写入）
+    Stage2/               需求基线 v1（stage2-需求.md）+ 改造方案 v1.2（stage2改造方案.md）
     工程规约.md / 安装与打包手册.md / OpenCodeReview-使用手册.md
   process/
     Stage1/               step-*.md 每步交接、benchmark/（压测结果页）、snapshots/（线程快照，
                           .gitignore 忽略）、snapshot-analysis-template.md、retrospective
-    Stage2/               本轮改造的架构现状、交接与开发计划
+    Stage2/               架构现状与功能清单（事实底座）、stage2-开发测试与验收计划、
+                          后续 step-*.md 每步交接
     STAGE-01阶段交接-2026-10-26.md   Stage1 收口现状（已知缺陷与 TODO 的落点）
     交接模板.md
   avoid_common_error/     真实踩过的坑（index.md + 每坑一篇），原 doc/避坑/
@@ -516,7 +519,30 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 
 ---
 
-## 10. 文档地图
+## 10. Stage2 建设规划（规划中，未实现）
+
+Stage2 的需求基线与改造方案在 `doc/design/Stage2/`，事实底座在 `doc/process/Stage2/架构现状与功能清单.md`，
+开发/测试/验收计划在 `doc/process/Stage2/stage2-开发测试与验收计划.md`。**本节只做导览：下列能力当前均未实现，
+本文档其余章节（§3–§9）描述的都是 Stage1 现状。**
+
+Stage2 的核心是把 Stage1 已有能力整合成一条 UI 可完成的闭环：**配置实例与 JVM/缓存参数 → UI 启动 k6 → 注入/恢复故障 →
+按实例与时间窗观测 → 对比任意两次 run → 业务对账与归档**。实施批次与验收口径（改造方案 §11/§12）：
+
+| 批次 | 内容 | 验收重点 |
+|---|---|---|
+| B0 | Stage1 基线修复与指标可用性审计（**B1 的硬性前置门禁**） | 关键指标有真实序列或明确标未接线；不得用固定 0 冒充结果 |
+| B1 | 持久化实验台账、run 状态机、`operationId`、环境锁、崩溃恢复 | 刷新/重启后状态可恢复；无数据不显示成 0 |
+| B2 | 统一 k6 执行层（UI/CLI 同源）、流量归因（via-nginx / target-instance）、故障闭环 | UI 发起压测无需终端；超时动作状态可追踪 |
+| B3 | 缓存实验：独立 Caffeine L1 开关、L2 TTL 外置、目标/实际键数核验、SCAN 分页键查询、业务对账 | L1 开/关公平对照；正常关闭与 Redis 故障不混淆 |
+| B4 | 每实例 JDK/JVM/GC/业务线程池配置闭环：白名单校验、受控重建、健康确认、失败回滚、稳定期 | 实际运行镜像与有效参数可证明；同代码不同配置可比 |
+| B5 | 拓扑负载热度、实例分流统计、重复 N 次实验、A01–A32 全量验收 | 核心 UI 数据来自真实指标；对账失败能反映在报告 |
+
+首期范围已确认（需求 §十一）：台账复用栈内 MySQL、控制台一次性重构为侧边导航工作区、内置 1 万条固定 seed 商品；
+`stress`/`soak` UI、bandwidth 毒性、镜像完整溯源、JDK 8 热配置回读**移入 Future，首期不做**（方案 §15）。
+
+---
+
+## 11. 文档地图
 
 | 想去哪 | 去哪 |
 |---|---|
@@ -525,6 +551,9 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 | 细节设计（逐功能 + 代码对照） | `doc/design/Stage1/details/`（01–11，索引在 README，缺口清单在 §3.2） |
 | 图集（Mermaid，可编辑） | `doc/design/Stage1/details/diagrams/` |
 | 每步交接与证据 | `doc/process/Stage1/step-*.md`、`doc/process/STAGE-01阶段交接-2026-10-26.md` |
+| Stage2 需求基线与改造方案 | `doc/design/Stage2/stage2-需求.md`、`doc/design/Stage2/stage2改造方案.md` |
+| Stage2 事实底座（架构现状与功能清单） | `doc/process/Stage2/架构现状与功能清单.md` |
+| Stage2 开发/测试/验收计划 | `doc/process/Stage2/stage2-开发测试与验收计划.md` |
 | 踩过的坑 | `doc/avoid_common_error/index.md`（18 条） |
 | 工程规约（配置外置、交接、评审） | `doc/design/工程规约.md` |
 | 压测场景与 k6 环境变量 | `code/lab/k6/README.md` |
