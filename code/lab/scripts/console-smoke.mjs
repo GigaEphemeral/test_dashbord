@@ -100,7 +100,14 @@ async function restoreLabState(page) {
   } catch (err) {
     console.log(`WARN  could not reset the guide: ${err.message}`);
   }
-  if (page) {
+  // Thread faults are injected through the narrow proxy; stop-all is idempotent
+  // and also clears a fault left behind by a crashed previous run.
+  try {
+    await apiPost('/chaos/app/app-1/lab/thread/stop-all');
+  } catch (err) {
+    console.log(`WARN  could not stop thread faults: ${err.message}`);
+  }
+  if (page && (await page.getByTestId('wizard-refresh').count()) > 0) {
     try {
       await page.getByTestId('wizard-refresh').click({ timeout: 5000 });
     } catch {
@@ -210,6 +217,49 @@ async function main() {
       const logs = ((await page.getByTestId('log-view').textContent()) || '').trim();
       return { ok: logs.length > 20, detail: `${logs.length} chars` };
     });
+
+    // --- Thread lab page (proxy + 5s poll) --------------------------------
+    const demoStates = ['NEW', 'RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING', 'TERMINATED'];
+    await page.getByTestId('nav-thread').click();
+    await expectCondition('thread lab page opens with the six-state display', async () => {
+      const threadPage = page.getByTestId('thread-page');
+      if ((await threadPage.count()) === 0) {
+        return { ok: false, detail: 'thread page not rendered' };
+      }
+      const pageText = (await threadPage.textContent()) || '';
+      const statePill = ((await page.getByTestId('thread-lifecycle-state').textContent()) || '').trim();
+      const ok = demoStates.every((state) => pageText.includes(state))
+        && demoStates.includes(statePill);
+      return { ok, detail: `state=${statePill}` };
+    });
+
+    await page.getByTestId('thread-mode').selectOption('cpu-burn');
+    await page.getByTestId('thread-hold').selectOption('auto');
+    await page.getByTestId('thread-ttl').fill('5');
+    await page.getByTestId('thread-inject').click();
+    await expectCondition('injected cpu-burn fault is listed as ACTIVE', async () => {
+      const row = page.getByTestId('thread-fault-cpu-burn');
+      if ((await row.count()) === 0) {
+        return { ok: false, detail: 'not listed' };
+      }
+      const text = (await row.textContent()) || '';
+      return { ok: text.includes('ACTIVE') && text.includes('auto'), detail: text.trim() };
+    });
+
+    await page.getByTestId('thread-stop-cpu-burn').click();
+    await expectCondition('stopping the fault empties the thread fault list', async () => ({
+      ok: (await page.getByTestId('thread-fault-cpu-burn').count()) === 0,
+    }));
+
+    const leftoverResponse = await fetch(`${API_BASE}/chaos/app/app-1/lab/thread/state`, {
+      headers: { 'X-Lab-Token': LAB_TOKEN },
+    });
+    const leftover = await leftoverResponse.json();
+    check(
+      'proxy reports no active thread fault after cleanup',
+      Array.isArray(leftover.data) && leftover.data.length === 0,
+      JSON.stringify(leftover.data),
+    );
 
     check('no in-page error banner', (await page.getByTestId('error-banner').count()) === 0);
     check('no uncaught page errors', pageErrors.length === 0, pageErrors.join(' | '));
