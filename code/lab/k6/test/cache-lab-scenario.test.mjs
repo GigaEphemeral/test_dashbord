@@ -48,7 +48,32 @@ test('cache-lab reads seeded ids for the whole mode schedule', () => {
   assert.equal(scenarios.modes.iterations, 1);
   assert.equal(scenarios.modes.startTime, '0s');
   assert.equal(scenarios.modes.exec, 'modeTimeline');
+  // k6 defaults per-vu-iterations to maxDuration 10m, which silently truncated
+  // an 8-mode timeline. The budget must be derived from the dwell instead.
+  assert.equal(scenarios.modes.maxDuration, '70000ms');
   assert.equal(typeof scenario.teardown, 'function');
+});
+
+test('the mode budget grows with the dwell instead of staying at k6\'s 10m default', async () => {
+  const mod = await importWithEnv('timeline-budget', {
+    CACHE_LAB_MODE_DURATION: '90s',
+  });
+  const modes = mod.options.scenarios.modes;
+  assert.equal(mod.cacheLabConfig.readDurationMs, 8 * 90 * 1000);
+  assert.equal(modes.maxDuration, `${8 * 90 * 1000 + 30000}ms`);
+  assert.ok(
+    Number.parseInt(modes.maxDuration, 10) > mod.cacheLabConfig.readDurationMs,
+    'the timeline needs room for the final off reset',
+  );
+
+  const tightened = await importWithEnv('timeline-slack', {
+    CACHE_LAB_MODE_DURATION: '90s',
+    CACHE_LAB_TIMELINE_SLACK: '45s',
+  });
+  assert.equal(
+    tightened.options.scenarios.modes.maxDuration,
+    `${8 * 90 * 1000 + 45000}ms`,
+  );
 });
 
 test('the default mode list is the canonical off..db-fallback order', () => {

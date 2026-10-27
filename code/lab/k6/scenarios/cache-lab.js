@@ -353,6 +353,11 @@ const paths = {
 
 const readDurationMs = modes.length * modeDuration.ms;
 const readDuration = { raw: `${readDurationMs}ms`, ms: readDurationMs };
+// `per-vu-iterations` defaults to maxDuration 10m and then interrupts the
+// timeline mid-loop: with 8 modes and a 90s dwell the eighth never armed.
+// The budget has to be derived, because the dwell is what the caller tunes.
+const timelineSlack = duration('CACHE_LAB_TIMELINE_SLACK', '30s');
+const timelineMaxMs = readDurationMs + timelineSlack.ms;
 const runStartedAt = Date.now();
 
 export const cacheLabConfig = Object.freeze({
@@ -362,6 +367,7 @@ export const cacheLabConfig = Object.freeze({
   modeDurationMs: modeDuration.ms,
   readDuration: readDuration.raw,
   readDurationMs: readDuration.ms,
+  timelineMaxDurationMs: timelineMaxMs,
   readVus,
   thinkTimeSeconds: thinkTime.ms / 1000,
   seedStartId,
@@ -432,6 +438,7 @@ export const options = {
       vus: 1,
       iterations: 1,
       startTime: '0s',
+      maxDuration: `${timelineMaxMs}ms`,
       gracefulStop: config.gracefulStop,
       exec: 'modeTimeline',
     },
