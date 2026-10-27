@@ -52,7 +52,8 @@ public final class SeckillMetrics {
                 "Seckill order messages processed by the consumer",
                 List.of(CONSUMER_CREATED, CONSUMER_DUPLICATE, CONSUMER_FAILED));
         this.stockOversold = Counter.builder("stock_oversold")
-                .description("Oversell assertion metric; must stay zero")
+                .description("Oversell attempts prevented by the conditional stock "
+                        + "update (0 rows affected)")
                 .register(meterRegistry);
         this.orderAcceptTimer = Timer.builder("order_accept_seconds")
                 .description("Async seckill acceptance latency (lock, idempotency, stock, publish)")
@@ -72,8 +73,11 @@ public final class SeckillMetrics {
     }
 
     /**
-     * Exposed for the acceptance test that asserts oversell never happened.
-     * Production code must never increment it.
+     * Counts oversell attempts refused by the database guard. The single
+     * increment site is {@code JpaInventoryRepositoryAdapter.reserve}, where
+     * the conditional stock UPDATE matched zero rows; this eager registration
+     * only guarantees the exported {@code stock_oversold_total} series exists
+     * at zero before the first prevented attempt.
      */
     public Counter stockOversold() {
         return stockOversold;
