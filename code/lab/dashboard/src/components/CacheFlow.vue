@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatPercent, formatRate } from '../labModel'
 
 const props = defineProps({
@@ -82,12 +82,15 @@ function trackElements() {
 function measure() {
   for (const [key, el] of Object.entries(trackElements())) {
     if (!el) continue
+    const elements = Array.from(el.querySelectorAll('.flow-particle'))
     const existing = frames.get(key)
-    if (existing) {
+    // The v-if layer is mounted only once `available` is true; a fresh element
+    // list means the old frames are detached and must be rebuilt.
+    if (existing && existing.elements.length === elements.length
+      && existing.elements[0] === elements[0]) {
       existing.width = el.clientWidth
       continue
     }
-    const elements = Array.from(el.querySelectorAll('.flow-particle'))
     frames.set(key, {
       elements,
       positions: elements.map((_, index) => index / Math.max(1, elements.length)),
@@ -96,6 +99,28 @@ function measure() {
     })
   }
 }
+
+function observeTracks() {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!observer) observer = new ResizeObserver(() => measure())
+  observer.disconnect()
+  for (const el of Object.values(trackElements())) {
+    if (el) observer.observe(el)
+  }
+}
+
+// On first visit the cache query is still in flight, so the flow board (and its
+// tracks) renders after mount. Measure again when the data arrives, otherwise
+// the tracked element list stays empty and the particles never get a transform.
+watch(available, async (value) => {
+  if (!value) {
+    frames.clear()
+    return
+  }
+  await nextTick()
+  measure()
+  observeTracks()
+})
 
 function targetSpeed(rate) {
   if (!Number.isFinite(rate) || rate <= 0) return 0
@@ -130,12 +155,7 @@ function tick(ts) {
 onMounted(async () => {
   await nextTick()
   measure()
-  if (typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(() => measure())
-    for (const el of Object.values(trackElements())) {
-      if (el) observer.observe(el)
-    }
-  }
+  observeTracks()
   rafId = requestAnimationFrame(tick)
 })
 
