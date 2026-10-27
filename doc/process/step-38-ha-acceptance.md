@@ -45,6 +45,8 @@ M3 的三条验收项里，**场景 8（Redis Sentinel 切换）已有真机证�
 
 1. **无 `step-31`**：Router 切主、被踢节点 clone 重加入、应用经 Router 的错误窗口都没有活体验证；step-25b 第 54 行明确标注未验证。
 2. **Prometheus 抓取未接线**：`code/lab/docker/prometheus/mysql-ha-scrape.yml` 是惰性文件，`prometheus.yml` 没有 `scrape_config_files`，`mysqld-exporter-ha` 这个 job 目前不存在。D11 的 `mysql_up` 面板在接线前恒为空。
+
+> 后续：该缺口已由本文「补充（2026-10-27）」的 `c192a0a` 落地（job 内联进 `prometheus.yml`），见下文。
 3. **应用 `MYSQL_MODE=router` 只有单测**（step-29），未在活栈上确认写池→6446、读池→6447。
 4. **datastore 白名单默认拒绝 MySQL**：`CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` 默认 `^jl-redis-[1-3]$`，对 `jl-mysql-*` 的 kill 会 403。放宽是**安全边界变更**，需显式决定。
 
@@ -145,6 +147,8 @@ M3 完成标志是"场景 1、8、9 通过"，当前 1/8 通过、9 待执行，
 ## 缺陷与限制
 
 1. **`mysql-ha-scrape.yml` 未接线**：文件头写明是惰性文件，需在主 `prometheus.yml` 加 `scrape_config_files` 两行；本任务边界禁止改 provisioning/配置，故 D11 的 `mysql_up` 面板与 `instance` 变量在接线前为空。
+
+> 后续：已改为 `prometheus.yml` 内联 `mysqld-exporter-ha`（`c192a0a`），见「补充（2026-10-27）」。
 2. **MySQL 切主未演练**：没有 step-31，Router 8.4 切主、6446 跟随、被踢节点 clone 重加入均无实测证据。
 3. **应用 Router 模式未活体验证**：step-29 只有上下文/端点单测；写池 6446、读池 6447 的行为未在真栈确认。
 4. **探针容器与 kill 目标冲突**：探针默认在 `jl-mysql-1`，若杀主恰好是它，`probe_up=0` 且拓扑冻结在最后一次成功值。演练前必须把 `CHAOS_MYSQL_CLUSTER_CONTAINER` 指到存活节点，否则 D11 无法区分"探针坏了"与"集群降级"。
@@ -159,6 +163,8 @@ M3 完成标志是"场景 1、8、9 通过"，当前 1/8 通过、9 待执行，
 ## (e) 待定
 
 - **Prometheus 接线**（主会话）：`prometheus.yml` 加两行 → `promtool check config` → `/-/reload` → targets 页确认 `mysqld-exporter-ha` 三 member UP。接线后再复核 D11 的 `mysql_up` 与 `instance` 变量。
+
+> 后续：已完成；最终采用内联 job，三节点 `mysql_up=1`，见「补充（2026-10-27）」。
 - **MySQL 切主演练脚本化**：目前只能手工 curl + 轮询。若要把场景 9 固化成 `code/lab/scenarios/*.json`，需要新增 `mysql-failover` 场景（Java/脚本改动，超出本任务）。
 - **Router 指标**：若后续需要真正的 Router 面板，应在 Router 侧启用 metrics 端点（若镜像支持）或由 exporter 采集，而不是在 Grafana 里伪造；同时需考虑第二个 Router 实例消除单点。
 - **Sentinel 抓取**：若要画 Sentinel 拓扑，需要为 `jl-redis-*-exporter` 与 sentinel 新增 scrape job，并解决 master 漂移后 target 与角色标签的对应关系（端口固定、角色在变）。

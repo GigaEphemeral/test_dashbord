@@ -327,8 +327,7 @@ curl -sS http://127.0.0.1:8080/lab-api/chaos/actions -H "X-Lab-Token: $LAB_TOKEN
    商品读先命中 Caffeine L1（`expireAfterWrite=60s`）。停主后，L1 仍能返回旧值，Redis 故障在用户侧被延后甚至看不见；只有 L1 miss 的请求才会走到 Redis 并暴露切换窗口。教学时要么先等待/清空 L1，要么明确说明“看起来无感”有一部分来自 L1。该 TTL 目前是 Java 常量，不在配置外置范围内，属于既有硬编码。
 3. **异步复制丢写不能用 `docker stop` 稳定复现**
    `stop` 走正常关闭，复制链有机会追平；要演示“切换丢最近写入”，应使用 `docker kill`（强制终止）而不是把 `stop` 包装成“丢写”。场景 JSON 使用 `kill` 动作（Docker stop 语义）是为了回归干净，不代表丢写已复现。
-4. **控制台驱动的活体演练尚未落地**
-   拓扑级手工演练（step-24a）与应用级演练（step-24b）有实测时间线；`redis-sentinel-failover` 场景虽已通过校验并能逐步执行，但 step-24c 明确“活体验收未做”，且 allow-list 的 compose 接线缺失，控制台路径当前不可直接演示。**未实现/待补**，不要引用为已验收能力。
+4. **控制台驱动的活体演练**：拓扑级手工演练（step-24a）与应用级演练（step-24b/24d）已有实测时间线；`redis-sentinel-failover` 已通过校验并能逐步执行，allow-list 也已由 `58b1e75` 接进 compose（默认 `^jl-(redis|mysql)-[1-3]$`）。控制台路径可直接演示；剩余边界是全组哨兵宕机的降级未演练。
 5. **哨兵全组宕机的活体降级未演练**
    只有 mock 级断言与 Redisson lazy-init；`REDIS_MODE=sentinel` 且所有哨兵不可达时的真实启动/降级证据留给后续任务。
 6. **exporter 未被 Prometheus 抓取**

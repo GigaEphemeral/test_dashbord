@@ -1,9 +1,9 @@
 # 08 · 双 JDK 与 JVM 调优（JDK 21 / JDK 8 对比侧）
 
-> 一句话职责：在同一个 `seckill-core` 之上提供 JDK 21（Boot 3.5）与 JDK 8（Boot 2.7，EOL 教学壳）两个可观测运行时，为将来的 D7 对比准备**同标签、同指标名**的数据面；调优台与 D8 尚未实现。
+> 一句话职责：在同一个 `seckill-core` 之上提供 JDK 21（Boot 3.5）与 JDK 8（Boot 2.7，EOL 教学壳）两个可观测运行时，为 D7 对比提供**同标签、同指标名**的数据面；调优台与 D8 尚未实现。
 > 代码基线：`294798a`
 
-D7 面板、D7 归档流程、JVM 调优台、`bench.sh --jvm/--tuning` 在当前基线中**都不存在**。本文把“已就绪的数据面”和“计划中的 D7 流程”分开写，计划部分一律标注 **未实现**。
+D7 面板与 compose/Prometheus/k6 接线已落地（step-41），D7 正式归档目录、JVM 调优台、`bench.sh --jvm/--tuning` 仍不存在。本文把“已就绪的数据面/D7 面板”和“仍缺的调优台/D8”分开写，缺项仍标注 **未实现**。
 
 ---
 
@@ -41,10 +41,10 @@ flowchart LR
     COMMON --> APP8
     OBS --> APP21
     OBS --> CTRL
-    APP21 -.->|"D7 对比（未实现）"| APP8
+    APP21 -.->|"D7 对比（step-41）"| APP8
 ```
 
-矩阵中的关键事实：`seckill-app-jdk8` 是**独立 jar**（`spring-boot-maven-plugin` repackage），不是同一镜像的第二 profile；仓库里没有它的 compose 服务与 Dockerfile。
+矩阵中的关键事实：`seckill-app-jdk8` 是**独立 jar**（`spring-boot-maven-plugin` repackage），不是同一镜像的第二 profile；仓库已有 `dual-jdk` profile 的 compose 服务与 Dockerfile（step-41）。
 
 ---
 
@@ -154,7 +154,7 @@ flowchart TD
 
 ---
 
-## 5. 计划中的 D7 对比流程（**未实现**）
+## 5. D7 对比流程（已接线；正式归档待补）
 
 ```mermaid
 flowchart TD
@@ -165,9 +165,9 @@ flowchart TD
     P4 --> P5["归档 doc/process/benchmark/jvm-comparison/"]
     P5 --> P6["D7 面板：JDK 8 vs 21"]
 
-    N1["compose 无 seckill-app-jdk8 服务"] -.-> P1
-    N2["bench.sh 无 --jvm 参数<br/>k6 无 jdk8 目标"] -.-> P3
-    N3["D7 面板不存在"] -.-> P6
+    N1["dual-jdk profile 需显式启动"] -.-> P1
+    N2["bench.sh 仍无 --jvm 参数<br/>k6 已提供 d7.js + BASE_URL 直连"] -.-> P3
+    N3["D7 面板已存在（ha-d7）"] -.-> P6
     style N1 fill:#fff3cd,stroke:#d39e00
     style N2 fill:#fff3cd,stroke:#d39e00
     style N3 fill:#fff3cd,stroke:#d19a00
@@ -193,7 +193,7 @@ flowchart TD
 - 依赖 token 的 order/seckill 流程更不可能成功；
 - 只有纯 `product()` 读路径能直接换壳（`BASE_URL` + 可选 `PRODUCTS_PATH`）。
 
-交接文档给了三个处置选项：① 只用不依赖登录的读场景（或新写 product-only 场景，推荐）；② 给 k6 加“禁用登录”开关；③ 给 jdk8 壳补 mock login（会破坏 HTTP 面裁决，需另行评审）。**归属 D7/k6 接线任务，当前未实现。**
+交接文档给了三个处置选项：① 只用不依赖登录的读场景（或新写 product-only 场景，推荐）；② 给 k6 加“禁用登录”开关；③ 给 jdk8 壳补 mock login（会破坏 HTTP 面裁决，需另行评审）。**已由 step-41 的 `d7.js` 按选项①接线。**
 
 ### 6.2 D1/D2/D4 的 job 正则与 `honor_labels`
 
@@ -256,13 +256,13 @@ flowchart TD
 | k6 登录路径 | `login` | `code/lab/k6/lib/config.js:236` | 默认 `/api/login` |
 | k6 登录函数 | `login` | `code/lab/k6/lib/flow.js:31` | POST `config.paths.login` |
 | k6 确保登录 | `ensureLogin` | `code/lab/k6/lib/flow.js:51` | token 为空即登录，JDK 8 上必失败 |
-| D7 未实现（交接） | `compose` | `doc/process/step-33-jdk8-shell.md:61` | 明确列出缺 compose/D7/k6 接线 |
+| D7 未实现（step-33 交接时） | `compose` | `doc/process/step-33-jdk8-shell.md:61` | 当时缺 compose/D7/k6 接线；step-41 已补齐 |
 | jvm_info 缺失（交接） | `jvm_info` | `doc/process/step-33-jdk8-shell.md:62` | 必须改用 `jvm_version` 标签 |
 | 本机只有 JRE 8（交接） | `jre1.8.0_503` | `doc/process/step-33-jdk8-shell.md:64` | 无 javac 8 |
 | 测试在 JDK 25 的非受支持路径（交接） | `JDK 25` | `doc/process/step-33-jdk8-shell.md:65` | 建议统一 JDK 21 |
 | 启动样本不可直接入表（交接） | `Xmx512m` | `doc/process/step-33-jdk8-shell.md:66` | 需同限额 + 多次中位 |
 | k6 登录缺口（交接） | `ensureLogin` | `doc/process/step-33-jdk8-shell.md:73` | 三个处置选项 |
-| 各阶段未实现清单 | `M5` | `doc/process/阶段交接-2026-10-26.md:439` | D6–D8 仍待办 |
+| 各阶段未实现清单（历史） | `M5` | `doc/process/阶段交接-2026-10-26.md:439` | 当时 D6–D8 待办；D6/D7 后已落地，D8 仍缺 |
 
 ---
 
@@ -343,21 +343,21 @@ curl -sG http://127.0.0.1:8080/prom/api/v1/query \
   --data-urlencode 'query=count by (app, jvm_version) (jvm_memory_used_bytes{area="heap"})'
 ```
 
-D7 面板尚不存在，第二步只能看到 JDK 21 的 `app="seckill-app"`；JDK 8 的序列只有在手工起 jar 并配置 Prometheus job 后才会出现——这正是下一节列出的缺口。
+D7 面板已存在（`ha-d7`，step-41），第二步可直接看两侧同图对比；JDK 8 的序列需要 `up.sh --profile dual-jdk` 且 `seckill-app-jdk8` target UP——未启动时该 target 为 down，属预期态。
 
 ---
 
 ## 10. 已知缺陷 / 边界
 
-1. **D7 面板未实现**：`code/lab/docker/grafana/dashboards/` 只有 D1/D2/D3/D4/D9，没有 D7；没有 JDK 8 与 21 的同图对比。
-2. **compose 无 JDK 8 服务**：没有 `seckill-app-jdk8` 的 compose 定义、Dockerfile 或镜像；当前只能手工 `java -jar`。
-3. **k6 未接线第二运行时**：`run.sh` 只认 `smoke|load|stress|spike|soak|ha-failover`，`BASE_URL` 默认 `http://nginx`；没有 `--jvm`/`app` 变量。`bench.sh` 也没有 `--jvm` 参数。
-4. **`ensureLogin()` 缺口**：JDK 8 没有 `/api/login`，所有带登录的 k6 场景都会把 `flow_errors` 打爆；D7 只能用 product-only 场景或先改 k6/壳（见 §6.1）。
+1. **D7 面板已实现（step-41）**：`ha-d7.json` 提供 Targets up、Runtime identity、Startup、吞吐/P95/P99、GC、堆、线程、CPU 与指标缺口说明。
+2. **compose 已有 JDK 8 服务（step-41）**：`seckill-app-jdk8`（`profiles: ["dual-jdk"]`）与 Dockerfile 均已入库，`up.sh --profile dual-jdk` 渲染 17 个服务。
+3. **k6 已接线第二运行时**：`run.sh` 白名单含 `d7`，`scenarios/d7.js` 为无登录读场景，`BASE_URL=http://seckill-app-jdk8:8080` 直连 JDK 8；`bench.sh` 仍只认 `smoke|load|stress|spike|soak`，没有 `--jvm` 参数。
+4. **`ensureLogin()` 缺口已绕过**：JDK 8 没有 `/api/login`；step-41 的 `d7.js` 只做 product 读，不带登录。其他带登录的 k6 场景仍不适用于 JDK 8（见 §6.1）。
 5. **`jvm_info` 不存在**：两侧都不要按 `jvm_info` 写查询；用 `jvm_version` 标签。
 6. **D1/D2/D4 的标签事实**：D1/D2 按 `instance` 过滤且实例变量来自 `job=~"seckill-app.*"`；D4 精确 `job="seckill-app"`；`honor_labels=false` 会覆盖应用 `instance`。新 job 名必须匹配正则，区分两壳靠 `app`。
-7. **`mysql` profile 未对活体 MySQL 验证**：只验证了占位符装配与 demo 启动；首次接线需实跑 `APP_PROFILE=mysql` 并确认 `validate` 通过。
+7. **`mysql` profile 已真机验证**：step-41 以 `APP_PROFILE=mysql` 连共享 MySQL 启动 JDK 8，`ddl-auto=validate` 通过。
 8. **测试不在 JRE 8 上跑**：surefire 跟随 Maven 的 JDK（25 或 21）；JRE 8 只用于启动 jar 的冒烟。
-9. **启动耗时样本不足**：交接只有 5.641s/6.302s 两个裸默认堆样本，未按 §10.2 的同限额、`-Xmx512m`、多次取中位执行，**不得直接进对比表**。
+9. **启动耗时样本仍偏少**：step-41 两侧各 3 次（JDK 8 中位 9.332s、JDK 21 30.517s），但 JDK 21 是并发重建、有 CPU 争用；严格基准应逐实例串行、多轮取中位后再写入 `doc/process/benchmark/jvm-comparison/`。
 10. **JDK 8 侧功能不对等**：没有缓存 L1/L2、穿透防护、线程实验室、toggles、异步秒杀、登录、订单、Flyway；D7 只能比“裸读路径 + JVM/GC/堆/线程/启动”。
 11. **健康组写法不同**：8 侧 `include=db,ping`，21 侧 `exclude=redis`；将来给 8 侧加 contributor 时必须同步 include。
 12. **调优台 / D8 未实现**：设计 §10.3 的 `/tuning` 页面、GC/堆预设、白名单参数、重建容器、参数历史与 `doc/process/benchmark/jvm-tuning/` 在本基线中都没有代码；`chaos-controller` 没有调优端点。
@@ -372,7 +372,7 @@ D7 面板尚不存在，第二步只能看到 JDK 21 的 `app="seckill-app"`；J
 - `doc/design/details/10-操作台与API.md`：`/lab-api/**` 只到 chaos-controller，JDK 8 不暴露 `/lab/**`。
 - `doc/process/step-33-jdk8-shell.md`：JDK 8 外壳交接（含本文件引用的四条 D7 约束）。
 - `doc/design/2026-10-26-ha-concurrency-lab-design.md` §10：双 JDK 与调优台原始设计。
-- `doc/process/阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单。
+- `doc/process/阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单（历史记录；D6/D7 后已落地，D8 仍缺）。
 
 ---
 

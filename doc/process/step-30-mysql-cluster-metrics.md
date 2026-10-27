@@ -67,6 +67,8 @@ increase(mysql_cluster_probe_failure_total{job="chaos-controller"}[5m])
 - **`_info` 后缀被剥**：设计稿写 `mysql_cluster_primary_info`，但 Micrometer 的 Prometheus 命名约定会把 `_info` 剥掉，实际导出名是 `mysql_cluster_primary`。代码常量仍叫 `METRIC_PRIMARY_INFO`，面板与告警必须用导出名；若要严格对齐设计，需改常量名并同步设计文档。
 - **未做真机验证**：本步没跑 Docker，查询语句借用了 `db-cluster-status.sh` 的已验证形式，但「在 chaos-controller 容器内经 docker-java exec、用 `MYSQL_ROOT_PASSWORD` 展开口令」这条完整链路尚未在真栈上跑过；真机验收归 #51c。
 - **D11 面板未建**：本步只交付指标与 PromQL 示例。
+
+> 后续：D11 面板已由 step-38 落地（`ha-d11.json`），见 `doc/process/step-38-ha-acceptance.md`。
 - **探测目标选择**：默认 `jl-mysql-1` 恰是演示里常被杀的节点；演示前应确认「杀主演练」的目标与探测容器不同，或接受短暂 `probe_up=0` 并把它当作教学点（探针视角 vs 集群视角）。
 - **基数**：成员上限 16；`member` 标签取自 `MEMBER_HOST`（compose 用服务名，如 `mysql-1`），不含容器前缀。
 

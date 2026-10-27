@@ -52,13 +52,13 @@
 
 | 能力 | 状态 | 证据 / 说明 |
 |---|---|---|
-| 雪崩策略（`ttl-jitter` / `l1-cache` / 熔断降级 + 限流） | **进行中** | 只有 200 个同 TTL 的 seed 键；截断的代理留下未提交的 Avalanche* 类，收尾任务正在补测试与配置。见 03 §12、`doc/process/step-26-breakdown-defense.md` |
-| Caffeine 热点预热（ZSet、启动/周期预热、`refreshAfterWrite`） | **已合并** | M4-3（`edaa5e2` 等，merge `6e5d776`）；文档 03 的正文章节仍以旧基线描述，正文未改写。 |
-| 线程快照（`jcmd Thread.print -l` / 堆直方图落盘） | **未实现** | 只有 `LoggingLifecycleSnapshotSink` 占位；没有 jcmd 采集与快照目录。见 `doc/process/step-34-thread-lifecycle.md` |
+| 雪崩策略（`ttl-jitter` / `l1-cache` / 熔断降级 + 限流） | **已合并** | `AvalancheProtectionConfig` + `ProductAvalancheDefense` 已接入读路径；seed 提供同 TTL 键用于触发。见 03 §12 |
+| Caffeine 热点预热（ZSet、启动/周期预热、`refreshAfterWrite`） | **已合并** | M4-3（`edaa5e2` 等，merge `6e5d776`）；03 正文章节已同步。 |
+| 线程快照（`jcmd Thread.print -l` / 堆直方图落盘） | **已合并** | `FileLifecycleSnapshotSink` + `ThreadSnapshotService`：freeze 落盘 jcmd bundle、保留策略与 Grafana annotation（step-35）。 |
 | 应用侧 MySQL Router 双数据源（`MYSQL_MODE`） | **已合并（默认 standalone）** | 51a：`DataSourceAccessProperties` + `MySqlModeSwitchTest`；真机 Router 切换验收仍未做。见 `doc/process/step-29-mysql-router-client.md` |
-| 集群状态指标（`mysql_cluster_member_state` / `mysql_cluster_primary_info`） | **未实现** | 截断的代理只在 `ContainerGateway` 留了 exec 能力，探针本体未提交。 |
-| Toxiproxy / `chaos-proxy` | **未实现** | 没有 compose 服务，也没有 chaos-controller 动作；`ChaosActionType` 只有容器动作。见 01 §10 |
-| D6 / D7 / D10 / D11 面板 | **未实现** | 现有 dashboard 只有 `ha-d1`–`ha-d4`、`ha-d9`；D5 由 Tempo UI 承担，D8 也没有独立文件 |
+| 集群状态指标（`mysql_cluster_member_state` / `mysql_cluster_primary_info`） | **已合并** | `MysqlClusterMonitor` 导出 `mysql_cluster_member_state` / `mysql_cluster_primary`（`_info` 被剥）；`mysqld-exporter-ha` job 已内联（step-30/38）。 |
+| Toxiproxy / `chaos-proxy` | **已合并** | `compose.toxiproxy.yml` 覆盖层 + `ToxiproxyController`（toxic/reset/disable/enable，step-39/40）；`up.sh --profile chaos-proxy`。 |
+| D6 / D7 / D10 / D11 面板 | **已合并** | `ha-d6/7/10/11.json` 均已入库（step-36/37/41/38）；D5 由 Tempo UI 承担，D8 仍无独立文件（未实现） |
 | M4-2 评审修复（publish-through / retention 校验） | **已合并** | `34c0dfc` / `426e9c9` / `34c5df0`（2026-10-27） |
 
 ## 4. 文档状态与维护
