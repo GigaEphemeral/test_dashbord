@@ -33,6 +33,13 @@ DOCKER_DIR="${TUNE_DOCKER_DIR:-$ROOT_DIR/code/lab/docker}"
 ENV_FILE="${TUNE_ENV_FILE:-$DOCKER_DIR/.env}"
 K6_RUNNER="${TUNE_K6_RUNNER:-$ROOT_DIR/code/lab/k6/run.sh}"
 RESET_SCRIPT="${TUNE_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
+# Stage2 B0-08 slice A: one `docker inspect` pass over the rebuilt app tier
+# records imageTag + imageId in the result note (minimal loop: no provenance,
+# no base digest pin). The rebuild itself stays explicitly --force-recreate.
+IMAGE_IDENTITY_SCRIPT="${TUNE_IMAGE_IDENTITY_SCRIPT:-$SCRIPT_DIR/image-identity.sh}"
+# Empty means "the app tier this script just recreated" (jl-<service>), resolved
+# in record_image_identity() where APP_SERVICES is already read.
+IMAGE_IDENTITY_CONTAINERS="${TUNE_IMAGE_IDENTITY_CONTAINERS:-}"
 DOC_DIR="${TUNE_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 STATE_FILE="${TUNE_STATE_FILE:-$ROOT_DIR/tmp/tuning-state.env}"
 COMPOSE_PROJECT="${TUNE_COMPOSE_PROJECT:-java-learn-lab}"
@@ -75,6 +82,11 @@ APPLY_IN_PROGRESS=0
 RESTORE_ON_ERR_FLAGS=""
 TUNE_TMP_FILES=()
 
+# Image identity record (B0-08 slice A); filled by record_image_identity().
+IMAGE_IDENTITY_TABLE=""
+IMAGE_IDENTITY_NOTE=""
+IMAGE_IDENTITY_FILE=""
+
 usage() {
   cat <<'EOF'
 Usage: tune.sh --name <profile> --flags "<jvm flags>" [options]
@@ -99,6 +111,9 @@ Behavior:
   * Only app-1/app-2/app-3 are recreated (compose --no-deps
     --force-recreate) with APP_JAVA_TOOL_OPTIONS passed as a compose
     environment override. .env is never edited.
+  * Right after the recreation the imageTag + imageId of those containers are
+    recorded once (image-identity.sh, Stage2 B0-08 minimal loop) into the
+    result note. A record failure only WARNs.
   * The flags currently in the container are saved before the change; the
     first saved baseline is kept until --restore re-applies it.
   * A best-effort Grafana annotation (tags tuning,<profile>, and
@@ -118,6 +133,8 @@ Environment (all optional):
   GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD (else read from .env)
   TUNE_OPERATOR, TUNE_DEFAULT_DURATION=60s
   TUNE_APP_SERVICES="app-1 app-2 app-3" TUNE_APP_PROBE_SERVICE=app-1
+  TUNE_IMAGE_IDENTITY_SCRIPT=code/lab/scripts/image-identity.sh
+  TUNE_IMAGE_IDENTITY_CONTAINERS="" (empty = jl-<each app service>)
   TUNE_NGINX_CONTAINER=jl-nginx  TUNE_NGINX_HEALTH_URL
   TUNE_NGINX_API_PROBE_URL       TUNE_TOXIPROXY_CONTAINER=jl-toxiproxy
 EOF
@@ -347,6 +364,46 @@ apply_flags() {
   RESTORE_ON_ERR_FLAGS=""
 }
 
+# Record the imageTag + imageId of the containers just recreated (B0-08 slice
+# A, minimal loop). Best effort: no Docker or a missing helper only WARNs and
+# leaves the note saying "not recorded" - a tuning run is never lost over it.
+record_image_identity() {
+  IMAGE_IDENTITY_TABLE=""
+  IMAGE_IDENTITY_NOTE=""
+  IMAGE_IDENTITY_FILE=""
+  local containers="${IMAGE_IDENTITY_CONTAINERS:-}"
+  if [[ -z "$containers" ]]; then
+    containers="$(printf 'jl-%s ' "${APP_SERVICES[@]}")"
+  fi
+  if [[ ! -f "$IMAGE_IDENTITY_SCRIPT" ]]; then
+    warn "image identity script not found: $IMAGE_IDENTITY_SCRIPT; imageTag/imageId not recorded."
+    IMAGE_IDENTITY_NOTE="未记录（image-identity.sh 缺失）"
+    return 0
+  fi
+  local out output rc=0
+  out="$(mktemp "${TMPDIR:-/tmp}/tune-image-identity.XXXXXX")"
+  TUNE_TMP_FILES+=("$out")
+  output="$(bash "$IMAGE_IDENTITY_SCRIPT" --out "$out" --containers "$containers" 2>&1)" || rc=$?
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$output"
+  fi
+  if (( rc != 0 )) || [[ ! -s "$out" ]]; then
+    warn "image identity record failed (exit $rc); imageTag/imageId are recorded as unavailable."
+    IMAGE_IDENTITY_NOTE="未记录（docker 不可达或记录失败，exit $rc）"
+    return 0
+  fi
+  IMAGE_IDENTITY_FILE="$out"
+  # One line per container in the hand-written JSON: container/imageTag/imageId/state.
+  IMAGE_IDENTITY_TABLE="$(sed -n \
+    's/^    "\([^"]*\)": {.*"imageTag": "\([^"]*\)".*"imageId": "\([^"]*\)".*"state": "\([^"]*\)".*/| `\1` | `\2` | `\3` | `\4` |/p' \
+    "$out")"
+  if [[ -z "$IMAGE_IDENTITY_TABLE" ]]; then
+    warn "image identity record has no readable container entry."
+    IMAGE_IDENTITY_NOTE="未记录（记录中没有可读的容器项）"
+  fi
+  return 0
+}
+
 annotate() {
   local profile="$1" text="$2" user pass payload status config
   ANNOTATION_STATUS="skipped"
@@ -534,6 +591,7 @@ if [[ "$MODE" == "restore" ]]; then
     exit 0
   fi
   apply_flags "$BASELINE_FLAGS" "restore" "$current" "restore baseline"
+  record_image_identity
   PREVIOUS_FLAGS="$current"
   STATE_PROFILE="restore"
   STATE_UPDATED="$(date +%Y-%m-%dT%H:%M:%S)"
@@ -580,6 +638,8 @@ if [[ "$CURRENT_FLAGS" == "$FLAGS" ]]; then
 else
   apply_flags "$FLAGS" "$NAME" "$CURRENT_FLAGS" "profile $NAME"
 fi
+# The app tier exists in either branch, so the tag/id record always runs.
+record_image_identity
 
 annotate "$NAME" \
   "tuning $NAME: flags=$FLAGS previous=$CURRENT_FLAGS baseline=$BASELINE_FLAGS operator=$OPERATOR scenario=${SCENARIO:-none} duration=${SCENARIO:+$DURATION} run_id=${RUN_ID:-none}"
@@ -628,6 +688,19 @@ mkdir -p "$DOC_DIR"
 FROM_MS=$((START_EPOCH * 1000))
 TO_MS=$((END_EPOCH * 1000))
 
+if [[ -n "$IMAGE_IDENTITY_TABLE" ]]; then
+  IMAGE_IDENTITY_BLOCK="| 容器 | imageTag | imageId | 容器状态 |
+|---|---|---|---|
+$IMAGE_IDENTITY_TABLE
+
+- 取数：\`docker inspect --format '{{.Image}}'\` + \`docker image inspect --format '{{.RepoTags}}'\`，
+  重建（显式 \`--force-recreate\`）之后记录一次。
+- 口径：**只记录 tag/id**，不校验镜像来源、不归档构建日志、不锁 base digest（完整溯源在 Future）。
+- 原始记录：\`$IMAGE_IDENTITY_FILE\`"
+else
+  IMAGE_IDENTITY_BLOCK="- ${IMAGE_IDENTITY_NOTE:-未记录（原因未知）}"
+fi
+
 cat >"$NOTE" <<EOF
 # JVM 调优实验 · $NAME
 
@@ -651,6 +724,10 @@ cat >"$NOTE" <<EOF
 - 重建后等待 healthy，执行 Nginx reload，并探测 \`/health\` 与 \`/api/products/1\`。
 - 还原：\`bash code/lab/scripts/tune.sh --restore\`（基线 $BASELINE_FLAGS）。
 - D8 面板：$GRAFANA_URL/d/ha-d8?from=$FROM_MS&to=$TO_MS&var-instance=All
+
+## 镜像身份（最小记录，B0-08）
+
+$IMAGE_IDENTITY_BLOCK
 
 ## 对比口径
 

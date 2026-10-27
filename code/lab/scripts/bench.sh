@@ -9,7 +9,8 @@
 # One run produces code/lab/k6/reports/<run_id>/:
 #   summary.json  k6 --summary-export output
 #   k6.log        full k6 stdout/stderr
-#   manifest.json scenario/run/git/reset/thresholds/verdict
+#   manifest.json scenario/run/git/reset/thresholds/verdict + image identity
+#   image-identity.json  imageTag + imageId of the key containers (B0-08 slice A)
 #   report.html   self-contained HTML rendered by bench-report.js
 #   reset.log     reset-lab.sh output (when reset ran)
 # and doc/process/Stage1/benchmark/<date>-<scenario>-<run_id>.md.
@@ -26,6 +27,10 @@ K6_DIR="${BENCH_K6_DIR:-$ROOT_DIR/code/lab/k6}"
 K6_RUNNER="${BENCH_K6_RUNNER:-$K6_DIR/run.sh}"
 REPORT_SCRIPT="${BENCH_REPORT_SCRIPT:-$SCRIPT_DIR/bench-report.js}"
 RESET_SCRIPT="${BENCH_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
+IMAGE_IDENTITY_SCRIPT="${BENCH_IMAGE_IDENTITY_SCRIPT:-$SCRIPT_DIR/image-identity.sh}"
+# Key containers whose imageTag + imageId go into the run manifest (B0-08
+# slice A, minimal loop): the app tier plus the chaos controller.
+IMAGE_IDENTITY_CONTAINERS="${BENCH_IMAGE_IDENTITY_CONTAINERS:-jl-app-1 jl-app-2 jl-chaos-controller}"
 REPORTS_DIR="${BENCH_REPORTS_DIR:-$K6_DIR/reports}"
 DOC_DIR="${BENCH_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 ENV_FILE="${BENCH_ENV_FILE:-$ROOT_DIR/code/lab/docker/.env}"
@@ -78,6 +83,10 @@ Environment (defaults):
   K6_IMAGE=grafana/k6:1.3.0        K6_NETWORK=jl-net
   PROM_URL=http://127.0.0.1:8080/prom
   RESET_BASELINE_STOCK=100
+  BENCH_IMAGE_IDENTITY_SCRIPT=code/lab/scripts/image-identity.sh
+  BENCH_IMAGE_IDENTITY_CONTAINERS="jl-app-1 jl-app-2 jl-chaos-controller"
+                                   (imageTag/imageId archive record; degrades to
+                                   "unavailable" when Docker is not reachable)
   BENCH_TRAFFIC_SERVICE=traffic    BENCH_ALLOW_TRAFFIC=0 (1 = bench with the
                                    console background traffic still generating
                                    load)
@@ -313,6 +322,38 @@ RESET_LOG="$RUN_DIR/reset.log"
 git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 git_branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 
+# --- Image identity record (Stage2 B0-08 slice A, minimal loop) --------------
+# ONE `docker inspect` pass over the key containers: imageTag + imageId are
+# written next to the manifest. No build provenance, no base digest pin.
+# Best effort by contract: no Docker, an unreachable daemon or a missing helper
+# only WARNs and the record degrades to "unavailable" - the archive is never
+# lost because of it.
+IMAGE_IDENTITY_FILE="$RUN_DIR/image-identity.json"
+if [[ ! -f "$IMAGE_IDENTITY_SCRIPT" ]]; then
+  printf 'WARN: image identity script not found (%s); imageTag/imageId recorded as "unavailable".\n' \
+    "$IMAGE_IDENTITY_SCRIPT" >&2
+  printf '{"schemaVersion": 1, "dockerAvailable": false, "note": "image-identity.sh missing; minimal record skipped"}\n' \
+    >"$IMAGE_IDENTITY_FILE"
+else
+  set +e
+  image_identity_output="$(
+    bash "$IMAGE_IDENTITY_SCRIPT" \
+      --out "$IMAGE_IDENTITY_FILE" \
+      --containers "$IMAGE_IDENTITY_CONTAINERS" 2>&1
+  )"
+  image_identity_status=$?
+  set -e
+  if [[ -n "$image_identity_output" ]]; then
+    printf '%s\n' "$image_identity_output"
+  fi
+  if (( image_identity_status != 0 )) || [[ ! -f "$IMAGE_IDENTITY_FILE" ]]; then
+    printf 'WARN: image identity record failed (exit %s); imageTag/imageId recorded as "unavailable".\n' \
+      "$image_identity_status" >&2
+    printf '{"schemaVersion": 1, "dockerAvailable": false, "note": "record failed (exit %s)"}\n' \
+      "$image_identity_status" >"$IMAGE_IDENTITY_FILE"
+  fi
+fi
+
 echo "Bench run"
 echo "  scenario : $SCENARIO"
 echo "  run_id   : $RUN_ID"
@@ -394,6 +435,8 @@ report_args=(
   --remote-write "${K6_PROMETHEUS_RW_SERVER_URL:-http://prometheus:9090/api/v1/write}"
   --report-dir "$RUN_DIR"
   --thresholds-expected "$thresholds_expected"
+  --image-identity "$IMAGE_IDENTITY_FILE"
+  --image-identity-containers "$IMAGE_IDENTITY_CONTAINERS"
 )
 for override_name in "${OVERRIDE_NAMES[@]}"; do
   report_args+=(--env "${override_name}=${!override_name}")

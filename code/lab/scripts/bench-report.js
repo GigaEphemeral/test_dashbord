@@ -3,9 +3,15 @@
  * Bench archive generator (Task 20a). No dependencies.
  *
  * Reads the k6 --summary-export JSON plus run metadata and writes:
- *   - manifest.json  machine-readable run record
+ *   - manifest.json  machine-readable run record (incl. the image identity block)
  *   - report.html    self-contained HTML report
  *   - <result-doc>   Markdown result page under doc/process/Stage1/benchmark
+ *
+ * Image identity (Stage2 B0-08 slice A) comes from `--image-identity <json>`,
+ * the record code/lab/scripts/image-identity.sh writes after the preflight:
+ * imageTag + imageId per key container, minimal loop only. A missing or
+ * unreadable record degrades the manifest block to "unavailable"; it never
+ * turns a PASS into a FAIL and never blocks the archive.
  *
  * Threshold verdicts come from the summary's per-metric `thresholds` results.
  * The runner's k6 exit code is authoritative: a crossed threshold exits 99 in
@@ -80,6 +86,83 @@ for (const entry of args.env) {
     envOverrides[entry.slice(0, split)] = entry.slice(split + 1);
   }
 }
+
+// --- Image identity (Stage2 B0-08 slice A, minimal loop) ---------------------
+// Produced by code/lab/scripts/image-identity.sh: imageTag + imageId of the key
+// containers, read once with `docker inspect`. A missing or unparsable record
+// NEVER fails the archive: the block degrades to available=false plus a reason,
+// and the per-container fields stay "unavailable".
+const UNAVAILABLE = 'unavailable';
+
+function unavailableContainer(name) {
+  return {
+    container: name,
+    imageTag: UNAVAILABLE,
+    imageId: UNAVAILABLE,
+    state: UNAVAILABLE,
+    composeProject: UNAVAILABLE,
+    status: UNAVAILABLE,
+  };
+}
+
+function readImageIdentity(filePath) {
+  const degraded = (reason, names) => ({
+    available: false,
+    reason,
+    recordedAt: null,
+    method: 'docker inspect --format {{.Image}} + docker image inspect --format {{.RepoTags}}',
+    dockerAvailable: false,
+    containers: names.map(unavailableContainer),
+  });
+  const containerNames = (args['image-identity-containers'] || '').split(/\s+/).filter(Boolean);
+  if (!filePath) {
+    return degraded('image identity record was not produced (bench.sh wrote no record)', containerNames);
+  }
+  if (!fs.existsSync(filePath)) {
+    return degraded(`image identity record not found at ${filePath}`, containerNames);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    return degraded(`image identity record is not valid JSON: ${error.message}`, containerNames);
+  }
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const byName = source.containers && typeof source.containers === 'object' ? source.containers : {};
+  const field = (value) => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text) {
+      return UNAVAILABLE;
+    }
+    // Any spelling of the shell script's marker normalizes to one value, so a
+    // manifest reader only has to look for "unavailable".
+    return text.toLowerCase() === UNAVAILABLE ? UNAVAILABLE : text;
+  };
+  const containers = Object.keys(byName).map((name) => {
+    const entry = byName[name] && typeof byName[name] === 'object' ? byName[name] : {};
+    return {
+      container: field(entry.container || name),
+      imageTag: field(entry.imageTag),
+      imageId: field(entry.imageId),
+      state: field(entry.state),
+      composeProject: field(entry.composeProject),
+      status: field(entry.status),
+    };
+  });
+  const usable = containers.filter((entry) => entry.imageId !== UNAVAILABLE && entry.imageTag !== UNAVAILABLE);
+  return {
+    available: usable.length > 0,
+    reason: usable.length === 0
+      ? 'no imageTag/imageId could be read (Docker unavailable or containers missing)'
+      : null,
+    recordedAt: field(source.generatedAt),
+    method: field(source.method),
+    dockerAvailable: source.dockerAvailable === true,
+    containers,
+  };
+}
+
+const imageIdentity = readImageIdentity(args['image-identity']);
 
 let summary = null;
 let summaryError = '';
@@ -295,6 +378,7 @@ const manifest = {
     configured: configuredThresholds,
   },
   keyMetrics,
+  images: imageIdentity,
   verdict,
   verdictReason,
   summaryError: summary ? null : summaryError,
@@ -303,6 +387,7 @@ const manifest = {
     k6Log: 'k6.log',
     manifest: 'manifest.json',
     report: 'report.html',
+    imageIdentity: 'image-identity.json',
     resetLog: resetExecuted ? args['reset-log'] || 'reset.log' : null,
     resultDoc: resultDocName,
   },
@@ -390,6 +475,19 @@ function thresholdRowsHtml() {
     )
     .join('\n');
 }
+
+const imageIdentityRows = imageIdentity.containers
+  .map(
+    (entry) =>
+      `<tr><td><code>${escapeHtml(entry.container)}</code></td><td><code>${escapeHtml(
+        entry.imageTag,
+      )}</code></td><td><code>${escapeHtml(entry.imageId)}</code></td><td>${escapeHtml(
+        entry.state,
+      )}</td><td class="${
+        entry.imageId === UNAVAILABLE || entry.imageTag === UNAVAILABLE ? 'fail-text' : 'pass-text'
+      }">${escapeHtml(entry.status)}</td></tr>`,
+  )
+  .join('\n    ');
 
 const html = `<!doctype html>
 <html lang="zh-CN">
@@ -486,6 +584,19 @@ const html = `<!doctype html>
 
 ${summaryError ? `<h2>Summary problem</h2><p class="fail-text">${escapeHtml(summaryError)}</p>` : ''}
 
+<h2>Image identity</h2>
+<p class="muted">${escapeHtml(imageIdentity.method)} · recorded ${escapeHtml(
+  imageIdentity.recordedAt || '—',
+)} · dockerAvailable=${escapeHtml(String(imageIdentity.dockerAvailable))} · ${
+  imageIdentity.available ? 'tag/id read' : escapeHtml(imageIdentity.reason || 'not recorded')
+} (minimal loop: no build provenance, no base digest pin)</p>
+<table>
+  <thead><tr><th>Container</th><th>imageTag</th><th>imageId</th><th>State</th><th>Status</th></tr></thead>
+  <tbody>
+    ${imageIdentityRows || '<tr><td colspan="5" class="muted">No containers recorded</td></tr>'}
+  </tbody>
+</table>
+
 <h2>Environment overrides</h2>
 ${
   Object.keys(envOverrides).length === 0
@@ -495,7 +606,7 @@ ${
         .join('')}</ul>`
 }
 
-<footer>Generated by code/lab/scripts/bench-report.js from k6 summary.json. Files: summary.json, k6.log, manifest.json, report.html.</footer>
+<footer>Generated by code/lab/scripts/bench-report.js from k6 summary.json. Files: summary.json, k6.log, manifest.json, report.html, image-identity.json.</footer>
 </main>
 </body>
 </html>
@@ -525,6 +636,20 @@ if (resultDocPath) {
       ? '- 无（使用 k6 文档默认值）'
       : Object.entries(envOverrides)
           .map(([key, value]) => `- \`${key}=${value}\``)
+          .join('\n');
+
+  const imageIdentityLines =
+    imageIdentity.containers.length === 0
+      ? '| — | — | — | 无容器记录 |'
+      : imageIdentity.containers
+          .map(
+            (entry) =>
+              `| \`${entry.container}\` | \`${entry.imageTag}\` | \`${entry.imageId}\` | ${
+                entry.imageId === UNAVAILABLE || entry.imageTag === UNAVAILABLE
+                  ? '未取到（降级记录）'
+                  : entry.state
+              } |`,
+          )
           .join('\n');
 
   const markdown = `# 压测结果 · ${scenario} · ${runId}
@@ -560,6 +685,17 @@ ${grafanaLink ? `- Grafana：${grafanaLink}` : '- Grafana：未配置'}
 ${prometheusLink ? `- Prometheus：${prometheusLink}` : '- Prometheus：未配置'}
 - 数据重置：${resetExecuted ? `已执行，baseline stock=${resetBaseline}（reset.log）` : '跳过（--no-reset）'}
 
+## 镜像身份（最小记录，B0-08）
+
+| 容器 | imageTag | imageId | 状态 |
+|---|---|---|---|
+${imageIdentityLines}
+
+- 取数方式：\`${imageIdentity.method}\`（记录时间 ${imageIdentity.recordedAt || '—'}，dockerAvailable=${imageIdentity.dockerAvailable}）
+- 口径：**只记录 tag/id**，不校验镜像来源、不归档构建日志、不锁 base digest（完整溯源在 Future）。
+- 重建走显式 \`--force-recreate\`（\`code/lab/scripts/tune.sh\`），重建后应重新记录一次。
+${imageIdentity.available ? '' : `- 注意：${imageIdentity.reason || '未取到镜像身份'}\n`}
+
 ### Manifest 摘要
 
 - verdict：\`${verdict}\`（${verdictReason}）
@@ -577,7 +713,8 @@ ${overrideLines}
 - \`report.html\`：本页 HTML 报告
 - \`summary.json\`：k6 \`--summary-export\` 原始输出
 - \`k6.log\`：k6 标准输出/错误
-- \`manifest.json\`：场景、运行时间、git、reset、阈值与 verdict
+- \`manifest.json\`：场景、运行时间、git、reset、阈值、verdict 与镜像身份
+- \`image-identity.json\`：关键容器的 imageTag + imageId 原始记录
 ${resetExecuted ? '- `reset.log`：重置脚本输出\n' : ''}
 ${summaryError ? `\n> 注意：${summaryError}\n` : ''}`;
 
