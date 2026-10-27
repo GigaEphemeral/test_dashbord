@@ -177,6 +177,20 @@
   expect: true
   last_verified: 2026-10-27
 
+# step-54: the JDK 8 shell now posts the same Grafana annotation as JDK 21,
+# over HttpURLConnection (java.net.http is Java 11+).
+- id: jdk8-snapshot-annotation
+  polarity: positive
+  doc:
+    - doc/process/step-54-snapshot-observability.md
+  statement: "JDK 8 快照已实现 Grafana annotation（HttpURLConnection POST /api/annotations，env 凭据，结果计入 annotations_total，见 step-54）"
+  verify:
+    kind: file_contains
+    path: code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/lab/snapshot/HttpGrafanaSnapshotAnnotator.java
+    pattern: "api/annotations"
+  expect: true
+  last_verified: 2026-10-27
+
 - id: ha-acceptance-script-exists
   doc:
     - doc/process/step-45-ha-acceptance-script.md
