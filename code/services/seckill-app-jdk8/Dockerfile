@@ -5,7 +5,7 @@
 # The build runs on Temurin 21 because the reactor's Maven plugins require a
 # modern JDK; the module itself compiles with maven.compiler.release=8, so the
 # produced classes are Java 8 bytecode (class file version 52) and load on the
-# JRE 8 runtime stage below.
+# JDK 8 runtime stage below.
 FROM maven:3.9-eclipse-temurin-21 AS build
 
 ARG OTEL_AGENT_VERSION=2.10.0
@@ -26,9 +26,14 @@ RUN curl -fsSL --retry 3 -o /opt/opentelemetry-javaagent.jar \
       "https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/${OTEL_AGENT_VERSION}/opentelemetry-javaagent-${OTEL_AGENT_VERSION}.jar" \
     && test -s /opt/opentelemetry-javaagent.jar
 
-# JRE 8 (not JDK): this shell is a read-only comparison target, and the thread
-# lab / snapshot features that need jcmd live only in the JDK 21 shell.
-FROM eclipse-temurin:8-jre-alpine
+# JDK 8 (not JRE): design 9.3 requires jstack/jmap inside the container so
+# POST /lab/snapshot can capture this JVM's own pid without docker exec. The
+# JDK tools are the only reason for the upgrade; the Java 8 comparison itself
+# does not need a compiler. Size cost (docker images DISK USAGE, measured):
+# the previous JRE-based app image was 469MB, the JDK-based one is 521MB
+# (+52MB, ~11%); the eclipse-temurin:8-jdk-alpine base alone is 274MB
+# (73.8MB compressed download). Paid once, only for the dual-jdk profile.
+FROM eclipse-temurin:8-jdk-alpine
 
 ARG OTEL_AGENT_VERSION=2.10.0
 LABEL org.opencontainers.image.title="java-learn-lab seckill-app (JDK 8, EOL teaching-only)" \

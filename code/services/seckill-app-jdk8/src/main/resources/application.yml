@@ -54,6 +54,39 @@ server:
     max-connections: ${TOMCAT_MAX_CONNECTIONS:8192}
     connection-timeout: ${TOMCAT_CONNECTION_TIMEOUT_MS:20000}
 
+# Internal lab API (design 9.3): token-guarded jstack/jmap snapshot bundles.
+# The JDK 8 shell had no lab API before this; the token is the same shared
+# secret the JDK 21 shell and the chaos-controller use, so one .env value works
+# for both runtimes. Nginx does not proxy /lab/**, only in-network callers reach
+# it (the chaos-controller narrow proxy exposes it to the console).
+app:
+  lab:
+    token: ${LAB_TOKEN:lab-token}
+    snapshot:
+      enabled: ${LAB_SNAPSHOT_ENABLED:true}
+      # Container path of the host mount doc/process/snapshots (compose.base.yml).
+      # Both runtimes write into the same root; this shell uses instance app-jdk8,
+      # so its bundles sit next to the JDK 21 app-1/2/3 bundles.
+      root-dir: ${LAB_SNAPSHOT_DIR:/app/lab-snapshots}
+      max-count: ${LAB_SNAPSHOT_MAX_COUNT:20}
+      # 0 disables age-based pruning; count-based retention always applies.
+      max-age-seconds: ${LAB_SNAPSHOT_MAX_AGE_SECONDS:604800}
+      # Per tool invocation (jstack, then jcmd GC.heap_info, then jmap -histo).
+      command-timeout-ms: ${LAB_SNAPSHOT_COMMAND_TIMEOUT_MS:5000}
+      # histo (default, no GC) or histo-live. -histo:live forces a full GC and
+      # therefore changes the heap the snapshot is meant to observe; opt in only
+      # for "is this object really live?" investigations.
+      jmap-mode: ${LAB_SNAPSHOT_JMAP_MODE:histo}
+      # JDK 8 tools from the jdk-alpine runtime image (on PATH), overridable.
+      jstack-path: ${LAB_SNAPSHOT_JSTACK_PATH:jstack}
+      jmap-path: ${LAB_SNAPSHOT_JMAP_PATH:jmap}
+      # jmap -heap was removed in 8u, so heap-info.txt comes from
+      # `jcmd <pid> GC.heap_info` (the same diagnostic the JDK 21 bundle uses).
+      jcmd-path: ${LAB_SNAPSHOT_JCMD_PATH:jcmd}
+      # Reuses the repository template instead of forking a copy into resources;
+      # compose bind-mounts doc/process/snapshot-analysis-template.md read-only.
+      template-path: ${LAB_SNAPSHOT_TEMPLATE_PATH:doc/process/snapshot-analysis-template.md}
+
 observability:
   env: ${OBSERVABILITY_ENV:dev}
   instance: ${INSTANCE_ID:app-jdk8-local}

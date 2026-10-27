@@ -272,6 +272,24 @@ services:
       APP_PROFILE: ${JDK8_APP_PROFILE:-mysql}
       SERVER_PORT: "8080"
       INSTANCE_ID: ${JDK8_INSTANCE_ID:-app-jdk8}
+      # Internal lab API (design 9.3). The JDK 8 shell gets the same shared
+      # secret as the JDK 21 tier; the snapshot bundle lands in the SAME host
+      # root as the JDK 21 instances (instance name app-jdk8 keeps them apart).
+      # jstack/jmap come from the jdk-alpine runtime image; jmap stays non-live
+      # so the capture does not GC the heap it is about to describe.
+      LAB_TOKEN: ${LAB_TOKEN:-lab-token}
+      LAB_SNAPSHOT_ENABLED: "true"
+      LAB_SNAPSHOT_DIR: /app/lab-snapshots
+      LAB_SNAPSHOT_MAX_COUNT: ${LAB_THREAD_SNAPSHOT_MAX_COUNT:-20}
+      LAB_SNAPSHOT_MAX_AGE_SECONDS: ${LAB_THREAD_SNAPSHOT_MAX_AGE_SECONDS:-604800}
+      LAB_SNAPSHOT_COMMAND_TIMEOUT_MS: ${LAB_SNAPSHOT_COMMAND_TIMEOUT_MS:-5000}
+      LAB_SNAPSHOT_JMAP_MODE: ${LAB_SNAPSHOT_JMAP_MODE:-histo}
+      # jmap -heap does not exist on 8u; heap-info uses JDK 8's jcmd (present in
+      # the jdk-alpine image) and is the same text the JDK 21 bundle carries.
+      LAB_SNAPSHOT_JCMD_PATH: jcmd
+      # The analysis template is the repository file, mounted read-only below;
+      # the bundle copy is byte-identical to doc/process/snapshot-analysis-template.md.
+      LAB_SNAPSHOT_TEMPLATE_PATH: /app/snapshot-analysis-template.md
       # The shared lab database (same rows the JDK 21 shell's Flyway created).
       MYSQL_HOST: mysql
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -289,6 +307,13 @@ services:
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dev
+    volumes:
+      # Same host snapshots root as the JDK 21 tier (three levels up from
+      # code/lab/docker/): both runtimes' bundles sit side by side for D7/D6.
+      - ../../../doc/process/snapshots:/app/lab-snapshots
+      # Reuse the repository analysis template instead of forking a copy into
+      # the image; the service copies it into every bundle.
+      - ../../../doc/process/snapshot-analysis-template.md:/app/snapshot-analysis-template.md:ro
     expose:
       - "8080"
     depends_on:
