@@ -14,6 +14,11 @@ x-app-common: &app-common
       OTEL_AGENT_VERSION: ${OTEL_AGENT_VERSION:-2.10.0}
   restart: unless-stopped
   mem_limit: 768m
+  # Thread-lab snapshots (design §9.3) land on the host so a capture can be
+  # read/inspected without `docker cp`; the app user (uid 100) writes into the
+  # bind mount. The path is three levels up from code/lab/docker/ (repo root).
+  volumes:
+    - ../../../doc/process/snapshots:/app/lab-snapshots
   networks:
     - jl-net
   labels:
@@ -83,6 +88,15 @@ x-app-env: &app-env
   LAB_TOGGLE_RATELIMIT: ${LAB_TOGGLE_RATELIMIT:-true}
   LAB_TOGGLE_CIRCUITBREAKER: ${LAB_TOGGLE_CIRCUITBREAKER:-true}
   LAB_TOGGLE_CACHE: ${LAB_TOGGLE_CACHE:-true}
+  # Thread-lab snapshot bundle (design §9.3). The directory is the mount above;
+  # the Grafana annotation is best-effort and uses the same admin credentials
+  # the chaos-controller already receives (never logged by the app).
+  LAB_THREAD_SNAPSHOT_DIR: /app/lab-snapshots
+  LAB_THREAD_SNAPSHOT_MAX_COUNT: ${LAB_THREAD_SNAPSHOT_MAX_COUNT:-20}
+  LAB_THREAD_SNAPSHOT_MAX_AGE_SECONDS: ${LAB_THREAD_SNAPSHOT_MAX_AGE_SECONDS:-604800}
+  LAB_THREAD_SNAPSHOT_GRAFANA_URL: ${LAB_THREAD_SNAPSHOT_GRAFANA_URL:-http://grafana:3000}
+  GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+  GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
   # D4 order-accept SLO buckets (Task 18). Micrometer parses the comma-separated
   # duration list; externalizing it keeps the histogram configuration out of code.
   ORDER_ACCEPT_SLO: ${ORDER_ACCEPT_SLO:-50ms,100ms,300ms,500ms,1s,2s}
