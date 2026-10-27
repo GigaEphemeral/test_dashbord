@@ -4,6 +4,7 @@
 > 关联任务：#21（M2-3）
 > 测试 / verify：全 reactor **192 tests, 0 failures**（chaos-controller 39，原 26；新增 `ChaosActionServiceTest` 14 + `ChaosControllerTest` 9，`TokenFilterTest` 8）；`verify.sh` **97 PASS / 1 WARN**（WARN 仍是 cAdvisor/WSL2）
 > 运行状态：16 个 lab 容器运行中、三实例健康；控制器镜像已重建并 `up.sh`；app-3 仅用于验收，MySQL/Redis/RabbitMQ 未触碰；非 lab 容器 `redis` 保持运行 9 天
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

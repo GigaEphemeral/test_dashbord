@@ -3,6 +3,7 @@
 > 分支 / HEAD：worktree 分支 `worktree-agent-general-purpose-80ed8116`（基线 `bd245af`，`feature/ha-lab`）/ 本次提交 `6f59100 feat: add mutex and logical-expire cache breakdown defenses (M4-2)`、`705d3e8 test: cover cache breakdown decision tables and wiring (M4-2)`、本文件 `docs:` 提交
 > 关联任务：M4-2（设计 8.4 击穿行；消费 M4-1 数据集与模式开关；雪崩子任务与 M4-3 预热不在本步）
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test`（reactor 5 模块，JAVA_HOME=21）**BUILD SUCCESS**；`Tests run:` 各模块汇总：platform-common 10、platform-observability 4、seckill-core 13、**seckill-app-jdk21 265**（0 failures / 0 errors / 0 skipped；本 worktree 改动前该模块为 241，本步新增 24：`ProductBreakdownDefenseTest` 15、`LogicalStaleStoreTest` 4、`BreakdownProtectionConfigTest` 5，另有 `LabCachePropertiesTest` +2 与既有类扩展断言）；M4-1 穿透既有测试（`ProductPenetrationDefenseTest` 8、`NullValueMarkerStoreTest`、`ProductBloomFilterServiceTest`、`CachedProductViewServiceTest`、`LabCacheControllerTest`、`CacheExperimentDataServiceTest`、`CacheDefenseModeServiceTest` 等）全绿未回归；未复跑 verify.sh/smoke（禁止 Docker/验收命令），未在实栈调用过任何 `/lab/cache/*`（模块 IT 按既有约定经 Testcontainers 随 reactor 运行）
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

@@ -5,6 +5,7 @@
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.2（应用通过 Sentinel 按主名发现主、Redisson `sentinelServersConfig`、dev=单机/配置 env 切换）、§3.3；`doc/design/工程规约.md` 第 1 节（配置外置）
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test` → **Tests run: 215, Failures: 0, Errors: 0, Skipped: 0，BUILD SUCCESS**（含新增 `RedisModeSwitchTest` 11、`SeckillRedissonModeTest` 5、`SentinelMasterDiscoveryReporterTest` 7；`ProductCacheIT` 5/5、`RedisOutageCacheIT` 3/3 复跑通过）；`verify.sh` **103 PASS / 1 WARN / 0 FAIL**（与 24a 基线一致，WARN 仍是 cadvisor/WSL2 限制）；`smoke.sh` **7/7**；compose 不变式：默认渲染 **16** 服务且渲染中 **0** 个 `REDIS_MODE/SPRING_DATA_REDIS_SENTINEL_*` 键（dev 逐字节不变），`--profile ha` **25** 服务、三 app 均带 `REDIS_MODE: sentinel` 并双网挂载
 > 运行状态：dev 16 常驻 + ha 9 全部 running；app 三实例已还原为 **standalone**（日志 `Redis access mode: standalone`，env 中无 `REDIS_MODE`/哨兵键，单网 `jl-net`）；演练后主漂移为 `jl-redis-1`（172.28.190.11），`jl-redis-2` 已 `docker start` 复位为从、两从 `master_link_status=up`；未 `--purge`、未删卷、未触碰 `jl-redis`/`jl-mysql`/`jl-rabbitmq`
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

@@ -4,6 +4,7 @@
 > 关联任务：#19（M2-1）
 > 测试 / verify：无 Java 代码变更、未编译；k6 smoke 绿、load 2m 绿、spike 短跑绿、stress/soak 短跑绿；负向阈值退出 99；`verify.sh` **96 PASS / 1 WARN**（用 `SECKILL_PRODUCT_ID=2`，见缺陷项）
 > 运行状态：16 个 `lab=java-learn` 容器运行中、三实例健康；product 1 DB 77、product 2 DB/Redis 99、product 20 DB/Redis **0**（spike 打空）、订单 124
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

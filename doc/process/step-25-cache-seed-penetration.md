@@ -4,6 +4,7 @@
 > 关联任务：#25（M4-1，设计 8.4；后续 M4-2/M4-3 消费本步数据集）
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test`（JAVA_HOME=jdk-21.0.12.1）**192 tests, 0 failures / BUILD SUCCESS**（原 131 → 192，新增 61：`CachedProductViewServiceTest` 6、`NullValueMarkerStoreTest` 8、`ProductBloomFilterServiceTest` 7、`ProductPenetrationDefenseTest` 8、`LabCacheControllerTest` 7、`CacheExperimentDataServiceTest` 11、`LabCachePropertiesTest` 8、`CacheDefenseModeServiceTest` 6）；`verify.sh` / `smoke.sh` / console-smoke **本步未复跑**（禁止在共享实栈上执行 Docker/compose/验收命令），仅既有 IT 随 reactor 启动完整上下文并连本机 MySQL/Redis 通过
 > 运行状态：共享栈保持原样，未启停任何容器；本步**没有**在实栈上调用过 `/lab/cache/seed`（不会向共享 MySQL 写入 1000 行实验商品），实栈验收留待后续统一进行
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

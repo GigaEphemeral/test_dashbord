@@ -5,6 +5,7 @@
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.3（Router 6446 读写 / 6447 只读、读写分离必须 Lazy 代理、dev 用单机 MySQL）、§3.3（环境变量切换、镜像不变）、§8.6（Router 单点风险）；`doc/design/工程规约.md` §1（配置外置）
 > 测试 / compose：`mvn -pl services/seckill-app-jdk21 -am test` → **Tests run: 309, Failures: 0, Errors: 0, Skipped: 0，BUILD SUCCESS**（基线 298 + 本步 11）；compose 不变式：默认 **16**、`--profile ha` **25**、`--profile db-ha` **25**
 > 运行状态：本步**未触碰 Docker / 未连活体 Router / 未跑 MySQL 查询**（任务约束，且 HA 栈可能被其他 agent 使用）；所有断言均在构建出的配置层完成
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

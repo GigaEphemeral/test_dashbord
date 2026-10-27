@@ -4,6 +4,7 @@
 > 关联任务：#50（M3-2a 实机验收）；下游 #51（应用接 Router 双数据源与集群指标，本步**不做**）
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.3（InnoDB Cluster 拓扑）、§3.1（内存预算）、§3.3（profile）
 > 运行状态：db-ha 层**在线并已服务**（3 节点组复制单主 + Router 6446/6447 + 3 exporter）；dev 常驻栈 16 容器与 Redis HA 层未触碰。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

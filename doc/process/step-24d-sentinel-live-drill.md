@@ -4,6 +4,7 @@
 > 关联任务：#49（M3-1c 活体验收，本步收口）；上游 #47（24a 拓扑）、#48（24b 客户端，`step-24b-sentinel-client.md`）、#49 代码部分（24c，`step-24c-sentinel-targets.md`）；下游 #61（批次门禁：`verify.sh` / `smoke.sh` / `console-smoke.sh`）
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.2；`doc/design/工程规约.md` 第 1 节（配置外置）
 > 验证：默认 compose 渲染 **16** 服务、`-f compose.ha.yml --profile ha` **25**；chaos-controller 重建后 healthy；`redis-sentinel-failover` 出现在 `/lab/guide/scenarios`；guide 实跑 `START → STEP1 → STEP2 → STEP3 → COMPLETED`；Nginx 商品读 52 次轮询 **50×200 / 2×000**，停主后首个 200 于 **+9.1s**（≤15s）；旧主 TTL 自动回归且 `role=slave, master_link_status=up`；同 JSON 经 k6 `ha-failover` 路径 3/3 动作 accepted、0 错误；app 已还原 standalone，HA 拓扑 1 主 2 从健康，全部容器 running。**未跑** `verify.sh` / `smoke.sh` / `console-smoke.sh`（#61 所有）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

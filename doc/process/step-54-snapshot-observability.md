@@ -5,6 +5,7 @@
 > 代码基线：`0c479be`（`feature/ha-lab`，step-53 之后）
 > 交付：`code/services/seckill-app-jdk8/**`（HttpURLConnection 版 annotator、配置、指标、测试）、`code/lab/docker/compose.base.yml`（仅 jdk8 服务 env）、`code/lab/docker/grafana/dashboards/ha-d6.json`（新增 5 个面板，原 12 个未动）、`code/lab/docclaims/claims.yml`、本文档。
 > 验证：`cd code && JAVA_HOME="C:\Program Files\Java\jdk-21.0.12.1" mvn -pl services/seckill-app-jdk8 -am test` → **59 tests, 0 failures / 0 errors（46 基线 + 13 新增），BUILD SUCCESS**；`python -c "import json;json.load(open('.../ha-d6.json'))"` → OK；`node code/lab/scripts/check-doc-claims.mjs` → 全部 PASS；真机 annotation、双运行时 Prometheus 序列与 D6 PromQL 均有数据（见 §3）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 <!-- live-capture-verified: jdk8-snapshot-annotation host=doc/process/snapshots/20261027-070040-038_app-jdk8 annotation=79 tags=snapshot,thread-lab,app-jdk8,manual -->
 

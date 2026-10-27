@@ -5,6 +5,7 @@
 > 代码基线：`907ba5c`（`docs: flip the cache console and cache proxy claims to positive after step-50`）
 > 交付：`code/lab/scripts/tune.sh`、`code/lab/docker/grafana/dashboards/ha-d8.json`、两份真机 benchmark 记录、`code/lab/docclaims/claims.yml` 的 D8 断言翻转、本文档。
 > 边界：新增调优脚本与 D8 面板；不做 `/tuning` 页面、自动参数扫描、归档对比；不重建镜像；不修改 `.env`。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 ---
 

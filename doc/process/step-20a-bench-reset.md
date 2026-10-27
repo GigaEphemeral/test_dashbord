@@ -4,6 +4,7 @@
 > 关联任务：#41（M2-2a）
 > 测试 / verify：无 Java 代码变更、未编译；默认 `verify.sh` **96 PASS / 1 WARN**；`smoke.sh` **7/7**；`bench.sh smoke` exit 0；`bench.sh load -- LOAD_DURATION=1m` exit 0；负向 `ERROR_RATE=0` exit **99** 且归档完整
 > 运行状态：16 个 `lab=java-learn` 容器运行中、三实例健康；product 1/20 DB/Redis 均为 **100**、订单 **0**、队列空（最终 reset 后）
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

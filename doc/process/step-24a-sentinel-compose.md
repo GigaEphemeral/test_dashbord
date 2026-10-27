@@ -5,6 +5,7 @@
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.2（Redis Sentinel）、§3.1（≈800MB 预算）、§3.3（dev=单机 Redis、ha=Sentinel，通过 env 切换）；`doc/design/工程规约.md` 第 1 节（配置外置）
 > 测试 / verify：`verify.sh` 复跑 **103 PASS / 1 WARN / 0 FAIL**（dev 基线 97 + 6 项 Sentinel 检查；唯一 WARN 是既有 cadvisor/WSL2 限制，非本步引入）；compose 不变式：默认渲染 **16** 服务、`--profile ha` 追加 **9** 服务（合计 25）；`bash -n` / `sh -n` 全过，四个 lab 脚本均 `set -euo pipefail`，bind 挂载脚本/模板均为 LF 无 CRLF
 > 运行状态：dev 16 常驻 + ha 9（`jl-redis-1/2/3`、`jl-sentinel-1/2/3`、`jl-redis-{1,2,3}-exporter`）全部 running healthy；切换演练后主为 `jl-redis-2`、两从在线复制、`jl-redis-1` 已复位为从；未 `--purge`、未删卷、未触碰 `jl-redis`/`jl-app-*`/`jl-mysql`/`jl-rabbitmq`
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

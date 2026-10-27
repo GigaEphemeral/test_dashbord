@@ -4,6 +4,7 @@
 > 关联任务：M5 网络故障能力半部分；compose overlay 与脚本由并行代理负责，本步只交付 chaos-controller
 > 测试 / verify：本 worktree 内 `mvn -pl services/chaos-controller -am test` → **191 tests / 0 failures / 0 errors / 0 skipped**（138 基线 + 53 新增）；未执行任何 Docker / compose / 活栈命令
 > 运行状态：代码与测试完成，未启动栈；Toxiproxy 的真实链路、Grafana P99 变化、stop-all 的活栈恢复均未验证
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

@@ -3,6 +3,7 @@
 > 分支 / 基线：worktree `agent-general-purpose-40b52b49`，基线 `4d6d5e4`；本文档对应的功能提交 `826a45e`（`feat: add the repeatable HA acceptance script`）
 > 关联：`doc/process/step-24d-sentinel-live-drill.md`（Sentinel 实测）、`doc/process/step-31-mysql-router-live-drill.md`（Router 实测）、`doc/process/step-38-ha-acceptance.md`（M3 验收清单）
 > 验证边界：脚本交付会话**没有运行任何容器**，只执行了 `bash -n`、`docker compose config` 和两个 `--dry-run`，并用本地 mock 的 `docker`/`curl` 跑通了 sentinel/mysql 的完整断言链。真机实跑见第 6 节「真机运行」（2026-10-27，sentinel 38 PASS / mysql 36 PASS）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 用法（Usage）
 

@@ -4,6 +4,7 @@
 > 关联任务：#42（M2-2b）
 > 测试 / verify：无 Java 代码变更；`verify.sh` **97 PASS / 1 WARN**（新增 ha-d9，WARN 仍是 cAdvisor/WSL2）；compare 实跑成功；D9 Grafana API 200
 > 运行状态：16 个 lab 容器运行中，三实例健康；默认 product 20 已由 Task 20a reset 恢复
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

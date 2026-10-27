@@ -6,6 +6,7 @@
 > 关联任务：M3-2b（db-ha）、M3-2c（集群指标）、MYSQL_MODE 路由开关
 > 测试 / verify：**未运行** `verify.sh` / `smoke.sh` / `console-smoke.sh`（批次门禁负责）；本步只做真机演练与 compose 渲染计数
 > 运行状态：交付时 dev 栈 16 服务全部 healthy；db-ha 层 UP；app 回到 `MYSQL_MODE=standalone`；主库为 `jl-mysql-2`（演练后的正确结果）
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

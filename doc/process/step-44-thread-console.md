@@ -3,6 +3,7 @@
 > 分支 / HEAD：`feature/ha-lab`（主工作树 `D:\000CODE\JAVA-LEARN`）/ 本次提交 `feat: proxy the app thread lab to the console and add the thread page`、`test: cover the thread proxy allow-list and extend the console smoke`、`docs: record the thread console handover (step-44)`
 > 关联任务：M5 线程实验室（设计 §9.1/§9.2/§9.3、§12.1 `/thread`、§12.2 交互约定）；上游 step-32（故障注入）、step-34（生命周期）、step-35（快照）、step-36（D6 面板）
 > 验证：`cd code && JAVA_HOME=jdk-21.0.12.1 mvn -pl services/chaos-controller -am test` → **244 tests, 0 failures / 0 errors / 0 skipped / BUILD SUCCESS**（基线 191，本步新增 53）；`npm run build`（`code/lab/dashboard`）→ **成功**；`bash code/lab/scripts/console-smoke.sh` → **30 PASS / 0 FAIL**（基线 26 + 新增 4；M6-1 动画视图落地后为 **37 PASS**，见 `step-46-animation-views.md` §6）；三个实例 `GET /lab/thread/state` 经代理均为空数组
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 代理契约（proxy contract）
 

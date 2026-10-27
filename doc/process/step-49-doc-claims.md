@@ -5,6 +5,7 @@
 > 代码基线：`2980874`（`docs: close out the 2026-10-27 batch with final gates and retrospective`）
 > 交付：`code/lab/docclaims/claims.yml`、`code/lab/scripts/check-doc-claims.mjs`、`code/lab/scripts/check-doc-claims.sh`、本文档。
 > 边界：只读脚本 + 文档；不启动 Docker / Maven / npm，不改 `verify.sh`。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 `doc/避坑/14-docs-must-be-falsified.md` 和 `doc/process/retrospective-2026-10-27.md` §3.1 记录过同一类事故：代码已经合并，文档还写着「未实现 / 未接线 / 不存在」。本步把这些断言变成可执行的清单：每条断言绑定一个仓库内事实，事实变了脚本就红。
 

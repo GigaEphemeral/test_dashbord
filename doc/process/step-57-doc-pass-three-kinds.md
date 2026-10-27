@@ -4,8 +4,9 @@
 > 日期：2026-10-27
 > 分支 / HEAD：`feature/ha-lab` / 起点 `96939cf`
 > 关联任务：#67（1.1 步骤文档）、#68（1.2 使用文档）、#69（1.3 打包安装手册）；口径来源 #61/#62/#64
-> 测试 / verify：`check-doc-claims` **31 total / 31 PASS / 0 FAIL / 0 STALE**；k6 Node 回归 **79 pass / 0 fail**；`verify.sh` **109 PASS / 1 WARN / 0 FAIL**；reactor 沿用 **784 tests**（Java 零改动）
+> 测试 / verify：`check-doc-claims` **32 total / 32 PASS / 0 FAIL / 0 STALE**；k6 Node 回归 **79 pass / 0 fail**；`verify.sh` **109 PASS / 1 WARN / 0 FAIL**；reactor 沿用 **784 tests**（Java 零改动）
 > 运行状态：栈保持运行，ha + db-ha = **34 服务 / 32 常驻容器**；app 处于 `standalone`
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 
@@ -16,14 +17,14 @@
 
 # 完成功能项
 
-**1.2 使用文档 —— `doc/readme.md`（297 → 524 行，LF）**
+**1.2 使用文档 —— `doc/readme.md`（297 → 523 行，LF）**
 
 - 新增 **§4「每一项设计的异常如何触发」**：§4.0 通道矩阵（四条触发通道 + 两条通用规则）→ §4.1 业务主链路 → §4.2 缓存八模式 → §4.3 Redis Sentinel → §4.4 MySQL Router/Cluster（含 `db-failover`）→ §4.5 混沌（5 个容器动作 + 3 类 toxic + 3 个场景 JSON + 向导/k6）→ §4.6 线程实验室（七种故障 + 生命周期 + 快照）→ §4.7 双 JDK 与 `tune.sh` → §4.8 k6 九场景与 bench → §4.9 操作台 → §4.10 安全边界本身当异常演示。
 - 每行要么给 `path:line`，要么标 **⚪**；✅/⚪ 的含义写在 §4 开头（✅ = 本机真机跑过、证据在 `doc/process/step-*.md`；⚪ = 按代码/配置口径，本轮未逐条真机复现）。
 - 修掉的过期口径：verify 基线 104 → **109 PASS**；`--profile db-ha` 不是 `up.sh` 的 profile（`up.sh:101-103` 显式拒绝）；「34 个 lab 容器」→ **34 服务 / 32 常驻容器**；「五个可演示实验」与实际族数不符；`DB_FAILOVER_TARGET`（默认 `jl-mysql-2`，`run.sh:255`）与探针容器 `CHAOS_MYSQL_CLUSTER_CONTAINER`（代码默认 `jl-mysql-1`，`.env.example:330` 建议 `jl-mysql-3`）此前被写成同一个东西；§115-122 的「已知缺口」已被 `be84c13`/`96939cf` 关闭。
 - §9/§10 改为指向 `details/README` §3.2/§3.3 与 `安装与打包手册.md`，不再复制清单。
 
-**1.1 步骤文档 —— `doc/process/阶段交接-2026-10-26.md`（735 → 631 行）**
+**1.1 步骤文档 —— `doc/process/阶段交接-2026-10-26.md`（735 → 632 行）**
 
 - 「立即待办」：三条已完成项删除，改为指向 `details/README` §3.2 与本文件末尾批次段落；只保留「不得新增硬编码」这一条长期事项。
 - 「已知 Minor / 限制」：删除 3 条已完成项（MySQL Router 环境变量接入 compose、JDK8 外壳、"未做缓存实验室/Sentinel/Cluster/线程实验室/调优台/动画/Mermaid/readme"）；M3-2a 的「live bootstrap 完全未验证 + 2.1GB 高于设计」按实测收口（`RESULT: ok`、实测 ≈1.87GB、设计改记 2.1GB）。
@@ -32,6 +33,7 @@
 - 「运行与验证」重写：五套 profile（含 `db-ha-up.sh` 不是 profile）、还原 standalone 的命令、八个验收脚本入口与当前基线、`REDIS_MODE` 与 verify 的耦合、PASS 基线漂移说明、reactor 与 Java 零改动的证据命令。
 - 「交接资料」：step 范围补到 `step-56`，新增 details/手册/图集三条。
 - 历史批次段落**只加指针不改写**（5 处「仍缺/下一步」清单 + 第五批次「遗留」后一行），保持历史证据原样。
+- **逐篇 step 交接补「口径指针」行**：`doc/process/step-*.md` 50 篇全部在头部块补一行「第 4/5 节的未做/未验证/待补是当时的快照，当前缺口看 `details/README` §3.2」（`step-30`/`step-42`/`step-43` 原无头部块，顺带补 `> 步骤交接` 一行）。`doc/process/交接模板.md` 同步加该字段，后续新交接自带。各篇行尾保持原样（`step-39` 为 CRLF，其余 LF），改动只增不删（49 文件 +55 行）。
 - 追加「2026-10-27 第六批次（文档整理）」段落。
 
 **融合到设计 —— `doc/design/details/11-配置与安全边界.md`（435 行，LF）**
@@ -47,7 +49,7 @@
 **文档漂移登记与机检**
 
 - `doc/design/details/README.md` §3.3 新增 5 行（`details/01:438`、`details/05:307`、`details/09:82`、`verify.sh:931`、`db-ha-up.sh:241`）。
-- `code/lab/docclaims/claims.yml` 追加 7 条「文档形状」断言（§4 章节存在、手册存在、键表已上收到 §3.1.1、阶段交接不再复制限流键、§3.2 是唯一未收口口径、k6 白名单含三个 HA/缓存场景、readme 不再写 104 PASS）→ **31/31 PASS**。
+- `code/lab/docclaims/claims.yml` 追加 8 条「文档形状」断言（§4 章节存在、手册存在、键表已上收到 §3.1.1、阶段交接不再复制限流键、§3.2 是唯一未收口口径、k6 白名单含三个 HA/缓存场景、readme 不再写 104 PASS、每篇 step 交接都带口径指针）→ **32/32 PASS**。
 
 # 设计逻辑
 
@@ -78,7 +80,7 @@
 
 ```bash
 # 本步用到的复核命令
-bash code/lab/scripts/check-doc-claims.sh          # 31 total / 31 PASS / 0 FAIL / 0 STALE
+bash code/lab/scripts/check-doc-claims.sh          # 32 total / 32 PASS / 0 FAIL / 0 STALE
 node --test code/lab/k6/test/*.test.mjs            # 79 pass / 0 fail
 bash code/lab/scripts/verify.sh                    # 109 PASS / 1 WARN / 0 FAIL（栈在运行、standalone）
 git log b5f203c..HEAD -- '*.java'                  # 空：本批次 Java 零改动

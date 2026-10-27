@@ -3,6 +3,7 @@
 > 分支 / 基线：`feature/ha-lab`，基线 `2980874`；功能提交 `a17eb67`、测试提交 `9eb392d`，实测中发现的 WARN 噪音修复 `749e125` + 测试 `a9d4b70`，文档提交见 `git log`
 > 关联：`doc/process/step-30-mysql-cluster-metrics.md`（D11 指标）、`doc/process/step-31-mysql-router-live-drill.md`（被杀节点就是 jl-mysql-1 的那次演练）、`doc/process/step-45-ha-acceptance-script.md`（记录过“compose 未接线”的缺口）
 > 验证边界：模块测试 `mvn -pl services/chaos-controller -am test` 250 tests / 0 failures；chaos-controller 镜像重建后在真机栈上做了一次目标切换实测（jl-mysql-3 默认 → jl-mysql-2 命中 PRIMARY → 还原 jl-mysql-3）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 当前进展
 

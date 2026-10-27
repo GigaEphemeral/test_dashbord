@@ -4,6 +4,7 @@
 > 关联任务：#18（M1-7）
 > 测试 / verify：reactor **163 tests, 0 failures**（app 122）；`smoke.sh` **7/7 PASS**；`verify.sh` **96 PASS / 1 WARN**
 > 运行状态：16 个 `lab=java-learn` 容器运行中，三实例健康；product 1 DB 81、product 20 DB/Redis 均 87、订单 32；`idempotent_reject_total` 累计 3
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

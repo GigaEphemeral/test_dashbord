@@ -5,6 +5,7 @@
 > 代码基线：`96939cf`（`feature/ha-lab`；特性提交 `be84c13`，预算修复 `96939cf`，前置 `3e7a9ed`）
 > 交付：`code/lab/k6/scenarios/cache-lab.js`（+403 行造缺陷逻辑与两条 init 门）、`code/lab/k6/run.sh`（转发 8 个 `CACHE_LAB_*` 与新 CONFIG_VARS 行）、`code/lab/k6/test/cache-lab-scenario.test.mjs`（+424 行）、`code/lab/k6/test/stubs/k6-metrics.mjs`（Gauge 支持 `add()`）、`doc/避坑/17`、`doc/避坑/18`、本文档。
 > 验证：Node 回归 **79 pass / 0 fail**；真机 armed 演练 `run_id=k6-20261027175755-3961`（`code/lab/k6/reports/20261027-175754-cache-lab-armed/`，目录被 `.gitignore` 排除）——bloom / null-cache / mutex / logical-expire 四族计数第一次真机出数（§3.2）；两处坑各有一条能复现的命令（§3.3、§3.4）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 ## 1. 契约
 

@@ -6,6 +6,7 @@
 > ⚠️ 合并顺序说明：本 worktree 基线 `ab4ca38` **早于** M3-1a（`compose.ha.yml` / `up.sh` / `down.sh` / `verify.sh` 的 Sentinel 改动）。`compose.mysql.yml` 声明 `profiles: ["db-ha", "ha"]`，其中 `ha` 伞形 profile 在本基线下只含 MySQL 层；主会话把 `feature/ha-lab`（已含 M3-1a）与本步合并后，`ha` 才同时覆盖 Redis + MySQL 两层。
 > 静态验证：compose 不变式实测——默认（base+dev）= **16** 服务；base+dev+mysql 不带 profile = **16**（零变化）；`--profile db-ha`（及 `--profile ha`）= **25**，追加集恰为 9 个 DB-HA 服务。7 个 shell 脚本 `bash -n` 全过；compose 模型 `config` 整树渲染通过（含嵌套 `${A:-${B}}` 插值）；模板渲染器离线干跑通过（含 `|`/`&`/`\` 对抗值）。**未启动任何容器**（见"当前进展"）。
 > 运行状态：**群复制尚未真实初始化**。dev 16 常驻栈照常运行，本步只交付"编排 + 初始化脚本 + 只读状态工具 + 实机 Runbook"，`jl-mysql-1/2/3`、`jl-mysql-router` 等容器**不存在也未创建**，`jl-mysql-data`、`jl-redis` 等 dev 资产零接触。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

@@ -4,6 +4,7 @@
 > 关联任务：M4-2（设计 8.4 雪崩行，`doc/design/2026-10-26-ha-concurrency-lab-design.md:340`）；消费 seed 的 200 个同 TTL 键（`90000..90199`，60s）；D10 面板 / console 归 M4-4
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test` **BUILD SUCCESS**；reactor 各模块 `Tests run`：platform-common 10、platform-observability 4、seckill-core 13、**seckill-app-jdk21 394**（0 failures / 0 errors / 0 skipped，改动前同为 394、其中 2 处测试期望错误）。M4-1/M4-2a/M4-3 既有缓存套件全绿：`ProductPenetrationDefenseTest` 8、`ProductBreakdownDefenseTest` 20、`TwoLevelCacheTest` 5、`LabCachePreheat*`、`CacheExperimentDataServiceTest` 11。未跑 Docker/compose、未跑 verify.sh/smoke、未在实栈调用任何 `/lab/cache/*`（遵守本会话边界）
 > 运行状态：仅 reactor 单测/IT；实栈未运行、未演练
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

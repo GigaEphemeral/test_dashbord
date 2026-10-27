@@ -5,6 +5,7 @@
 > 代码基线：`e96ed16`（`feature/ha-lab`，step-48 真机运行交接之后；改动在隔离 worktree 提交，待主会话合并）
 > 交付：`code/lab/docker/grafana/dashboards/ha-d10.json`（新增 `run_id` 模板变量 + 1 行 7 面板，原 25 面板 / `instance` 变量 / uid 逐对象未动）、`code/lab/docclaims/claims.yml`（+2 断言）、`code/lab/scripts/verify.sh`（+1 断言：ha-d10 暴露 run_id 变量）、本文档。
 > 验证：`json.load` → OK；`node code/lab/scripts/check-doc-claims.mjs` → **24 total / 24 PASS（基线 22 + 新增 2），Result: OK**；`bash -n verify.sh` → OK；12 条面板表达式全部在真机 Prometheus 上用 `run_id="k6-20261027-164307-cache1"` 跑通（§3.1）；Grafana 真机 provisioning 已验证并还原（§3.3）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 ## 1. 契约
 

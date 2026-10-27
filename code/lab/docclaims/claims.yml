@@ -433,3 +433,14 @@
     pattern: "104 PASS"
   expect: 0
   last_verified: 2026-10-27
+- id: step-handovers-carry-gap-pointer
+  doc:
+    - doc/process/交接模板.md
+    - doc/process/step-57-doc-pass-three-kinds.md
+  statement: "每篇 step-*.md 交接头部都带「口径指针」行：历史待办不会被当成当前缺口，当前缺口只看 details/README §3.2"
+  verify:
+    kind: shell
+    command: "test -z \"$(grep -L 口径指针 doc/process/step-*.md)\""
+    timeout_ms: 10000
+  expect: true
+  last_verified: 2026-10-27

@@ -4,6 +4,7 @@
 > 关联任务：#22（M2-4，本步 22b）
 > 测试 / verify：全 reactor **228 tests, 0 failures**（chaos-controller 75，原 39；新增 `GuideScenarioLoaderTest` 12、`GuideStateMachineTest` 9、`GuideControllerTest` 11、`ChaosActionServiceTest` +4）；`verify.sh` **97 PASS / 1 WARN**（WARN 仍是 cAdvisor/WSL2）
 > 运行状态：控制器镜像已重建并 `up.sh`；16 个 lab 容器运行中；app-3 验收后恢复 healthy，`/chaos/actions` 为空、guide 为 IDLE；MySQL/Redis/RabbitMQ 与 app-1/2 未触碰
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

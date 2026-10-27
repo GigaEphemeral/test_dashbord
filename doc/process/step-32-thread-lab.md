@@ -4,6 +4,7 @@
 > 关联任务：#32（M5-1，设计 9.1）；下游 **#33 生命周期与快照**、**#34 线程操作页与 D6**
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test`（JAVA_HOME=jdk-21.0.12.1）**238 tests, 0 failures / 0 errors / BUILD SUCCESS**（本次新增 23：`ThreadFaultServiceTest` 8、`FaultActionTest` 6、`HeapLeakAllocatorTest` 4、`LabThreadPropertiesValidationTest` 5）；`verify.sh` / `smoke.sh` / console-smoke **本步未复跑**（禁止在共享实栈上执行 Docker/compose/验收命令），既有完整上下文 IT（`OrderApplicationServiceIT` 会启动 `SeckillApplication`，会连带装配 `ThreadLabConfig` 全部新 bean）随 reactor 通过，证明新 bean 与 `app.lab.thread.*` 绑定在真实上下文里可实例化
 > 运行状态：共享栈保持原样，未启停任何容器；本步**没有**在实栈上调用过 `/lab/thread/**`，实栈验收（真实指标指纹、Grafana D6、场景 JSON、chaos-controller 广播）留待后续统一进行
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

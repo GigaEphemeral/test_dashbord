@@ -5,6 +5,7 @@
 > 代码基线：`d62dc31`（`feature/ha-lab`，step-52 之后）
 > 交付：`code/services/seckill-app-jdk8/**`（新 `lab` 包、配置、Dockerfile）、`code/lab/docker/compose.base.yml`（仅 jdk8 服务）、`code/lab/docclaims/claims.yml`、本文档。
 > 验证：`cd code && JAVA_HOME="C:\Program Files\Java\jdk-21.0.12.1" mvn -pl services/seckill-app-jdk8 -am clean test` → **46 tests, 0 failures / 0 errors（11 基线 + 35 新增），BUILD SUCCESS**；`node code/lab/scripts/check-doc-claims.mjs` → 18/18 PASS。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 <!-- live-capture-verified: jdk8-snapshot-live-capture host=doc/process/snapshots/20261027-061239-395_app-jdk8 files=5 trigger=manual jvm=1.8.0_504 -->
 

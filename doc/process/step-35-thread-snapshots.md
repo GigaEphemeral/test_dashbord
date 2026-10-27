@@ -4,6 +4,7 @@
 > 关联任务：M5-2b（设计 §9.3 快照与调试）；上游 step-34 的 `LifecycleSnapshotSink` 接缝；下游 #34 线程操作页 / D6 面板
 > 测试 / verify：`cd code && JAVA_HOME=jdk-21.0.12.1 mvn -pl services/seckill-app-jdk21 -am test` → **378 tests, 0 failures / 0 errors / 0 skipped / BUILD SUCCESS**（基线 350，本步新增 28：`ThreadSnapshotServiceTest` 8、`HttpGrafanaSnapshotAnnotatorTest` 5、`ThreadSnapshotEndpointTest` 3、`FreezeSnapshotWiringTest` 1、`ThreadSnapshotPropertiesValidationTest` 9、`LifecycleDemoServiceTest` 由 9 增到 11）
 > 运行状态：未执行任何 Docker / compose / 实栈命令（共享栈由另一会话持有）；全部证据来自单元测试与 MockMvc。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

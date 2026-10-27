@@ -5,6 +5,7 @@
 > 分支 / HEAD：worktree `agent-general-purpose-588f772e`，基线 `699942ce`（M4-2b avalanche defenses）；本步 feat 提交 `92e03e1`。
 > 关联任务：chaos-controller 的 Toxiproxy **Java 动作**由并行的另一步实现，本步只交付覆盖层、脚本接线、env 契约和本文档。
 > 验证：4 个 `docker compose config --services` 计数（16 / 18 / 25 / 25）、覆盖层仅在选中 profile 时出现在渲染里、`bash -n` 通过；**未启动任何容器**，未做活体演练。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 拓扑
 

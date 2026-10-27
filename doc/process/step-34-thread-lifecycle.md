@@ -3,6 +3,7 @@
 > 分支 / HEAD：worktree 分支 `worktree-agent-general-purpose-d6443679`（基线 `52de4b2`，`feature/ha-lab`）/ 本次提交 `feat: add single-thread lifecycle demo with real JVM states`（`86a65a0`）、`test: pin the lifecycle demo to real JVM states and clean teardown`（`3141e51`）、`docs: record the single-thread lifecycle handover (step-34)`
 > 关联任务：#33 的**状态机部分**（设计 9.2）；下游仍是 #33 的快照捕获（jcmd）与 #34 的线程操作页 / D6
 > 测试 / verify：`cd code && JAVA_HOME=jdk-21.0.12.1 mvn -pl services/seckill-app-jdk21 -am test` → **291 tests, 0 failures / 0 errors / 0 skipped / BUILD SUCCESS**（本步新增 15：`LifecycleDemoServiceTest` 9、`LifecycleDemoPropertiesValidationTest` 6）；既有线程实验室套件 `ThreadFaultServiceTest`(8)、`FaultActionTest`(9)、`HeapLeakAllocatorTest`(5)、`LabThreadPropertiesValidationTest`(7)、`ThreadLabMetricsTest`(2)、`ThreadStateFingerprintTest`(3) **全绿**。未执行任何 Docker / compose / 实栈调用（共享栈正被其他任务使用）。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

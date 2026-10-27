@@ -4,6 +4,7 @@
 > 关联任务：M6-1；设计 §12.1（页面）、§12.3（实时性）、§7.4（面板）；`doc/design/details/diagrams/01-deployment-topology.mmd`、`04-cache-read-path.mmd`
 > 验证：`cd code/lab/dashboard && npm ci && npm run build` → **成功**（18 modules；`index.html` 0.46 kB、CSS 19.95 kB / gzip 4.27 kB、JS 122.93 kB / gzip 45.63 kB）。**未启动容器、未跑 Playwright**（实栈归另一会话）；`console-smoke.mjs` 当时未改（2026-10-27 真栈验收已扩展为 37 PASS，见 §6）。
 > 运行状态：只做作者态与构建；栈未在本 worktree 启动。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 三个视图各显示什么
 

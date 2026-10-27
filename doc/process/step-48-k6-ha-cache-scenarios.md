@@ -5,6 +5,7 @@
 > 关联任务：M3-2 MySQL Router 切换（step-31）、M4 缓存实验（step-25/26/27/28）、step-37 D10；本步只补 k6 场景、Node 测试与文档
 > 边界：**只改 `code/lab/k6/**` 与本文档**；未新增/修改场景 JSON；原始交付未执行任何 Docker、k6 实跑、`verify.sh` / `smoke.sh` / `console-smoke.sh`（`db-failover` 的真机运行见第 6 节补充，2026-10-27）
 > 验证：`node --test "code/lab/k6/test/*.test.mjs"` → **60 pass / 0 fail**（原始 59 = 基线 41 + 新增 18；第 6 节补 1 个超时契约）；`node --check` 覆盖全部新增/修改 JS；`bash -n code/lab/k6/run.sh` 通过；`db-failover` 真机两轮 + `verify.sh` **104 PASS / 1 WARN / 0 FAIL**
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 1. 契约
 

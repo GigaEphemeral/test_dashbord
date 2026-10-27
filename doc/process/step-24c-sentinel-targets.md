@@ -5,6 +5,7 @@
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §8.2（复制异步→切换可能丢最近写入；应用按主名发现、免重启重挂）与设计文档场景表 `redis-sentinel` / `db-failover` 行；`doc/design/工程规约.md` 第 1 节（一切路径/超时/TTL/池/模式外置）
 > 测试 / verify：`mvn -pl services/chaos-controller -am test` → **Tests run: 122, Failures: 0, Errors: 0, Skipped: 0，BUILD SUCCESS**（基线 114 + 新增 `DatastoreTargetAllowListTest` 8）；`node --test "code/lab/k6/test/*.test.mjs"` → **41 pass / 0 fail**（基线 37 + 新增 4）；**未跑** `verify.sh`/`smoke.sh`/`console-smoke.sh`/真实 k6/任何 Docker 命令（本步在隔离 worktree 内、且 25 容器栈正被其他 agent 使用，属任务约束）
 > 运行状态：**未触碰活体栈**。默认配置（allow-list 为空）与改动前的拒绝行为逐条等价；`code/lab/docker/**`、`code/lab/scripts/**`、`code/lab/dashboard/src/**`、`seckill-app-jdk21` 均未改
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

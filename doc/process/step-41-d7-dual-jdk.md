@@ -6,6 +6,7 @@
 > 关联任务：上游 Step 33（JDK 8 外壳，`doc/process/step-33-jdk8-shell.md`）；设计 §10.1/§10.2、§6 D7 面板表；下游：JVM 调优台、双 JDK 正式基准归档
 > 测试 / verify：`cd code && mvn -pl services/seckill-app-jdk8 -am test` → **BUILD SUCCESS，模块 Tests run: 11, Failures: 0, Errors: 0, Skipped: 0**（基线 11 例，本步未新增应用代码，因此没有新的单测）；compose 服务数 **默认 16 / `--profile ha` 25 / `--profile db-ha` 25 / `--profile dual-jdk` 17**
 > 运行状态：jdk8 镜像已在 Docker 实跑（Temurin **1.8.0_504**），`APP_PROFILE=mysql` 连共享 MySQL 通过；两侧 k6 读场景均通过阈值；D7 PromQL 两侧都有数据；验证结束后 **JDK 8 容器已 stop**，默认 16 个服务保持运行
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

@@ -4,6 +4,7 @@
 > 关联任务：#23（M2-5，含 23a 控制器契约 / 23b 背景流量与 compose / 23c 操作台前端 / 23d 冒烟验收）
 > 测试 / verify：全 reactor **272 tests, 0 failures / BUILD SUCCESS**（chaos-controller **114**、app-jdk21 131、seckill-core 13、platform 14）；k6 Node **37 pass / 0 fail**（原 31）；`console-smoke` **26 PASS / 0 FAIL**；`verify.sh` 本步未复跑（最近记录仍是 Task 22b 的 97 PASS / 1 WARN）
 > 运行状态：栈保持运行；`/lab-api/containers` 实测 17 个 lab 容器（16 常驻 running + `jl-traffic` exited）；`/lab/guide/state` 为 idle、`steps: []`、`resetMode: manual`；`/lab/traffic/state` 为 `exited` / `running:false`；冒烟全程只 `skip`，未注入任何故障，app-3 未受影响；`/chaos/actions` 为空
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

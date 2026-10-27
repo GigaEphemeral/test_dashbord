@@ -4,6 +4,7 @@
 > 关联任务：#16（M1-5）
 > 测试 / verify：reactor 126 tests 绿；app 85 tests 绿；`verify.sh` 80 PASS / 1 WARN
 > 运行状态：16 个 lab 容器运行中，三实例健康；product 20 库存 DB/Redis 均 97
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

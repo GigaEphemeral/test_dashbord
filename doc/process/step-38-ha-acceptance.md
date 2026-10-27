@@ -3,6 +3,7 @@
 > 分支 / HEAD：worktree `agent-general-purpose-b6751c9e`，基线 `699942c`（M4-2b 雪崩防护合并点）
 > 关联任务：设计 §15 场景 1/8/9 的 M3 验收；D11 数据库高可用面板（设计 §7.4）
 > 验证：`python -c "json.load(...)"` 与 `node -e "require(...)"` 均通过；**Grafana 未启动、面板未渲染**，PromQL 未对活栈执行；未运行任何 Docker 命令，未改 Java/compose/脚本/provisioning。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

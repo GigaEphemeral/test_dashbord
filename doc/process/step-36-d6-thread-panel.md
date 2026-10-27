@@ -3,6 +3,7 @@
 > 分支 / HEAD：worktree `worktree-agent-general-purpose-51c147e9`（基线 `a37abff`）/ 本次提交 `feat: add D6 thread-lab dashboard` + 本文档 `docs: record the D6 thread-lab handover (step-36)`
 > 关联任务：M5 线程实验室（设计 §7.4 D6、§9.1 故障指纹、§9.2 单线程六态）；上游 M5-1（`ThreadLabMetrics`，step-32）、M5-2a（`LifecycleDemoMetrics`，step-34）；下游：线程操作页（#34）与快照标注（#33）
 > 验证：`python -c "import json;json.load(open('code/lab/docker/grafana/dashboards/ha-d6.json',encoding='utf-8'))"` → **OK**（12 panels、id 1–12 无重复、gridPos 无重叠、2 个模板变量）；**未启动任何容器、未调用 Grafana/Prometheus、未执行 Docker 命令**，面板渲染与 PromQL 实跑均未验收
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

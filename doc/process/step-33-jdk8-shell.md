@@ -5,6 +5,7 @@
 > 设计依据：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §10.1（`seckill-app-jdk8` = Temurin 8 + Spring Boot 2.7.18，仅实验用途、标注 EOL）、§10.2（相同限额/同一套 k6 场景，记录吞吐/P99/GC/堆/线程/启动耗时）、D7（§6 面板表：JDK 8 vs 21）；`doc/design/工程规约.md` 第 1 节（配置外置）、第 2 节（五段式交接）
 > 测试 / verify：`mvn -q -pl services/seckill-app-jdk8 -am test` → **exit 0，Tests run: 11, Failures: 0, Errors: 0, Skipped: 0**（`ProductApiTest` 5、`ActuatorEndpointsTest` 3、`ExternalizedConfigTest` 3；兄弟模块 `platform-common` 10、`seckill-core` 13 同批通过）；`mvn -q -pl services/seckill-app-jdk8 -am -DskipTests package` → **exit 0**，`target/seckill-app-jdk8-0.1.0-SNAPSHOT.jar`（44,030,521 B，repackage 后的可执行 jar，class 文件版本 52）
 > 运行状态：**本机 JRE 8 实跑通过并已退出**（`java -version` = 1.8.0_503；`SERVER_PORT=18082 APP_PROFILE=demo` 启动最终 jar → `Started SeckillJdk8Application in 5.641 seconds (JVM running for 6.193)`；curl：`/actuator/health` 200 UP、`/actuator/health/app` 200 UP、`/api/products/1` 200、`/api/products/20` 200、`/api/products/9999` 404、`/actuator/info` 200、`/actuator/prometheus` 200 / 75,118 B）；`taskkill` 后 18081/18082 均无监听、`git status --short` 为空；**未启动任何容器、未碰 Docker 栈、未改 compose/k6/dashboard**
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

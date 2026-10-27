@@ -5,6 +5,7 @@
 > 代码基线：`d8cedee`（`docs: hand over the step-47 probe target wiring and self-primary WARN`）
 > 交付：`AppProxyService` 第二份缓存白名单及测试、`CacheLab.vue`、`api.js` 缓存客户端、`App.vue` 导航、`style.css`、`console-smoke.mjs/.sh`、`doc/design/details/10-操作台与API.md`、本文档。
 > 边界：只改控制器代理、dashboard、console smoke、操作台文档与本交接；不动应用端 `/lab/cache/**` 实现，不改线程页白名单。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 ---
 

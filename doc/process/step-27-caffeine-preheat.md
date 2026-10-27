@@ -4,6 +4,7 @@
 > 关联任务：M4-3（设计 8.4 "Caffeine 预热"行；消费 M4-1 两级缓存与 M4-2a 击穿防护，不改动其契约）
 > 测试 / verify：`mvn -pl services/seckill-app-jdk21 -am test`（reactor 5 模块，JAVA_HOME=21）**BUILD SUCCESS**；改动前基线 **Tests run: 349**（0 failures / 0 errors / 0 skipped），修复后 **Tests run: 350**（`HotKeyTrackerTest` 由 6 增至 7）；首轮修复后全量运行中 `ThreadStateFingerprintTest`（线程实验室、负载敏感，与本步无关）偶发 1 失败，单独重跑 3/3 绿、随后全量重跑 350 全绿；M4-1 缓存套件（`TwoLevelCacheTest` 5、`LabCacheControllerTest` 7、`ProductPenetrationDefenseTest`、`NullValueMarkerStoreTest`、`ProductBloomFilterServiceTest`、`CacheExperimentDataServiceTest`、`CacheDefenseModeServiceTest` 6）、M4-2a 击穿套件（`ProductBreakdownDefenseTest` 20、`BreakdownProtectionConfigTest`、`LabCachePropertiesTest`）与本步 M4-3 套件（`HotKeyTrackerTest` 7、`HotKeyTrackingInterceptorTest` 4、`CachePreheatServiceTest` 8、`CachePreheatLifecycleTest` 5、`TwoLevelCacheTuningTest` 5、`LabCachePreheatPropertiesTest` 6、`LabCachePreheatControllerTest` 4、`CachePreheatEnabledContextIT` 1、`CachePreheatDisabledContextIT` 1）确认全绿未回归；未执行任何 Docker/compose 命令、未连实栈（模块 IT 按既有约定经 Testcontainers 随 reactor 运行）
 > 抢救说明：实现会话（agent `ba2068b9`）在写完测试后、生成交接文档前因基础设施错误中止，本文档由独立评审会话依据代码与测试重建；所有断言均以 diff、测试运行输出或本评审的修复验证为准，未验证事项只出现在"待定"里。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

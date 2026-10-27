@@ -3,6 +3,7 @@
 > 分支 / HEAD：worktree `agent-general-purpose-472cfdf2`，基线 `a37abfff`（`fix: stagger the deadlock workers ...`）
 > 关联任务：M4 缓存实验室观测层（消费 M4-1 两级缓存/穿透、M4-2a 击穿、M4-3 预热已落地的指标；不改任何 Java/compose/脚本/Vue）
 > 验证：`python -c "json.load(...)"` 与 `node -e "require(...)"` 均通过；未执行 Docker/compose，未启动 Grafana，**无法做视觉验证**，PromQL 也未对活栈执行。
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 

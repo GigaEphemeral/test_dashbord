@@ -4,6 +4,7 @@
 > 关联任务：#22（M2-4，本步 22a）
 > 测试 / verify：`node --check` 3 个 JS 全过；Node schema 校验两个场景通过 + 7 个反例全部拒绝；`bash -n run.sh` 通过；真实 k6 验收 `chaos-quick-20261026160758` exit 0、185 请求 / 183 checks 全过、`chaos_events=1 accepted`、teardown `stop-all` 已调用；另做一次 10s 短跑证明 `stop-all reverted=1`
 > 运行状态：16 个 lab 容器运行中；app-3 两次 kill 后均已恢复 healthy，`/chaos/actions` 为空；MySQL/Redis/RabbitMQ 与非 lab 容器未触碰
+> 口径指针（2026-10-27 文档整理）：本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次大多已消化；当前缺口口径统一看 `doc/design/details/README.md` §3.2。
 
 # 当前进展
 
