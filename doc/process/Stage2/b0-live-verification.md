@@ -263,9 +263,103 @@ redis-cli TTL cache:product:90001  ->  39    ← 播种雪崩键 TTL≈60（seed
 
 **结论：PASS**（前缀改值一条不在本轮真机范围，留给 B3/R2 顺手覆盖）
 
-## 5. B0-05 query string 经 Nginx
+## 5. B0-05 query string 经 Nginx 透传
 
-（进行中）
+链路：`curl(宿主机) → 127.0.0.1:8080 jl-nginx /lab-api/ → jl-chaos-controller:8081 /chaos/app/<实例>/**
+→ jl-app-N:8080 <白名单路径>?<query>`。控制器自带 `X-Lab-Token`（网关注入），所以宿主机侧要带
+`X-Lab-Token: lab-token`。证据：`/tmp/r1/b005-positive.log`、`b005-positive2.log`、`b005-longquery.log`、
+`b005-413.log`、`b005-400.log`、`b005-pipe.log`、`b005-tempo*.log`。
+
+### 5.0 先踩到的环境坑（与 B0-05 无关，但必须记）
+
+首轮全部 `HTTP=502`，nginx 错误日志是
+`connect() failed (111: Connection refused) ... upstream: "http://172.19.0.22:8081/..."`：
+`nginx` 的 `upstream`/`proxy_pass` 主机名在配置加载时解析一次并缓存，**recreate 应用层后 IP 变了而
+Nginx 不知道**。`docker exec jl-nginx nginx -t && nginx -s reload` 立刻恢复（`up.sh` 末段本来就做这件事，
+手册 §8 也写了「重建 app 层 + nginx -s reload」）。同因还解释了 §3 首轮 Nginx 流量集中打到 app-2/3、
+app-1 计数为 0 的怪象（Nginx 静默 failover 到可用节点）。⇒ 本轮之后每次单独 recreate 应用层，
+都紧跟一次 `nginx -s reload`。
+
+### 5.1 正路：白名单路径 + query 透传成功（以 app 侧证据为证）
+
+`GET /lab-api/chaos/app/app-1/lab/cache/state?tag=r1qmark7731&b=1%2B1&c=Zm9vYmFy%3D%3D` → `HTTP=200`
+（app 的 `Result` JSON 信封，`defense/breakdown/avalanche/dataset/keys/bloom/nullCache` 全量）。
+
+app 侧硬证据走 OpenTelemetry：app 容器由 javaagent 生成自己的 server span，其 `url.query` 属性即
+app 实际收到的原始 query。Tempo（`jl-tempo:3200/api/search`，TraceQL）查得：
+
+```
+rootServiceName = seckill-app   rootTraceName = "GET /lab/cache/state"
+span attributes: url.query = "tag=r1qmark7731&b=1%2B1&c=Zm9vYmFy%3D%3D"
+```
+
+与客户端发出的 query **逐字节相同**（`%2B`、`%3D%3D` 未被解码、未被重新编码、`&` 分段不变）——
+这正是 B0-05「只透传、不解释」的口径，且证明旧缺陷（query 全丢）已消失：若仍丢弃，
+`url.query` 会是空值、`rootTraceName` 也不会带这些参数。另附 Nginx 错误日志里的上游 URL
+（`.../chaos/app/app-1/lab/cache/state?a=b&mode=view&tag=r1-query-test`）证明 client→nginx→controller
+一跳同样带 query。`GET app-2 /lab/thread/state?...` 亦为 `HTTP=200`（`{"code":"0",...,"data":[]}`）。
+
+### 5.2 负路 1：请求体超 `CHAOS_APP_PROXY_MAX_REQUEST_BYTES` → 413
+
+9028 字节 body POST 到白名单带体路径 `/lab-api/chaos/app/app-1/lab/cache/mode`：
+
+```
+{"code":"41301","message":"Request body exceeds 8192 bytes"}   HTTP=413
+```
+
+同路径小 body 对照：`{"code":"0","data":{"mode":"off"}}` HTTP=200。
+上限 8192 未在任何 compose/.env 里出现（`grep CHAOS_APP_PROXY code/lab/docker/.env*` 无匹配），
+即 `application.yml` + `@ConfigurationProperties(chaos.app-proxy)` 的默认值生效，外置口径可验。
+（对照的 `mode=off` 就是 `LAB_CACHE_DEFENSE_MODE` 默认值，无需复位。）
+
+### 5.3 负路 2：非法 query → 400 且不出网
+
+```
+GET .../lab/cache/state?tag=r1bad8842&x=%zz
+{"code":"40001","message":"Query string is not a valid URI query and cannot be forwarded verbatim"} HTTP=400
+```
+
+「不出网」用 app 侧遥测反证：`{span.url.query=~".*r1bad8842%zz.*"}` 在 Tempo 查得 `{"traces":[]}`
+（同窗口同语法对 5.1 的 marker 能命中，说明查询本身有效）⇒ 该请求确实被网关挡在转发之前。
+
+### 5.4 白名单/方法回归（顺带复核 B0-05 修正在真机成立）
+
+```
+GET /lab-api/chaos/app/app-1/lab/toggles?cursor=1&limit=20
+  -> {"code":"40401","message":"Path is not in the app proxy allow-list: GET /lab/toggles"}  HTTP=404
+DELETE /lab-api/chaos/app/app-1/lab/cache/state?x=1
+  -> {"code":"40501","message":"Method 'DELETE' is not allowed; the proxy forwards GET and POST only"} HTTP=405
+```
+
+404 而非 405：与步骤文档「白名单外路径是 404/40401」的口径修正一致；且带 query 的白名单外路径
+仍按 path 判定（query 不参与白名单）。
+
+### 5.5 发现（不掩饰）：原始非法字符 `|` 的转义在真机入站路径不可达
+
+```
+GET /lab-api/chaos/app/app-1/lab/cache/state?tag=...&v=a|b          -> HTTP=400，Tomcat HTML 错误页
+GET http://jl-chaos-controller:8081/chaos/app/...?tag=...&v=a|b      -> HTTP=400，同样 Tomcat HTML
+GET .../lab/cache/state?tag=...&v=a%7Cb                              -> HTTP=200（app 正常应答）
+```
+
+现象：HTTP 400 由**控制器自身内嵌 Tomcat 在解析请求行时**发出（绕过 Nginx 直连 8081 同样 400，
+Tempo 中亦无对应 app span），响应体是 Tomcat 的 HTML 而非 `Result` 信封。
+初判：**不是 B0-05 的实现错**——单测 `HttpAppProxyGatewayTest` 断言的是「gateway 拿到含 `|` 的 query
+时只做字节级转义再拼 URI」，这条内部逻辑没被违反；真实入站链路上 `|` 在上游（Tomcat）就被拒了，
+所以转义分支只对「已合法编码的 query」或程序内调用生效。属**文档/测试口径与真机入站层次的落差**：
+若控制台要给用户自由输入的 query，需知道未编码的 RFC3986 非法字符会拿到 400 HTML（非 `Result` 信封）。
+建议由主会话决定是否在改造方案 §5.4 补一句口径说明；本轮未改代码、未改文档结论。
+
+### 逐项结论
+
+| 清单 / 步骤文档项 | 结果 |
+|---|---|
+| query string 经 Nginx 透传成功（app 响应/日志为证） | PASS（app span `url.query` 逐字节等于入参） |
+| 超限路径 413（体 > `CHAOS_APP_PROXY_MAX_REQUEST_BYTES`） | PASS（413/41301，上限 8192） |
+| 非法 query 400 | PASS（400/40001 且 Tempo 无 app span，证不出网） |
+| 白名单只看 path（带 query 的白名单外路径 404） | PASS（404/40401） |
+
+**结论：PASS**（另记 5.0 Nginx 需 reload 的操作坑与 5.5 `|` 入站 400 的口径落差）
 
 ## 6. B0-08a 镜像身份脚本与 bench 归档
 
