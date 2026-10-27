@@ -100,6 +100,11 @@ class ThreadSnapshotServiceTest {
         assertThat(metadata.get("pid").asLong()).isPositive();
         assertThat(metadata.get("commands").get("thread-dump.txt").asText())
                 .contains("jcmd").contains("Thread.print -l");
+        // The metadata manifest must describe the whole bundle (5 files), not
+        // only the three jcmd outputs written before metadata.json itself.
+        assertThat(objectMapper.convertValue(metadata.get("files"), List.class))
+                .containsExactly("thread-dump.txt", "heap-info.txt", "class-histogram.txt",
+                        "metadata.json", "analysis-template.md");
 
         assertThat(Files.readString(directory.resolve("analysis-template.md")))
                 .isEqualTo(classpathTemplate());
