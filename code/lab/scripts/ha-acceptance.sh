@@ -84,6 +84,12 @@ PRODUCT_PATH="$(env_default HA_ACCEPT_PRODUCT_PATH /api/products/1)"
 LAB_TOKEN="${HA_ACCEPT_LAB_TOKEN:-$(env_default LAB_TOKEN lab-token)}"
 
 CURL_TIMEOUT_SECONDS="$(env_default HA_ACCEPT_CURL_TIMEOUT_SECONDS 5)"
+# The kill POST is synchronous: the controller returns only after
+# gateway.stop(target, chaos.stop-grace-seconds) has run (default 10s). A MySQL
+# node needs seconds to shut InnoDB down, so a 5s budget answers 000 while the
+# action is already applied. This budget must cover the stop grace, not the
+# probe latency; it is used for the kill request only.
+KILL_TIMEOUT_SECONDS="$(env_default HA_ACCEPT_KILL_TIMEOUT_SECONDS 30)"
 EXEC_TIMEOUT_SECONDS="$(env_default HA_ACCEPT_EXEC_TIMEOUT_SECONDS 5)"
 POLL_INTERVAL_SECONDS="$(env_default HA_ACCEPT_POLL_INTERVAL_SECONDS 2)"
 HTTP_RECOVERY_THRESHOLD_SECONDS="$(env_default HA_ACCEPT_HTTP_RECOVERY_THRESHOLD_SECONDS 15)"
@@ -182,7 +188,7 @@ Exit codes
 Configuration precedence: process environment > code/lab/docker/.env > the
 defaults in the script. Useful overrides (all optional):
   HA_ACCEPT_CONTROLLER_URL, HA_ACCEPT_NGINX_URL, HA_ACCEPT_PRODUCT_PATH
-  HA_ACCEPT_LAB_TOKEN, HA_ACCEPT_CURL_TIMEOUT_SECONDS
+  HA_ACCEPT_LAB_TOKEN, HA_ACCEPT_CURL_TIMEOUT_SECONDS, HA_ACCEPT_KILL_TIMEOUT_SECONDS
   HA_ACCEPT_SENTINEL_TTL_SECONDS, HA_ACCEPT_SENTINEL_PROMOTION_BUDGET_SECONDS
   HA_ACCEPT_SENTINEL_REJOIN_BUDGET_SECONDS, HA_ACCEPT_SENTINEL_TARGET
   HA_ACCEPT_MYSQL_TTL_SECONDS, HA_ACCEPT_MYSQL_PROMOTION_BUDGET_SECONDS
@@ -297,6 +303,7 @@ if [[ "$PRODUCT_PATH" != /* ]]; then
 fi
 
 require_positive_uint HA_ACCEPT_CURL_TIMEOUT_SECONDS "$CURL_TIMEOUT_SECONDS"
+require_positive_uint HA_ACCEPT_KILL_TIMEOUT_SECONDS "$KILL_TIMEOUT_SECONDS"
 require_positive_uint HA_ACCEPT_EXEC_TIMEOUT_SECONDS "$EXEC_TIMEOUT_SECONDS"
 require_positive_uint HA_ACCEPT_POLL_INTERVAL_SECONDS "$POLL_INTERVAL_SECONDS"
 require_positive_uint HA_ACCEPT_HTTP_RECOVERY_THRESHOLD_SECONDS "$HTTP_RECOVERY_THRESHOLD_SECONDS"
@@ -463,9 +470,9 @@ http_call() { # <method> <url> [json-body] -> HTTP_CODE / HTTP_BODY
   fi
 }
 
-controller_call() { # <method> <path> [json-body] -> HTTP_CODE / HTTP_BODY
-  local method="$1" path="$2" data="${3:-}"
-  local -a args=(--silent --show-error --max-time "$CURL_TIMEOUT_SECONDS"
+controller_call() { # <method> <path> [json-body] [timeout-seconds] -> HTTP_CODE / HTTP_BODY
+  local method="$1" path="$2" data="${3:-}" timeout="${4:-$CURL_TIMEOUT_SECONDS}"
+  local -a args=(--silent --show-error --max-time "$timeout"
     -X "$method" -H 'Accept: application/json' -H "X-Lab-Token: $LAB_TOKEN"
     -w $'\n%{http_code}')
   if [[ -n "$data" ]]; then
@@ -1225,7 +1232,7 @@ sentinel_drill() {
   kill_start_ms="$(now_ms)"
   CLEANUP_ARMED=true
   controller_call POST "/chaos/instances/${target}/actions" \
-    "{\"action\":\"kill\",\"ttlSeconds\":${SENTINEL_TTL_SECONDS}}"
+    "{\"action\":\"kill\",\"ttlSeconds\":${SENTINEL_TTL_SECONDS}}" "$KILL_TIMEOUT_SECONDS"
 
   if [[ "$HTTP_CODE" == "202" || "$HTTP_CODE" == "200" ]] \
      && [[ "$(json_string target "$HTTP_BODY")" == "$target" ]] \
@@ -1487,7 +1494,7 @@ mysql_drill() {
   kill_start_ms="$(now_ms)"
   CLEANUP_ARMED=true
   controller_call POST "/chaos/instances/${target}/actions" \
-    "{\"action\":\"kill\",\"ttlSeconds\":${MYSQL_TTL_SECONDS}}"
+    "{\"action\":\"kill\",\"ttlSeconds\":${MYSQL_TTL_SECONDS}}" "$KILL_TIMEOUT_SECONDS"
 
   if [[ "$HTTP_CODE" == "202" || "$HTTP_CODE" == "200" ]] \
      && [[ "$(json_string target "$HTTP_BODY")" == "$target" ]] \
