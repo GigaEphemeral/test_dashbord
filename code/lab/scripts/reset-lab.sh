@@ -9,13 +9,30 @@
 #   - MySQL: truncate order_order; reset inventory_stock for every catalog
 #     product to RESET_BASELINE_STOCK (reserved=0). Flyway history and catalog
 #     seeds are untouched.
-#   - Redis: FLUSHDB on the lab-only instance (cache L2, login tokens, seckill
-#     idempotency claims and seckill:stock:* keys).
+#   - Redis: FLUSHDB on the lab Redis the stack actually runs (see the
+#     topology-resolution note below).
 #   - RabbitMQ: purge the seckill queue via the management API.
 #   - App tier: stop app-1/2/3 before the data reset (so no consumer can write
 #     during it), then start them again; the startup seeder repopulates Redis
 #     stock from MySQL and runtime toggles/circuit breakers/Caffeine L1 return
 #     to their seeds.
+#
+# Reset-target topology (B0-06): the MySQL/Redis targets are resolved from the
+# current stack topology instead of hard-defaulting to the standalone
+# containers. Two signals drive it - the declared switch keys MYSQL_MODE /
+# REDIS_MODE (the same ones compose injects into the app tier, read from the
+# already-sourced .env; RESET_MYSQL_MODE / RESET_REDIS_MODE override them),
+# cross-checked against a live docker-inspect probe of the lab containers:
+#   standalone : jl-mysql (socket) / jl-redis
+#   router     : InnoDB Cluster through MySQL Router (mysql-router:6446), with
+#                the first running jl-mysql-<n> as the client container;
+#                without a running Router the nodes are probed one by one and
+#                the current PRIMARY (read_only=0) is targeted.
+#   sentinel   : every running jl-redis-<n> is flushed; verification follows
+#                the current master (redis "info replication" role probe).
+# An unresolvable or contradictory topology aborts (exit 2) BEFORE any change
+# and prints the observed container states. The full resolved target list is
+# printed before anything happens (also under --dry-run).
 #
 # Never runs `docker compose down`, never removes volumes, and never touches a
 # container outside the pinned `java-learn-lab` compose project. Every value
@@ -50,6 +67,31 @@ BASELINE_STOCK="${RESET_BASELINE_STOCK:-100}"
 RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-seckill.order.queue}"
 RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://127.0.0.1:15672}"
 SECKILL_STOCK_KEY_PREFIX="${RESET_SECKILL_STOCK_KEY_PREFIX:-seckill:stock:}"
+
+# --- Topology-resolution knobs (B0-06; all env-overridable, 工程规约 §1) -----
+# Empty RESET_MYSQL_MODE / RESET_REDIS_MODE means "use the declared switch keys
+# from the lab .env" (MYSQL_MODE / REDIS_MODE), which is what the app tier is
+# configured with; the live container probe then validates it.
+RESET_MYSQL_MODE="${RESET_MYSQL_MODE:-}"
+RESET_REDIS_MODE="${RESET_REDIS_MODE:-}"
+DEFAULT_MYSQL_MODE="${DEFAULT_MYSQL_MODE:-standalone}"
+DEFAULT_REDIS_MODE="${DEFAULT_REDIS_MODE:-standalone}"
+CONTAINER_PREFIX="${RESET_CONTAINER_PREFIX:-jl-}"
+# DB-HA MySQL cluster: node service names (compose.mysql.yml), the Router
+# service/host and its read-write port.
+MYSQL_HA_NODES_RAW="${RESET_MYSQL_HA_NODES:-mysql-1 mysql-2 mysql-3}"
+MYSQL_ROUTER_CONTAINER="${RESET_MYSQL_ROUTER_CONTAINER:-${CONTAINER_PREFIX}mysql-router}"
+MYSQL_ROUTER_SERVICE="${RESET_MYSQL_ROUTER_SERVICE:-mysql-router}"
+MYSQL_ROUTER_HOST="${RESET_MYSQL_ROUTER_HOST:-mysql-router}"
+MYSQL_ROUTER_RW_PORT="${RESET_MYSQL_ROUTER_RW_PORT:-6446}"
+MYSQL_NODE_PORT="${RESET_MYSQL_NODE_PORT:-3306}"
+# Redis HA (compose.ha.yml) data-node service names and client port.
+REDIS_HA_NODES_RAW="${RESET_REDIS_HA_NODES:-redis-1 redis-2 redis-3}"
+REDIS_NODE_PORT="${RESET_REDIS_NODE_PORT:-6379}"
+# Role probes during resolution (cluster primary / redis master discovery).
+TOPOLOGY_PROBE_RETRIES="${RESET_TOPOLOGY_PROBE_RETRIES:-3}"
+TOPOLOGY_PROBE_INTERVAL_SECONDS="${RESET_TOPOLOGY_PROBE_INTERVAL_SECONDS:-2}"
+MYSQL_CONNECT_TIMEOUT_SECONDS="${RESET_MYSQL_CONNECT_TIMEOUT_SECONDS:-5}"
 
 HEALTH_URL="${RESET_HEALTH_URL:-http://127.0.0.1:8080/health}"
 APP_HEALTH_TIMEOUT_SECONDS="${RESET_APP_HEALTH_TIMEOUT_SECONDS:-180}"
@@ -89,6 +131,23 @@ Environment (defaults):
   RESET_ENV_FILE=<repo>/code/lab/docker/.env
   RESET_COMPOSE_PROJECT=java-learn-lab
 
+Topology resolution (B0-06 - the reset targets follow the running stack):
+  MYSQL_MODE / REDIS_MODE from the .env declare the topology (the same switch
+  compose injects into the app tier); a live docker-inspect probe validates it.
+  router/sentinel modes target the cluster (Router 6446 or per-node), NOT the
+  standalone jl-mysql/jl-redis. An unresolvable topology aborts with exit 2
+  before any change; the resolved target list is printed first (also dry-run).
+  RESET_MYSQL_MODE=                       override MYSQL_MODE for this run
+  RESET_REDIS_MODE=                       override REDIS_MODE for this run
+  RESET_CONTAINER_PREFIX=jl-
+  RESET_MYSQL_HA_NODES="mysql-1 mysql-2 mysql-3"
+  RESET_MYSQL_ROUTER_CONTAINER=jl-mysql-router  RESET_MYSQL_ROUTER_SERVICE=mysql-router
+  RESET_MYSQL_ROUTER_HOST=mysql-router    RESET_MYSQL_ROUTER_RW_PORT=6446
+  RESET_MYSQL_NODE_PORT=3306
+  RESET_REDIS_HA_NODES="redis-1 redis-2 redis-3"  RESET_REDIS_NODE_PORT=6379
+  RESET_TOPOLOGY_PROBE_RETRIES=3          RESET_TOPOLOGY_PROBE_INTERVAL_SECONDS=2
+  RESET_MYSQL_CONNECT_TIMEOUT_SECONDS=5
+
 Credentials (MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE/RABBITMQ_DEFAULT_USER/
 RABBITMQ_DEFAULT_PASS) are read from RESET_ENV_FILE. No volume is removed and
 no container outside the java-learn-lab compose project is touched.
@@ -123,7 +182,10 @@ if [[ ! "$BASELINE_STOCK" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 for numeric in APP_HEALTH_TIMEOUT_SECONDS APP_HEALTH_INTERVAL_SECONDS \
-  VERIFY_RETRIES VERIFY_INTERVAL_SECONDS CURL_MAX_TIME COMPOSE_TIMEOUT_SECONDS; do
+  VERIFY_RETRIES VERIFY_INTERVAL_SECONDS CURL_MAX_TIME COMPOSE_TIMEOUT_SECONDS \
+  TOPOLOGY_PROBE_RETRIES TOPOLOGY_PROBE_INTERVAL_SECONDS \
+  MYSQL_CONNECT_TIMEOUT_SECONDS MYSQL_ROUTER_RW_PORT MYSQL_NODE_PORT \
+  REDIS_NODE_PORT; do
   value="${!numeric}"
   if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
     printf 'ERROR: %s must be a positive integer, got "%s".\n' "$numeric" "$value" >&2
@@ -273,18 +335,74 @@ rabbit_curl() {
 }
 
 # Runs a read-only or write SQL statement; the password travels via the 0600
-# MYSQL_PWD env file, only the (non-sensitive) user name is on argv.
+# MYSQL_PWD env file, only the (non-sensitive) user name is on argv. The host
+# and port come from the resolved topology (empty host = container-local socket).
+MYSQL_EXEC_CONTAINER="$MYSQL_CONTAINER"
+MYSQL_EXEC_HOST=""
+MYSQL_EXEC_PORT=""
+MYSQL_CONN_ARGS=()
+
+mysql_conn_args() { # rebuild the -h/-P argv tail from the resolved connection
+  if [[ -n "$MYSQL_EXEC_HOST" ]]; then
+    MYSQL_CONN_ARGS=(-h "$MYSQL_EXEC_HOST" -P "$MYSQL_EXEC_PORT")
+  else
+    MYSQL_CONN_ARGS=()
+  fi
+}
+
 mysql_exec() {
-  docker exec --env-file "$(host_path "$MYSQL_PWD_FILE")" "$MYSQL_CONTAINER" \
-    mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$1"
+  mysql_conn_args
+  docker exec --env-file "$(host_path "$MYSQL_PWD_FILE")" "$MYSQL_EXEC_CONTAINER" \
+    mysql "${MYSQL_CONN_ARGS[@]}" \
+    --connect-timeout="$MYSQL_CONNECT_TIMEOUT_SECONDS" \
+    -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$1"
+}
+
+# mysql_query_on <container> <host> <port> <sql>: same credential transport, but
+# aimed at an explicit node. Used only by the read-only topology probes.
+mysql_query_on() {
+  local container="$1" host="$2" port="$3" sql="$4" args=()
+  if [[ -n "$host" ]]; then
+    args=(-h "$host" -P "$port")
+  fi
+  docker exec --env-file "$(host_path "$MYSQL_PWD_FILE")" "$container" \
+    mysql "${args[@]}" --connect-timeout="$MYSQL_CONNECT_TIMEOUT_SECONDS" \
+    -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B -e "$sql" 2>/dev/null \
+    | tr -d '\r\n' || true
+}
+
+# mysql_query_retry <container> <host> <port> <sql>: bounded probe (工程规约 §1:
+# every wait gets a timeout + retry count), so a node mid-rejoin cannot hang
+# the resolution.
+mysql_query_retry() {
+  local container="$1" host="$2" port="$3" sql="$4" attempt out=""
+  for attempt in $(seq 1 "$TOPOLOGY_PROBE_RETRIES"); do
+    out="$(mysql_query_on "$container" "$host" "$port" "$sql")"
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+    if (( attempt < TOPOLOGY_PROBE_RETRIES )); then
+      sleep "$TOPOLOGY_PROBE_INTERVAL_SECONDS"
+    fi
+  done
+  return 1
 }
 
 mysql_scalar() {
   mysql_exec "$1" 2>/dev/null | tr -d '\r\n' || true
 }
 
+redis_cli_on() { # <container> <redis-cli args...>
+  docker exec "$1" redis-cli "${@:2}" 2>/dev/null | tr -d '\r' || true
+}
+
+# Redis targets are resolved below (REDIS_TARGETS); this wrapper keeps the
+# single-instance call sites working against the first resolved node.
+REDIS_TARGETS=("$REDIS_CONTAINER")
+REDIS_VERIFY_CONTAINER="$REDIS_CONTAINER"
 redis_cli() {
-  docker exec "$REDIS_CONTAINER" redis-cli "$@" 2>/dev/null | tr -d '\r' || true
+  redis_cli_on "$REDIS_VERIFY_CONTAINER" "$@"
 }
 
 # First occurrence only: the queue object is a single JSON line and nested
@@ -297,28 +415,224 @@ queue_field() {
   grep -o "\"$1\":[0-9][0-9]*" <<<"$body" | head -n 1 | cut -d: -f2
 }
 
+# --- Reset-target topology resolution (B0-06) --------------------------------
+# The reset targets follow the topology the stack actually runs, never a
+# hard-coded standalone default. Inputs: the declared switch keys MYSQL_MODE /
+# REDIS_MODE (compose injects the same keys into the app tier; read from the
+# already-sourced .env, overridable via RESET_MYSQL_MODE / RESET_REDIS_MODE),
+# cross-checked against a live docker-inspect probe of the lab containers.
+read -r -a MYSQL_HA_NODE_SERVICES <<<"$MYSQL_HA_NODES_RAW"
+read -r -a REDIS_HA_NODE_SERVICES <<<"$REDIS_HA_NODES_RAW"
+MYSQL_HA_NODE_CONTAINERS=()
+for node in "${MYSQL_HA_NODE_SERVICES[@]}"; do
+  MYSQL_HA_NODE_CONTAINERS+=("${CONTAINER_PREFIX}${node}")
+done
+REDIS_HA_NODE_CONTAINERS=()
+for node in "${REDIS_HA_NODE_SERVICES[@]}"; do
+  REDIS_HA_NODE_CONTAINERS+=("${CONTAINER_PREFIX}${node}")
+done
+
+MYSQL_MODE_DECLARED="${RESET_MYSQL_MODE:-${MYSQL_MODE:-$DEFAULT_MYSQL_MODE}}"
+REDIS_MODE_DECLARED="${RESET_REDIS_MODE:-${REDIS_MODE:-$DEFAULT_REDIS_MODE}}"
+
+# lab_container_ok <container>: running AND part of the pinned compose project.
+lab_container_ok() {
+  [[ "$(container_state "$1")" == "running" ]] || return 1
+  [[ "$(container_project "$1")" == "$COMPOSE_PROJECT" ]] || return 1
+}
+
+topology_observed=()
+observe_container() { # <container> -> record "name state project" for the report
+  topology_observed+=("$(printf '%-22s state=%-8s project=%s' \
+    "$1" "${2:-missing}" "${3:-<none>}")")
+}
+
+# fail_topology aborts BEFORE any destructive step (exit 2) and shows exactly
+# what was observed, so "which MySQL/Redis is live right now" is answerable
+# from the error output alone.
+fail_topology() { # <reason>
+  printf 'ERROR: cannot resolve the reset target topology; nothing was changed.\n' >&2
+  printf '  reason: %s\n' "$1" >&2
+  printf '  declared MYSQL_MODE=%s REDIS_MODE=%s (override with RESET_MYSQL_MODE / RESET_REDIS_MODE)\n' \
+    "$MYSQL_MODE_DECLARED" "$REDIS_MODE_DECLARED" >&2
+  printf '  observed containers:\n' >&2
+  for line in "${topology_observed[@]}"; do
+    printf '    %s\n' "$line" >&2
+  done
+  printf '  hints: start the stack (up.sh / db-ha-up.sh); for the cluster route\n' >&2
+  printf '         keep MySQL Router up or the nodes with a PRIMARY; node name\n' >&2
+  printf '         patterns are RESET_MYSQL_HA_NODES / RESET_REDIS_HA_NODES.\n' >&2
+  exit 2
+}
+
+# Collect the observations once; every candidate container is reported, whether
+# or not it takes part in the decision (that is the "will I reset the right
+# thing" audit trail).
+for candidate in "$MYSQL_CONTAINER" "${MYSQL_HA_NODE_CONTAINERS[@]}" "$MYSQL_ROUTER_CONTAINER" \
+  "$REDIS_CONTAINER" "${REDIS_HA_NODE_CONTAINERS[@]}"; do
+  observe_container "$candidate" "$(container_state "$candidate")" "$(container_project "$candidate")"
+done
+
+# MySQL: resolve the topology and the connection (exec container + host/port).
+mysql_standalone_ok=false
+lab_container_ok "$MYSQL_CONTAINER" && mysql_standalone_ok=true
+mysql_router_ok=false
+lab_container_ok "$MYSQL_ROUTER_CONTAINER" && mysql_router_ok=true
+mysql_nodes_running=()
+for node_container in "${MYSQL_HA_NODE_CONTAINERS[@]}"; do
+  lab_container_ok "$node_container" && mysql_nodes_running+=("$node_container")
+done
+
+MYSQL_MODE_NOTE=""
+case "$MYSQL_MODE_DECLARED" in
+  standalone)
+    if $mysql_standalone_ok; then
+      MYSQL_TOPOLOGY="standalone"
+    elif (( ${#mysql_nodes_running[@]} > 0 )) || $mysql_router_ok; then
+      MYSQL_TOPOLOGY="cluster"
+      MYSQL_MODE_NOTE="declared MYSQL_MODE=standalone but $MYSQL_CONTAINER is not running; the DB-HA tier is the live MySQL"
+    else
+      fail_topology "MYSQL_MODE=standalone but no lab MySQL is running ($MYSQL_CONTAINER and the cluster nodes are all down)"
+    fi
+    ;;
+  router)
+    if (( ${#mysql_nodes_running[@]} > 0 )) || $mysql_router_ok; then
+      MYSQL_TOPOLOGY="cluster"
+    else
+      fail_topology "MYSQL_MODE=router but no cluster member is running ($MYSQL_ROUTER_CONTAINER and ${MYSQL_HA_NODE_CONTAINERS[*]} are all down)"
+    fi
+    ;;
+  *)
+    fail_topology "unknown MYSQL_MODE value \"$MYSQL_MODE_DECLARED\" (expected standalone|router)"
+    ;;
+esac
+
+MYSQL_EXEC_HOST=""
+MYSQL_EXEC_PORT=""
+if [[ "$MYSQL_TOPOLOGY" == "standalone" ]]; then
+  MYSQL_EXEC_CONTAINER="$MYSQL_CONTAINER"
+  MYSQL_ROUTE_DESC="container-local socket in $MYSQL_CONTAINER (standalone dev MySQL)"
+else
+  if (( ${#mysql_nodes_running[@]} == 0 )); then
+    fail_topology "cluster topology resolved but no jl-mysql-<n> node is running: the mysql client must execute inside a node container (the Router image ships none)"
+  fi
+  if $mysql_router_ok; then
+    # Route through MySQL Router 6446: writes land on the current PRIMARY.
+    MYSQL_EXEC_CONTAINER="${mysql_nodes_running[0]}"
+    MYSQL_EXEC_HOST="$MYSQL_ROUTER_HOST"
+    MYSQL_EXEC_PORT="$MYSQL_ROUTER_RW_PORT"
+    MYSQL_ROUTE_DESC="MySQL Router $MYSQL_ROUTER_HOST:$MYSQL_ROUTER_RW_PORT (follows the PRIMARY), client exec in $MYSQL_EXEC_CONTAINER"
+  else
+    # No Router (--skip-router or Router down): probe each running node and
+    # target the current PRIMARY directly; Group Replication propagates the
+    # writes to the secondaries.
+    MYSQL_EXEC_CONTAINER=""
+    for node_container in "${mysql_nodes_running[@]}"; do
+      read_only="$(mysql_query_retry "$node_container" 127.0.0.1 "$MYSQL_NODE_PORT" 'SELECT @@read_only;')" || true
+      if [[ "$read_only" == "0" ]]; then
+        MYSQL_EXEC_CONTAINER="$node_container"
+        break
+      fi
+    done
+    if [[ -z "$MYSQL_EXEC_CONTAINER" ]]; then
+      fail_topology "MYSQL_MODE=router, MySQL Router is not running and none of ${mysql_nodes_running[*]} reports a writable PRIMARY (@@read_only=0); stabilize the group first (db-cluster-status.sh)"
+    fi
+    MYSQL_EXEC_HOST="127.0.0.1"
+    MYSQL_EXEC_PORT="$MYSQL_NODE_PORT"
+    MYSQL_ROUTE_DESC="per-node direct: PRIMARY $MYSQL_EXEC_CONTAINER (Router $MYSQL_ROUTER_CONTAINER not running; GR replicates the writes)"
+  fi
+fi
+
+# Redis: same treatment for the standalone vs Sentinel data-node topology.
+redis_standalone_ok=false
+lab_container_ok "$REDIS_CONTAINER" && redis_standalone_ok=true
+redis_nodes_running=()
+for node_container in "${REDIS_HA_NODE_CONTAINERS[@]}"; do
+  lab_container_ok "$node_container" && redis_nodes_running+=("$node_container")
+done
+
+REDIS_MODE_NOTE=""
+case "$REDIS_MODE_DECLARED" in
+  standalone)
+    if $redis_standalone_ok; then
+      REDIS_TARGETS=("$REDIS_CONTAINER")
+    elif (( ${#redis_nodes_running[@]} > 0 )); then
+      REDIS_TARGETS=("${redis_nodes_running[@]}")
+      REDIS_MODE_NOTE="declared REDIS_MODE=standalone but $REDIS_CONTAINER is not running; flushing the HA data nodes instead"
+    else
+      fail_topology "REDIS_MODE=standalone but no lab Redis is running ($REDIS_CONTAINER and ${REDIS_HA_NODE_CONTAINERS[*]} are all down)"
+    fi
+    ;;
+  sentinel)
+    if (( ${#redis_nodes_running[@]} > 0 )); then
+      REDIS_TARGETS=("${redis_nodes_running[@]}")
+    else
+      fail_topology "REDIS_MODE=sentinel but none of ${REDIS_HA_NODE_CONTAINERS[*]} is running"
+    fi
+    ;;
+  *)
+    fail_topology "unknown REDIS_MODE value \"$REDIS_MODE_DECLARED\" (expected standalone|sentinel)"
+    ;;
+esac
+
+# Verification reads the current master/primary member: probe the role on each
+# flush target; fall back to the first target when no probe answers (e.g. a
+# standalone instance reports role:master anyway).
+REDIS_VERIFY_CONTAINER="${REDIS_TARGETS[0]}"
+if (( ${#REDIS_TARGETS[@]} > 1 )); then
+  for node_container in "${REDIS_TARGETS[@]}"; do
+    role_line="$(redis_cli_on "$node_container" info replication | tr -d '\n' || true)"
+    if [[ "$role_line" == *"role:master"* ]]; then
+      REDIS_VERIFY_CONTAINER="$node_container"
+      break
+    fi
+  done
+fi
+
+# --- Print the resolved targets BEFORE anything else -------------------------
+echo "Reset targets (resolved from the current stack topology):"
+echo "  declared modes   : MYSQL_MODE=$MYSQL_MODE_DECLARED REDIS_MODE=$REDIS_MODE_DECLARED (source: .env + RESET_* overrides)"
+echo "  MySQL topology   : $MYSQL_TOPOLOGY"
+echo "  MySQL target     : container=$MYSQL_EXEC_CONTAINER db=$MYSQL_DATABASE route=[$MYSQL_ROUTE_DESC]"
+if [[ "$MYSQL_TOPOLOGY" == "cluster" ]]; then
+  echo "  MySQL nodes seen : ${mysql_nodes_running[*]:-none} router=$($mysql_router_ok && echo running || echo not-running)"
+fi
+echo "  Redis topology   : $([[ "${REDIS_TARGETS[0]}" == "$REDIS_CONTAINER" ]] && echo standalone || echo cluster)"
+echo "  Redis targets    : ${REDIS_TARGETS[*]} (FLUSHDB each; verify on $REDIS_VERIFY_CONTAINER)"
+for note in "$MYSQL_MODE_NOTE" "$REDIS_MODE_NOTE"; do
+  [[ -n "$note" ]] && printf 'WARN: topology note: %s\n' "$note" >&2
+done
+echo
+
 # Preflight collects every problem before any destructive action. A real run
 # aborts on the first reported issue; --dry-run reports them as warnings so an
 # operator can inspect the plan while the stack is stopped.
 preflight_problems=()
 
-for service in "$MYSQL_SERVICE" "$REDIS_SERVICE" "$RABBITMQ_SERVICE" "${APP_SERVICES[@]}"; do
+# The reset targets themselves: the standalone service names only matter in
+# standalone mode; cluster targets are validated by the container probe below
+# (compose.mysql.yml / compose.ha.yml are not part of this reset model).
+for service in "$RABBITMQ_SERVICE" "${APP_SERVICES[@]}"; do
   if ! service_exists "$service"; then
     preflight_problems+=("compose service \"$service\" is not part of project $COMPOSE_PROJECT")
   fi
 done
+if [[ "$MYSQL_TOPOLOGY" == "standalone" ]] && ! service_exists "$MYSQL_SERVICE"; then
+  preflight_problems+=("compose service \"$MYSQL_SERVICE\" is not part of project $COMPOSE_PROJECT")
+fi
+if [[ "${REDIS_TARGETS[0]}" == "$REDIS_CONTAINER" ]] && ! service_exists "$REDIS_SERVICE"; then
+  preflight_problems+=("compose service \"$REDIS_SERVICE\" is not part of project $COMPOSE_PROJECT")
+fi
 
-for pair in "$MYSQL_SERVICE:$MYSQL_CONTAINER" "$REDIS_SERVICE:$REDIS_CONTAINER" \
-  "$RABBITMQ_SERVICE:$RABBITMQ_CONTAINER"; do
-  service="${pair%%:*}"
-  container="${pair#*:}"
+# Every resolved target container must be running and inside the pinned
+# project. Reject an empty label too: a plain (non-compose) container that
+# merely shares the name must never be reset.
+for container in "$MYSQL_EXEC_CONTAINER" "${REDIS_TARGETS[@]}" "$RABBITMQ_CONTAINER"; do
   state="$(container_state "$container")"
   project="$(container_project "$container")"
   if [[ "$state" != "running" ]]; then
     preflight_problems+=("$container is not running (state=${state:-missing})")
   fi
-  # Reject an empty label too: a plain (non-compose) container that merely
-  # shares the name must never be reset.
   if [[ "$project" != "$COMPOSE_PROJECT" ]]; then
     preflight_problems+=("$container compose project label is \"${project:-<missing>}\", expected \"$COMPOSE_PROJECT\"")
   fi
@@ -357,10 +671,11 @@ else
 fi
 
 # Readability probes for the two direct-exec datastores, so a wrong
-# credential or dead service is caught before the app tier goes down.
+# credential or dead service is caught before the app tier goes down. The
+# MySQL probe now runs against the RESOLVED target (cluster route included).
 mysql_probe="$(mysql_scalar 'SELECT 1;')"
 if [[ "$mysql_probe" != "1" ]]; then
-  preflight_problems+=("cannot run read-only MySQL queries on $MYSQL_CONTAINER (check credentials/database)")
+  preflight_problems+=("cannot run read-only MySQL queries on $MYSQL_EXEC_CONTAINER via [$MYSQL_ROUTE_DESC] (check credentials/database)")
 else
   catalog_probe="$(mysql_scalar 'SELECT COUNT(*) FROM catalog_product;')"
   if [[ ! "$catalog_probe" =~ ^[0-9]+$ ]] || (( catalog_probe == 0 )); then
@@ -368,10 +683,12 @@ else
   fi
 fi
 
-redis_ping="$(redis_cli ping | tr -d '\n' || true)"
-if [[ "$redis_ping" != "PONG" ]]; then
-  preflight_problems+=("redis-cli ping on $REDIS_CONTAINER returned \"${redis_ping:-no response}\", expected PONG")
-fi
+for target in "${REDIS_TARGETS[@]}"; do
+  redis_ping="$(redis_cli_on "$target" ping | tr -d '\n' || true)"
+  if [[ "$redis_ping" != "PONG" ]]; then
+    preflight_problems+=("redis-cli ping on $target returned \"${redis_ping:-no response}\", expected PONG")
+  fi
+done
 
 if (( ${#preflight_problems[@]} > 0 )); then
   if $DRY_RUN; then
@@ -402,7 +719,8 @@ redis_dbsize="$(redis_cli dbsize | tr -d '\n' || true)"
 echo "Reset plan (project=$COMPOSE_PROJECT, env=$ENV_FILE)"
 echo "  1. stop app tier      : ${APP_SERVICES[*]}"
 echo "  2. MySQL              : TRUNCATE order_order; inventory_stock -> available=$BASELINE_STOCK, reserved=0"
-echo "  3. Redis              : FLUSHDB on $REDIS_CONTAINER (lab-only instance)"
+echo "                          (topology=$MYSQL_TOPOLOGY, exec in $MYSQL_EXEC_CONTAINER, route=[$MYSQL_ROUTE_DESC])"
+echo "  3. Redis              : FLUSHDB on ${REDIS_TARGETS[*]} (verify on $REDIS_VERIFY_CONTAINER)"
 echo "  4. RabbitMQ           : purge queue \"$RABBITMQ_QUEUE\""
 echo "  5. start app tier     : ${APP_SERVICES[*]} (stock seeder repopulates Redis, toggles reset)"
 echo "  6. verify             : inventory min/max=$BASELINE_STOCK, reserved=0, orders=0,"
@@ -453,14 +771,18 @@ WHERE NOT EXISTS (SELECT 1 FROM inventory_stock s WHERE s.product_id = c.id);
 "
 mysql_exec "$mysql_reset_sql" >/dev/null
 
-# 3. Redis FLUSHDB: the lab instance holds only lab keys (cache, login tokens,
-#    seckill idempotency claims, seckill:stock:*).
-step "flushing Redis DB on $REDIS_CONTAINER"
-redis_flush="$(redis_cli flushdb | tr -d '\n' || true)"
-if [[ "$redis_flush" != "OK" ]]; then
-  echo "ERROR: redis-cli flushdb returned \"$redis_flush\"." >&2
-  exit 1
-fi
+# 3. Redis FLUSHDB on every resolved target: the lab instance(s) hold only lab
+#    keys (cache, login tokens, seckill idempotency claims, seckill:stock:*).
+#    In the cluster topology each data node is flushed explicitly (a detached
+#    replica must not keep stale stock keys).
+step "flushing Redis DB on ${REDIS_TARGETS[*]}"
+for target in "${REDIS_TARGETS[@]}"; do
+  redis_flush="$(redis_cli_on "$target" flushdb | tr -d '\n' || true)"
+  if [[ "$redis_flush" != "OK" ]]; then
+    echo "ERROR: redis-cli flushdb on $target returned \"$redis_flush\"." >&2
+    exit 1
+  fi
+done
 
 # 4. RabbitMQ: delete ready messages; the durable queue and bindings stay.
 step "purging RabbitMQ queue \"$RABBITMQ_QUEUE\""
@@ -597,6 +919,8 @@ elapsed=$(( SECONDS - start_seconds ))
 echo
 echo "RESET SUMMARY"
 echo "  project        : $COMPOSE_PROJECT"
+echo "  mysql target   : $MYSQL_EXEC_CONTAINER ($MYSQL_TOPOLOGY) via [$MYSQL_ROUTE_DESC]"
+echo "  redis targets  : ${REDIS_TARGETS[*]} (verified on $REDIS_VERIFY_CONTAINER)"
 echo "  baseline stock : $BASELINE_STOCK"
 echo "  catalog        : $catalog_count products"
 echo "  inventory      : rows=$inventory_rows min=$inventory_min max=$inventory_max reserved_sum=$reserved_sum"
