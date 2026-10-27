@@ -123,6 +123,13 @@ if [[ -n "$K6_SUMMARY_EXPORT" && -z "$K6_REPORT_DIR" ]]; then
     "$K6_REPORT_MOUNT" >&2
   exit 2
 fi
+# k6 runs with `-w /scripts`, which is mounted read-only, so a bare filename
+# only fails when the summary is written -- after the whole run. Reject it here.
+if [[ -n "$K6_SUMMARY_EXPORT" && "$K6_SUMMARY_EXPORT" != "$K6_REPORT_MOUNT"/* ]]; then
+  printf 'ERROR: K6_SUMMARY_EXPORT is a path INSIDE the k6 container, not on the host: it must start with %s/ (for example %s/summary.json).\n' \
+    "$K6_REPORT_MOUNT" "$K6_REPORT_MOUNT" >&2
+  exit 2
+fi
 if [[ -n "$K6_REPORT_DIR" ]]; then
   mkdir -p "$K6_REPORT_DIR"
   K6_REPORT_DIR="$(cd "$K6_REPORT_DIR" && pwd)"
