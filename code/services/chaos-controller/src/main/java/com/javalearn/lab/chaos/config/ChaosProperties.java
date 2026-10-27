@@ -614,6 +614,14 @@ public class ChaosProperties {
         /** Grace period for an in-flight exec on context shutdown (0 = immediate). */
         private int shutdownTimeoutSeconds = 5;
 
+        /**
+         * When a probe fails, read the probe container's own Docker state once to
+         * tell "the node is alive but MySQL answered wrongly" apart from "the probe
+         * container itself was killed" (B0-08 slice B: 观测自损). Costs exactly one
+         * extra {@code inspect} per failed tick, so it can be turned off.
+         */
+        private boolean failureContainerCheckEnabled = true;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -700,6 +708,14 @@ public class ChaosProperties {
 
         public void setShutdownTimeoutSeconds(int shutdownTimeoutSeconds) {
             this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
+        }
+
+        public boolean isFailureContainerCheckEnabled() {
+            return failureContainerCheckEnabled;
+        }
+
+        public void setFailureContainerCheckEnabled(boolean failureContainerCheckEnabled) {
+            this.failureContainerCheckEnabled = failureContainerCheckEnabled;
         }
 
         /**

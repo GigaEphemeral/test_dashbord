@@ -1,7 +1,9 @@
 package com.javalearn.lab.chaos.cluster;
 
 import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
+import com.javalearn.lab.chaos.model.ContainerView;
 import com.javalearn.lab.chaos.model.ExecResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -14,7 +16,9 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -57,6 +61,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * container name ({@code jl-mysql-N}); the mapping is an explicit prefix strip,
  * never a substring/contains guess.</p>
  *
+ * <p><b>Failure self-diagnosis (B0-08 slice B).</b> Before concluding anything
+ * from a failed probe, the monitor reads the probe container's own Docker state
+ * (one extra {@code inspect} per failed tick, switch
+ * {@code chaos.mysql-cluster.failure-container-check-enabled}) and records it as
+ * {@link ProbeContainerState}: {@code RUNNING} means the node answered badly and
+ * the cluster may really be degraded, {@code NOT_RUNNING} means the drill killed
+ * the observer - then {@code mysql_cluster_*} freezes and proves nothing. The
+ * companion rule that keeps the two apart in the first place lives in
+ * {@link ProbeTargetGuard}, which refuses destructive actions on the probe
+ * container.</p>
+ *
  * <p><b>Secrets.</b> The controller never holds the MySQL password. The
  * default command runs a bash script inside the node that expands
  * {@code MYSQL_PWD} from the container's own environment (the variable name is
@@ -83,10 +98,29 @@ public class MysqlClusterMonitor implements AutoCloseable {
     /** SQL travels as an env var: docker-java hangs when an exec attaches stdin (see step-31). */
     public static final String ENV_QUERY = "MYSQL_CLUSTER_QUERY";
 
+    /**
+     * What the probe container's own Docker state says about a failed probe
+     * (B0-08 slice B). A probe failure has two very different causes and the
+     * panel must not present them as one: the node answered badly (the cluster
+     * may really be degraded) while the observer stayed alive, or the container
+     * the probe execs into is itself gone, which freezes every
+     * {@code mysql_cluster_*} series and says nothing about the cluster.
+     */
+    public enum ProbeContainerState {
+        /** The check is off, or the daemon could not answer: no conclusion. */
+        UNKNOWN,
+        /** The probe container is up: the failure is on the node / MySQL side. */
+        RUNNING,
+        /** The probe container is not up: the fault hit the observer itself. */
+        NOT_RUNNING,
+    }
+
     private static final Logger log = LoggerFactory.getLogger(MysqlClusterMonitor.class);
     private static final int MAX_REASON = 200;
     /** Lab container prefix; membership reports the bare {@code mysql-N} host. */
     private static final String CONTAINER_PREFIX = "jl-";
+    /** Docker states in which the probe container is still alive enough to be its own fault. */
+    private static final Set<String> RUNNING_STATES = Set.of("running", "restarting");
 
     private final ContainerGateway gateway;
     private final ChaosProperties.MysqlCluster config;
@@ -106,6 +140,8 @@ public class MysqlClusterMonitor implements AutoCloseable {
     private long lastPrimaryCount = -1;
     /** Last observed "probe target is PRIMARY"; null until the first successful probe. */
     private Boolean lastSelfPrimary;
+    /** Classification of the most recent probe failure; UNKNOWN before the first one. */
+    private ProbeContainerState lastFailureContainerState = ProbeContainerState.UNKNOWN;
 
     /** Production constructor: owns and starts a dedicated single-thread scheduler. */
     public MysqlClusterMonitor(ContainerGateway gateway, ChaosProperties properties, MeterRegistry registry) {
@@ -345,13 +381,75 @@ public class MysqlClusterMonitor implements AutoCloseable {
         if (reason.length() > MAX_REASON) {
             reason = reason.substring(0, MAX_REASON) + "...";
         }
-        if (!Boolean.FALSE.equals(lastProbeOk)) {
-            log.warn("MySQL cluster probe failed against {}: {} - last successful member series are kept, {} = 0",
-                    config.getContainer(), reason, METRIC_PROBE_UP);
+        // B0-08 slice B: never report a bare "probe failed". Read the probe
+        // container's own state first, so "the node is sick" and "the drill
+        // killed the observer" stay two different statements.
+        ProbeContainerState state = classifyFailure();
+        boolean transitioned = !Boolean.FALSE.equals(lastProbeOk);
+        boolean classificationChanged = state != lastFailureContainerState;
+        lastFailureContainerState = state;
+        if (transitioned || classificationChanged) {
+            log.warn("MySQL cluster probe failed against {}: {} - {} = 0; {} "
+                            + "(last successful member series are kept)",
+                    config.getContainer(), reason, METRIC_PROBE_UP, describeState(state));
         } else {
-            log.debug("MySQL cluster probe still failing against {}: {}", config.getContainer(), reason);
+            log.debug("MySQL cluster probe still failing against {} ({}): {}",
+                    config.getContainer(), state, reason);
         }
         lastProbeOk = false;
+    }
+
+    /**
+     * Classifies the current probe failure by the probe container's own Docker
+     * state. Best effort and never fatal: the check runs on the probe's private
+     * scheduler thread, and any problem of the check itself becomes
+     * {@link ProbeContainerState#UNKNOWN} rather than hiding the real failure.
+     */
+    private ProbeContainerState classifyFailure() {
+        if (!config.isFailureContainerCheckEnabled()) {
+            return ProbeContainerState.UNKNOWN;
+        }
+        try {
+            ContainerView view = gateway.inspectLabContainer(config.getContainer());
+            String state = view == null || view.state() == null
+                    ? ""
+                    : view.state().strip().toLowerCase(Locale.ROOT);
+            if (state.isEmpty()) {
+                return ProbeContainerState.UNKNOWN;
+            }
+            return RUNNING_STATES.contains(state)
+                    ? ProbeContainerState.RUNNING
+                    : ProbeContainerState.NOT_RUNNING;
+        } catch (ContainerNotFoundException e) {
+            // The container is gone outright: same observability loss as a stop.
+            return ProbeContainerState.NOT_RUNNING;
+        } catch (RuntimeException e) {
+            log.debug("Probe container state check for {} could not run: {}",
+                    config.getContainer(), e.toString());
+            return ProbeContainerState.UNKNOWN;
+        }
+    }
+
+    private static String describeState(ProbeContainerState state) {
+        return switch (state) {
+            case RUNNING -> "the probe container is still running, so this is a node/MySQL-side "
+                    + "failure (the cluster itself may be degraded) and not a killed observer";
+            case NOT_RUNNING -> "the probe container itself is NOT running: the fault hit the "
+                    + "observer, so every mysql_cluster_* series freezes until it returns and says "
+                    + "nothing about the cluster; move the probe with CHAOS_MYSQL_CLUSTER_CONTAINER "
+                    + "(kill/freeze/restart on the probe container is refused by the B0-08 "
+                    + "isolation rule, 403/40302)";
+            case UNKNOWN -> "the probe container state could not be read, so a killed observer "
+                    + "cannot be ruled out (chaos.mysql-cluster.failure-container-check-enabled)";
+        };
+    }
+
+    /**
+     * Classification of the most recent probe failure, for tests and for a later
+     * console readout. {@link ProbeContainerState#UNKNOWN} until the first failure.
+     */
+    ProbeContainerState lastFailureContainerState() {
+        return lastFailureContainerState;
     }
 
     /**

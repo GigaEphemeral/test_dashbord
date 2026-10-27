@@ -9,6 +9,7 @@ import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.web.ChaosController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -123,6 +124,25 @@ class ChaosControllerTest {
                         .content("{\"action\":\"kill\",\"ttlSeconds\":5}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("40301"));
+    }
+
+    @Test
+    void probeTargetActionIsRefusedWith403AndProbeIsolationCode() throws Exception {
+        // B0-08 slice B: the fault target is the MySQL cluster probe container, so
+        // the refusal has its own code (40302) and states the remedy.
+        when(chaosActionService.execute(eq("jl-mysql-3"), any()))
+                .thenThrow(new ProbeTargetProtectedException(
+                        "target \"jl-mysql-3\" is the MySQL cluster probe container "
+                                + "(chaos.mysql-cluster.container / env CHAOS_MYSQL_CLUSTER_CONTAINER)"));
+
+        mockMvc.perform(post("/chaos/instances/jl-mysql-3/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("40302"))
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("MySQL cluster probe container")));
     }
 
     @Test

@@ -138,6 +138,9 @@ chaos:
     interval-seconds: ${CHAOS_MYSQL_CLUSTER_INTERVAL_SECONDS:10}
     # Probe one node that is not the demo's kill target. A stopped probe
     # container looks like a broken probe, not like a degraded cluster.
+    # B0-08 slice B: this value is also the isolation rule - a
+    # kill/freeze/restart whose target equals it is refused with 403/40302
+    # (ProbeTargetGuard), because faulting it would blind the drill mid-failover.
     container: ${CHAOS_MYSQL_CLUSTER_CONTAINER:jl-mysql-1}
     admin-user: ${CHAOS_MYSQL_CLUSTER_ADMIN_USER:root}
     password-env-var: ${CHAOS_MYSQL_CLUSTER_PASSWORD_ENV_VAR:MYSQL_ROOT_PASSWORD}
@@ -160,3 +163,8 @@ chaos:
     expected-member-count: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:3}
     thread-name: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:mysql-cluster-probe}
     shutdown-timeout-seconds: ${CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS:5}
+    # B0-08 slice B: on a failed probe, inspect the probe container once to tell
+    # "the node is up but MySQL answered wrongly" from "the probe container itself
+    # was killed" (观测自损: every mysql_cluster_* series then freezes). One extra
+    # inspect per failed tick; disable on stacks where even that is too chatty.
+    failure-container-check-enabled: ${CHAOS_MYSQL_CLUSTER_FAILURE_CONTAINER_CHECK_ENABLED:true}

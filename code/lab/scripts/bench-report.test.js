@@ -134,3 +134,106 @@ test('invalid invocation exits non-zero', (t) => {
   assert.strictEqual(proc.status, 1);
   assert.match(proc.stderr, /bench-report:/);
 });
+
+test('image identity record becomes the manifest images block (B0-08 slice A)', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-report-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'k6.log'), '', 'utf8');
+  fs.writeFileSync(
+    path.join(dir, 'image-identity.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: '2026-10-28T00:00:00Z',
+      method: 'docker inspect --format {{.Image}} + docker image inspect --format {{.RepoTags}}',
+      dockerAvailable: true,
+      containers: {
+        'jl-app-1': {
+          container: 'jl-app-1',
+          imageTag: 'java-learn-lab/seckill-app:jdk21',
+          imageId: 'sha256:aaaa',
+          state: 'running',
+          composeProject: 'java-learn-lab',
+          status: 'ok',
+        },
+        'jl-chaos-controller': {
+          container: 'jl-chaos-controller',
+          imageTag: 'UNAVAILABLE',
+          imageId: 'unavailable',
+          state: 'unavailable',
+          composeProject: 'unavailable',
+          status: 'missing',
+        },
+      },
+    }),
+    'utf8',
+  );
+  const proc = runReport(dir, [
+    '--run-id', 'with-images',
+    '--k6-exit-code', '0',
+    '--image-identity', path.join(dir, 'image-identity.json'),
+  ]);
+  assert.strictEqual(proc.status, 0, proc.stderr);
+  const manifest = readJson(path.join(dir, 'manifest.json'));
+  assert.strictEqual(manifest.images.available, true);
+  assert.strictEqual(manifest.images.dockerAvailable, true);
+  assert.strictEqual(manifest.images.recordedAt, '2026-10-28T00:00:00Z');
+  assert.match(manifest.images.method, /docker inspect --format \{\{\.Image\}\}/);
+  const app = manifest.images.containers.find((entry) => entry.container === 'jl-app-1');
+  assert.strictEqual(app.imageTag, 'java-learn-lab/seckill-app:jdk21');
+  assert.strictEqual(app.imageId, 'sha256:aaaa');
+  assert.strictEqual(app.status, 'ok');
+  // An "UNAVAILABLE" marker of any case becomes the lowercase marker.
+  const chaos = manifest.images.containers.find((entry) => entry.container === 'jl-chaos-controller');
+  assert.strictEqual(chaos.imageTag, 'unavailable');
+  assert.strictEqual(chaos.imageId, 'unavailable');
+  assert.strictEqual(manifest.artifacts.imageIdentity, 'image-identity.json');
+  const html = fs.readFileSync(path.join(dir, 'report.html'), 'utf8');
+  assert.match(html, /Image identity/);
+  assert.match(html, /java-learn-lab\/seckill-app:jdk21/);
+  const doc = fs.readFileSync(path.join(dir, 'result.md'), 'utf8');
+  assert.match(doc, /镜像身份（最小记录，B0-08）/);
+  assert.match(doc, /sha256:aaaa/);
+});
+
+test('a missing or unparsable image record degrades and never fails the archive', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-report-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'k6.log'), '', 'utf8');
+  fs.writeFileSync(
+    path.join(dir, 'summary.json'),
+    JSON.stringify({ metrics: { iterations: { count: 10 } }, state: { testRunDurationMs: 1000 } }),
+    'utf8',
+  );
+  const proc = runReport(dir, [
+    '--run-id', 'no-images',
+    '--k6-exit-code', '0',
+    '--image-identity', path.join(dir, 'image-identity.json'),
+    '--image-identity-containers', 'jl-app-1 jl-app-2',
+  ]);
+  assert.strictEqual(proc.status, 0, proc.stderr);
+  assert.match(proc.stdout, /BENCH_VERDICT=PASS/);
+  const manifest = readJson(path.join(dir, 'manifest.json'));
+  assert.strictEqual(manifest.images.available, false);
+  assert.match(manifest.images.reason, /not found/);
+  assert.strictEqual(manifest.images.containers.length, 2);
+  for (const entry of manifest.images.containers) {
+    assert.strictEqual(entry.imageTag, 'unavailable');
+    assert.strictEqual(entry.imageId, 'unavailable');
+  }
+});
+
+test('an unparsable image record is reported as a bad record, not a crash', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-report-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'k6.log'), '', 'utf8');
+  fs.writeFileSync(path.join(dir, 'image-identity.json'), '{not json', 'utf8');
+  const proc = runReport(dir, [
+    '--run-id', 'bad-images',
+    '--k6-exit-code', '0',
+    '--image-identity', path.join(dir, 'image-identity.json'),
+  ]);
+  assert.strictEqual(proc.status, 0, proc.stderr);
+  const manifest = readJson(path.join(dir, 'manifest.json'));
+  assert.strictEqual(manifest.images.available, false);
+  assert.match(manifest.images.reason, /not valid JSON/);
+});

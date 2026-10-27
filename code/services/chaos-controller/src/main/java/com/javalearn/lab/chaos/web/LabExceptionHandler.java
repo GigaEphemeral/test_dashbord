@@ -15,6 +15,7 @@ import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.error.InvalidToxiproxyRequestException;
 import com.javalearn.lab.chaos.error.LabErrorCode;
+import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
 import com.javalearn.lab.chaos.error.ToxiproxyNotFoundException;
@@ -47,6 +48,18 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleNotAllowed(ContainerNotAllowedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(Result.failure(LabErrorCode.FORBIDDEN, ex.getMessage()));
+    }
+
+    /**
+     * B0-08 slice B: the target is the MySQL cluster probe container, so the
+     * destructive action is refused. 403 with its own code (40302) - the remedy
+     * (move the probe first) is different from a plain allow-list refusal.
+     */
+    @ExceptionHandler(ProbeTargetProtectedException.class)
+    public ResponseEntity<Result<Void>> handleProbeTargetProtected(ProbeTargetProtectedException ex) {
+        log.warn("Chaos action refused by the probe isolation rule: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Result.failure(LabErrorCode.PROBE_TARGET_PROTECTED, ex.getMessage()));
     }
 
     @ExceptionHandler(InvalidTailException.class)
