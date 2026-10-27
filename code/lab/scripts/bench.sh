@@ -29,8 +29,11 @@ REPORT_SCRIPT="${BENCH_REPORT_SCRIPT:-$SCRIPT_DIR/bench-report.js}"
 RESET_SCRIPT="${BENCH_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
 IMAGE_IDENTITY_SCRIPT="${BENCH_IMAGE_IDENTITY_SCRIPT:-$SCRIPT_DIR/image-identity.sh}"
 # Key containers whose imageTag + imageId go into the run manifest (B0-08
-# slice A, minimal loop): the app tier plus the chaos controller.
-IMAGE_IDENTITY_CONTAINERS="${BENCH_IMAGE_IDENTITY_CONTAINERS:-jl-app-1 jl-app-2 jl-chaos-controller}"
+# slice A, minimal loop): the app tier plus the chaos controller. These are
+# LOGICAL service names - image-identity.sh resolves each one to the real
+# container (`jl-app-1` here, a prefixed container in a stack without
+# container_name), so overriding this list never means guessing a name.
+IMAGE_IDENTITY_CONTAINERS="${BENCH_IMAGE_IDENTITY_CONTAINERS:-app-1 app-2 app-3 chaos-controller}"
 REPORTS_DIR="${BENCH_REPORTS_DIR:-$K6_DIR/reports}"
 DOC_DIR="${BENCH_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 ENV_FILE="${BENCH_ENV_FILE:-$ROOT_DIR/code/lab/docker/.env}"
@@ -84,8 +87,10 @@ Environment (defaults):
   PROM_URL=http://127.0.0.1:8080/prom
   RESET_BASELINE_STOCK=100
   BENCH_IMAGE_IDENTITY_SCRIPT=code/lab/scripts/image-identity.sh
-  BENCH_IMAGE_IDENTITY_CONTAINERS="jl-app-1 jl-app-2 jl-chaos-controller"
-                                   (imageTag/imageId archive record; degrades to
+  BENCH_IMAGE_IDENTITY_CONTAINERS="app-1 app-2 app-3 chaos-controller"
+                                   (logical service names; image-identity.sh
+                                   resolves each to the real container and puts
+                                   imageTag/imageId in the archive. Degrades to
                                    "unavailable" when Docker is not reachable)
   BENCH_TRAFFIC_SERVICE=traffic    BENCH_ALLOW_TRAFFIC=0 (1 = bench with the
                                    console background traffic still generating
@@ -337,6 +342,7 @@ if [[ ! -f "$IMAGE_IDENTITY_SCRIPT" ]]; then
 else
   set +e
   image_identity_output="$(
+    IMAGE_IDENTITY_PROJECT="$COMPOSE_PROJECT" \
     bash "$IMAGE_IDENTITY_SCRIPT" \
       --out "$IMAGE_IDENTITY_FILE" \
       --containers "$IMAGE_IDENTITY_CONTAINERS" 2>&1

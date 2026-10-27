@@ -106,6 +106,138 @@ assert.strictEqual(c["jl-chaos-controller"].imageTag, "java-learn-lab/chaos-cont
   && pass "manifest JSON is valid and carries imageTag + imageId per container" \
   || { fail "manifest JSON is valid and carries imageTag + imageId per container"; cat "$TMP_ROOT/json.err" >&2; }
 
+# --- 2b. LOGICAL service names resolve on the lab stack ----------------------
+# The lab stack pins `container_name: jl-app-1`, so the Compose SERVICE name
+# (`app-1`) is not a container name: it has to come back through the jl- alias.
+OUT_LOGICAL="$TMP_ROOT/images-logical.json"
+if PATH="$MOCK_BIN:$PATH" bash "$LIB" --out "$OUT_LOGICAL" \
+  --containers "app-1 chaos-controller" --project java-learn-lab >"$TMP_ROOT/logical.log" 2>&1; then
+  pass "logical service names record with the mock docker (exit 0)"
+else
+  fail "logical service names record with the mock docker (exit 0)"
+  cat "$TMP_ROOT/logical.log" >&2
+fi
+node -e '
+const assert = require("node:assert");
+const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+assert.match(m.nameResolution, /com\.docker\.compose\.service/);
+assert.strictEqual(m.composeProject, "java-learn-lab");
+// keyed by the requested logical name, resolved to the real container
+assert.strictEqual(m.containers["app-1"].requested, "app-1");
+assert.strictEqual(m.containers["app-1"].container, "jl-app-1");
+assert.strictEqual(m.containers["app-1"].resolvedBy, "labAlias");
+assert.strictEqual(m.containers["app-1"].status, "ok");
+assert.strictEqual(m.containers["app-1"].imageTag, "java-learn-lab/seckill-app:jdk21");
+assert.strictEqual(m.containers["chaos-controller"].container, "jl-chaos-controller");
+assert.strictEqual(m.containers["chaos-controller"].resolvedBy, "labAlias");
+// a real container name still resolves as itself (no jl- double prefix)
+' "$OUT_LOGICAL" 2>"$TMP_ROOT/logical-json.err" \
+  && pass "logical name -> jl-<service> alias, with requested/container/resolvedBy in the record" \
+  || { fail "logical name -> jl-<service> alias, with requested/container/resolvedBy in the record"; cat "$TMP_ROOT/logical-json.err" >&2; }
+if PATH="$MOCK_BIN:$PATH" bash "$LIB" --out "$TMP_ROOT/images-plain.json" \
+  --containers "jl-app-1" >/dev/null 2>&1 \
+  && grep -q '"container": "jl-app-1", "requested": "jl-app-1", "resolvedBy": "container"' "$TMP_ROOT/images-plain.json"; then
+  pass "an explicit container name still resolves as itself (resolvedBy=container)"
+else
+  fail "an explicit container name still resolves as itself (resolvedBy=container)"
+fi
+
+# --- 2c. a stack WITHOUT container_name resolves on the service label --------
+# Same service names, but the containers are Compose-prefixed (`mylayer-app-1`)
+# and no `jl-` alias exists, so only `com.docker.compose.service` survives.
+LABEL_BIN="$TMP_ROOT/labelbin"
+mkdir -p "$LABEL_BIN"
+cat >"$LABEL_BIN/docker" <<'LABEL'
+#!/usr/bin/env bash
+# Mock of a stack whose services are prefixed (no container_name in the file).
+set -u
+if [[ "${1:-}" == "image" ]]; then
+  shift
+  if [[ "${1:-}" == "inspect" && "${2:-}" == "-f" ]]; then
+    case "$4" in
+      sha256:dddd*dddd1111) printf 'java-learn-lab/seckill-app:jdk21\n'; exit 0 ;;
+      sha256:eeee*eeee2222) printf '\n'; exit 0 ;;   # untagged local build
+    esac
+  fi
+  exit 1
+fi
+if [[ "${1:-}" == "info" ]]; then exit 0; fi
+if [[ "${1:-}" == "ps" ]]; then
+  shift
+  proj=""; svc=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --filter)
+        shift
+        case "${1:-}" in
+          label=com.docker.compose.project=*) proj="${1#label=com.docker.compose.project=}" ;;
+          label=com.docker.compose.service=*) svc="${1#label=com.docker.compose.service=}" ;;
+        esac ;;
+    esac
+    shift
+  done
+  [[ "$proj" == "mylayer" || -z "$proj" ]] || exit 0   # other projects: nothing
+  case "$svc" in
+    app-1) printf 'cafe1111\n' ;;
+    chaos-controller) printf 'cafe2222\n' ;;
+  esac
+  exit 0
+fi
+if [[ "${1:-}" != "inspect" || "${2:-}" != "-f" ]]; then exit 1; fi
+fmt="$3"; target="$4"
+case "$target" in
+  cafe1111)
+    case "$fmt" in
+      '{{.Image}}') printf 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd1111\n' ;;
+      '{{.Name}}') printf '/mylayer-app-1\n' ;;
+      '{{.State.Status}}') printf 'running\n' ;;
+      *Labels*) printf 'mylayer\n' ;;
+      *) exit 1 ;;
+    esac ;;
+  cafe2222)
+    case "$fmt" in
+      '{{.Image}}') printf 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee2222\n' ;;
+      '{{.Name}}') printf '/mylayer-chaos-controller-1\n' ;;
+      '{{.State.Status}}') printf 'running\n' ;;
+      '{{.Config.Image}}') printf 'mylayer/chaos-controller:local-build-no-tag\n' ;;
+      *Labels*) printf 'mylayer\n' ;;
+      *) exit 1 ;;
+    esac ;;
+  *) exit 1 ;;   # jl-app-1 / app-1 do NOT exist as container names here
+esac
+LABEL
+chmod +x "$LABEL_BIN/docker"
+OUT_LABEL="$TMP_ROOT/images-label-stack.json"
+if PATH="$LABEL_BIN:$PATH" bash "$LIB" --out "$OUT_LABEL" \
+  --containers "app-1 chaos-controller" --project mylayer >"$TMP_ROOT/label.log" 2>&1; then
+  pass "a stack without container_name records through the service label (exit 0)"
+else
+  fail "a stack without container_name records through the service label (exit 0)"
+  cat "$TMP_ROOT/label.log" >&2
+fi
+node -e '
+const assert = require("node:assert");
+const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+assert.strictEqual(m.containers["app-1"].container, "mylayer-app-1");
+assert.strictEqual(m.containers["app-1"].resolvedBy, "composeService");
+assert.strictEqual(m.containers["app-1"].status, "ok");
+assert.strictEqual(m.containers["app-1"].composeProject, "mylayer");
+assert.strictEqual(m.containers["app-1"].imageId, "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd1111");
+// untagged local build reached by label: imageTag falls back to .Config.Image
+assert.strictEqual(m.containers["chaos-controller"].container, "mylayer-chaos-controller-1");
+assert.strictEqual(m.containers["chaos-controller"].imageTag, "mylayer/chaos-controller:local-build-no-tag");
+' "$OUT_LABEL" 2>"$TMP_ROOT/label-json.err" \
+  && pass "com.docker.compose.service label resolves the logical name; jl- prefix not required" \
+  || { fail "com.docker.compose.service label resolves the logical name; jl- prefix not required"; cat "$TMP_ROOT/label-json.err" >&2; }
+# a wrong --project must not lose the container: the label lookup retries unscoped
+if PATH="$LABEL_BIN:$PATH" bash "$LIB" --out "$TMP_ROOT/images-wrong-project.json" \
+  --containers "app-1" --project somebody-elses-stack >/dev/null 2>&1 \
+  && grep -q '"container": "mylayer-app-1", "requested": "app-1", "resolvedBy": "composeService"' "$TMP_ROOT/images-wrong-project.json"; then
+  pass "a wrong --project still resolves (unscoped label retry), never a silent miss"
+else
+  fail "a wrong --project still resolves (unscoped label retry), never a silent miss"
+fi
+
 # --- 3. missing container degrades, never fails ------------------------------
 OUT2="$TMP_ROOT/images-missing.json"
 PATH="$MOCK_BIN:$PATH" bash "$LIB" --out "$OUT2" --containers "jl-app-1 jl-gone" \
@@ -120,10 +252,26 @@ if grep -q '"status": "missing"' "$OUT2" && grep -q '"imageId": "unavailable"' "
 else
   fail "absent container -> status=missing, imageTag/imageId=unavailable"
 fi
+if grep -q '"container": "jl-gone", "requested": "jl-gone", "resolvedBy": "unresolved"' "$OUT2"; then
+  pass "absent container keeps its own name in the record (row is still attributable)"
+else
+  fail "absent container keeps its own name in the record (row is still attributable)"
+fi
 if grep -qi 'WARN' "$TMP_ROOT/miss.err"; then
   pass "absent container emits a WARN"
 else
   fail "absent container emits a WARN"
+fi
+# a logical name nothing can resolve degrades the same way (no jl- guessing loop)
+OUT_UNRESOLVED="$TMP_ROOT/images-unresolved.json"
+PATH="$MOCK_BIN:$PATH" bash "$LIB" --out "$OUT_UNRESOLVED" --containers "app-9" \
+  >"$TMP_ROOT/unres.log" 2>&1
+if grep -q '"app-9": {"container": "app-9", "requested": "app-9", "resolvedBy": "unresolved"' \
+  "$OUT_UNRESOLVED" && grep -q '"status": "missing"' "$OUT_UNRESOLVED"; then
+  pass "an unknown logical service -> status=missing, exit 0, no infinite alias chain"
+else
+  fail "an unknown logical service -> status=missing, exit 0, no infinite alias chain"
+  cat "$OUT_UNRESOLVED" >&2
 fi
 
 # --- 4a. daemon unreachable: unavailable everywhere, exit 0 ------------------
@@ -183,6 +331,7 @@ else
   if grep -q '"dockerAvailable": false' "$OUT4" \
     && grep -q '"imageTag": "unavailable"' "$OUT4" \
     && grep -q '"imageId": "unavailable"' "$OUT4" \
+    && grep -q '"resolvedBy": "noDocker"' "$OUT4" \
     && grep -qi 'WARN' "$TMP_ROOT/nod.err"; then
     pass "no docker in PATH -> dockerAvailable=false, tag/id=unavailable, WARN"
   else

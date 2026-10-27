@@ -2,10 +2,18 @@
 # Minimal image identity record (Stage2 B0-08 slice A, design 方案 §10.4).
 #
 #   bash code/lab/scripts/image-identity.sh --out /tmp/images.json
-#   bash code/lab/scripts/image-identity.sh --containers "jl-app-1 jl-chaos-controller"
+#   bash code/lab/scripts/image-identity.sh --out /tmp/images.json \
+#        --containers "app-1 app-2 app-3 chaos-controller" --project java-learn-lab
 #   # or as a library, right after a start/rebuild:
 #   source code/lab/scripts/image-identity.sh
 #   lab_record_image_identity code/lab/k6/reports/<run>/image-identity.json
+#
+# Containers are given as LOGICAL names, never as a hard-coded docker container
+# name, because the same service is spelled differently across stacks: the lab
+# stack pins `container_name: jl-app-1`, a stack without `container_name` gets
+# the project-directory prefix (`some-layer-app-1`). Each spec resolves in this
+# order: real container name/id -> lab alias `jl-<spec>` -> compose SERVICE name
+# via the `com.docker.compose.service` label.
 #
 # Scope is the MINIMAL LOOP agreed in Stage2 B0-08 (confirm #8): read
 # imageTag + imageId once after a start/rebuild with
@@ -24,10 +32,18 @@
 # Deliberately NO `set -euo pipefail` here: this file is also meant to be
 # sourced, and the CLI block below turns the options on for itself only.
 
-# Default key containers of the lab stack (compose `container_name` values):
-# the app tier plus the chaos controller. Override with
-# IMAGE_IDENTITY_CONTAINERS when a stack has more or fewer of them.
-IMAGE_IDENTITY_CONTAINERS="${IMAGE_IDENTITY_CONTAINERS:-jl-app-1 jl-app-2 jl-app-3 jl-chaos-controller}"
+# Default key containers, as LOGICAL service names of the lab stack: the app
+# tier plus the chaos controller. Each name is resolved to the real container
+# (see the header), so the same list works for a stack that pins
+# `container_name: jl-app-1` and for one that lets Compose prefix the services.
+# Override with IMAGE_IDENTITY_CONTAINERS when a stack has more or fewer.
+IMAGE_IDENTITY_CONTAINERS="${IMAGE_IDENTITY_CONTAINERS:-app-1 app-2 app-3 chaos-controller}"
+
+# Optional Compose project used to narrow the service-label lookup
+# (`com.docker.compose.project`). Empty = search every project, which is what a
+# single-stack host wants. Never required: the label lookup runs project-scoped
+# first and then unscoped, so a wrong value here cannot lose a container.
+IMAGE_IDENTITY_PROJECT="${IMAGE_IDENTITY_PROJECT:-}"
 
 # The unavailable marker is also what a reader should look for in a manifest.
 IMAGE_IDENTITY_UNAVAILABLE="unavailable"
@@ -52,37 +68,103 @@ lab_ii_image_inspect() { # <format> <image-id>
   docker image inspect -f "$1" "$2" 2>/dev/null | tr -d '\r' | head -n 1 || true
 }
 
-# Resolve one container to "tag<TAB>id<TAB>state<TAB>project<TAB>status".
+# Container ids of a Compose SERVICE, newest last. Optional second argument
+# narrows the search to one project. Empty when nothing matches or the daemon
+# is not answering - `docker ps` is the only command here that can list.
+lab_ii_ps_service() { # <service> [project]
+  local service="$1" project="${2:-}" out
+  if [[ -n "$project" ]]; then
+    out="$(docker ps -aq \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$service" 2>/dev/null \
+      | tr -d '\r' | tail -n 1 || true)"
+  else
+    out="$(docker ps -aq \
+      --filter "label=com.docker.compose.service=$service" 2>/dev/null \
+      | tr -d '\r' | tail -n 1 || true)"
+  fi
+  printf '%s' "${out//[[:space:]]/}"
+}
+
+# Resolve one logical spec to a real `docker inspect` target.
+# Prints "how<TAB>target" (empty target when nothing matched). `how` is the
+# evidence a manifest reader needs to trust the row: container | labAlias |
+# composeService | unresolved.
+# The order is NOT accidental: `read` treats a TAB as IFS whitespace, so an
+# EMPTY FIRST FIELD would be swallowed and the caller would read "unresolved"
+# as the target. Keeping the non-empty marker first makes the empty
+# (unresolved) case survive the round trip; an empty last field is preserved.
+lab_ii_resolve() { # <spec>
+  local spec="$1" image_id target="" how="unresolved" id=""
+  image_id="$(lab_ii_inspect '{{.Image}}' "$spec")"
+  if [[ -n "$image_id" ]]; then
+    printf '%s\t%s' "container" "$spec"
+    return 0
+  fi
+  # The lab stack pins container_name: jl-<service>, so the plain service name
+  # is not a container name but the alias is.
+  image_id="$(lab_ii_inspect '{{.Image}}' "jl-$spec")"
+  if [[ -n "$image_id" ]]; then
+    printf '%s\t%s' "labAlias" "jl-$spec"
+    return 0
+  fi
+  # A stack that does not set container_name lets Compose prefix the service
+  # with the project directory, so only the service label survives.
+  if [[ -n "$IMAGE_IDENTITY_PROJECT" ]]; then
+    id="$(lab_ii_ps_service "$spec" "$IMAGE_IDENTITY_PROJECT")"
+  fi
+  if [[ -z "$id" ]]; then
+    id="$(lab_ii_ps_service "$spec")"
+  fi
+  if [[ -n "$id" ]] && [[ -n "$(lab_ii_inspect '{{.Image}}' "$id")" ]]; then
+    printf '%s\t%s' "composeService" "$id"
+    return 0
+  fi
+  printf '%s\t%s' "unresolved" ""
+}
+
+# "tag<TAB>id<TAB>state<TAB>project<TAB>status<TAB>container<TAB>resolvedBy".
 # status is ok | missing | unavailable so the caller can tell them apart.
+# Every field is non-empty by construction (a caller splits this on TAB, and
+# `read` collapses adjacent TABs, so a blank middle field would shift all the
+# fields after it).
 lab_ii_container_fields() { # <container>
-  local name="$1" image_id image_tag state project status fallback
+  local spec="$1" image_id image_tag state project status target="" how="unresolved" name
   if ! command -v docker >/dev/null 2>&1; then
-    printf '%s\t%s\t%s\t%s\t%s' "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" \
-      "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" "unavailable"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" \
+      "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" "unavailable" \
+      "$(lab_ii_sanitize "$spec")" "noDocker"
     return 0
   fi
-  image_id="$(lab_ii_inspect '{{.Image}}' "$name")"
-  if [[ -z "$image_id" ]]; then
-    lab_ii_warn "container $name not found or not inspectable; recording image identity as missing."
-    printf '%s\t%s\t%s\t%s\t%s' "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" \
-      "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" "missing"
+  IFS=$'\t' read -r how target <<<"$(lab_ii_resolve "$spec")"
+  if [[ -z "$target" ]]; then
+    lab_ii_warn "no container matches $spec (tried the container name, the jl- alias and the com.docker.compose.service label); recording image identity as missing."
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" \
+      "$IMAGE_IDENTITY_UNAVAILABLE" "$IMAGE_IDENTITY_UNAVAILABLE" "missing" \
+      "$(lab_ii_sanitize "$spec")" "$(lab_ii_sanitize "${how:-unresolved}")"
     return 0
   fi
-  state="$(lab_ii_inspect '{{.State.Status}}' "$name")"
-  project="$(lab_ii_inspect '{{ index .Config.Labels "com.docker.compose.project" }}' "$name")"
+  image_id="$(lab_ii_inspect '{{.Image}}' "$target")"
+  name="$(lab_ii_inspect '{{.Name}}' "$target")"
+  name="${name#/}"
+  [[ -n "$name" ]] || name="$target"
+  state="$(lab_ii_inspect '{{.State.Status}}' "$target")"
+  project="$(lab_ii_inspect '{{ index .Config.Labels "com.docker.compose.project" }}' "$target")"
   image_tag="$(lab_ii_image_inspect '{{if .RepoTags}}{{index .RepoTags 0}}{{end}}' "$image_id")"
   if [[ -z "$image_tag" ]]; then
     # A locally built image that was never tagged has no RepoTags: fall back to
     # the image reference the container was created with. Still a tag, no guess.
-    image_tag="$(lab_ii_inspect '{{.Config.Image}}' "$name")"
+    image_tag="$(lab_ii_inspect '{{.Config.Image}}' "$target")"
     if [[ -z "$image_tag" ]]; then
       image_tag="$IMAGE_IDENTITY_UNAVAILABLE"
       lab_ii_warn "no tag resolvable for container $name; imageTag recorded as \"$IMAGE_IDENTITY_UNAVAILABLE\"."
     fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s' \
-    "$(lab_ii_sanitize "$image_tag")" "$(lab_ii_sanitize "$image_id")" \
-    "$(lab_ii_sanitize "${state:-unknown}")" "$(lab_ii_sanitize "${project:-unknown}")" "ok"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+    "$(lab_ii_sanitize "${image_tag:-$IMAGE_IDENTITY_UNAVAILABLE}")" \
+    "$(lab_ii_sanitize "${image_id:-$IMAGE_IDENTITY_UNAVAILABLE}")" \
+    "$(lab_ii_sanitize "${state:-unknown}")" "$(lab_ii_sanitize "${project:-unknown}")" "ok" \
+    "$(lab_ii_sanitize "$name")" "$(lab_ii_sanitize "${how:-container}")"
 }
 
 # Write the JSON record for the given containers to stdout.
@@ -103,18 +185,22 @@ lab_image_identity_json() { # <container>...
   printf '  "schemaVersion": 1,\n'
   printf '  "generatedAt": "%s",\n' "$(lab_ii_sanitize "$generated_at")"
   printf '  "method": "%s",\n' "$(lab_ii_sanitize "$method")"
+  printf '  "nameResolution": "%s",\n' 'container name -> jl-<service> alias -> com.docker.compose.service label'
+  printf '  "composeProject": "%s",\n' "$(lab_ii_sanitize "${IMAGE_IDENTITY_PROJECT:-}")"
   printf '  "dockerAvailable": %s,\n' "$([[ $docker_ok == true ]] && printf true || printf false)"
   printf '  "note": "minimal loop only: tag/id recorded, no build provenance, no base digest pin",\n'
   printf '  "containers": {\n'
 
-  local index=0 entry tag id state project status
+  local index=0 name tag id state project status container resolved_by
   for name in "${names[@]}"; do
-    IFS=$'\t' read -r tag id state project status <<<"$(lab_ii_container_fields "$name")"
+    IFS=$'\t' read -r tag id state project status container resolved_by \
+      <<<"$(lab_ii_container_fields "$name")"
     if [[ "$status" != "ok" && "$docker_ok" == true ]]; then
       lab_ii_warn "image identity for $name is $status."
     fi
-    printf '    "%s": {"container": "%s", "imageTag": "%s", "imageId": "%s", "state": "%s", "composeProject": "%s", "status": "%s"}' \
-      "$(lab_ii_sanitize "$name")" "$(lab_ii_sanitize "$name")" "$(lab_ii_sanitize "$tag")" \
+    printf '    "%s": {"container": "%s", "requested": "%s", "resolvedBy": "%s", "imageTag": "%s", "imageId": "%s", "state": "%s", "composeProject": "%s", "status": "%s"}' \
+      "$(lab_ii_sanitize "$name")" "$(lab_ii_sanitize "$container")" "$(lab_ii_sanitize "$name")" \
+      "$(lab_ii_sanitize "$resolved_by")" "$(lab_ii_sanitize "$tag")" \
       "$(lab_ii_sanitize "$id")" "$(lab_ii_sanitize "$state")" "$(lab_ii_sanitize "$project")" \
       "$(lab_ii_sanitize "$status")"
     index=$(( index + 1 ))
@@ -146,7 +232,7 @@ lab_record_image_identity() { # <output-file> [container]...
   lab_image_identity_json "${names[@]}" >"$tmp"
   mv -f "$tmp" "$output"
   # Summary straight from the written file: no second Docker round per container.
-  sed -n 's/^    "\([^"]*\)": {.*"imageTag": "\([^"]*\)".*"imageId": "\([^"]*\)".*"status": "\([^"]*\)".*/Image identity: \1 tag=\2 id=\3 (\4)/p' "$output"
+  sed -n 's/^    "\([^"]*\)": {"container": "\([^"]*\)", .*"imageTag": "\([^"]*\)".*"imageId": "\([^"]*\)".*"status": "\([^"]*\)".*/Image identity: \1 -> \2 tag=\3 id=\4 (\5)/p' "$output"
   printf 'Image identity recorded: %s\n' "$output"
 }
 
@@ -175,8 +261,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         CONTAINERS_RAW="${1#*=}"
         shift
         ;;
+      --project)
+        [[ $# -ge 2 ]] || { printf 'ERROR: --project requires a value.\n' >&2; exit 2; }
+        IMAGE_IDENTITY_PROJECT="$2"
+        shift 2
+        ;;
+      --project=*)
+        IMAGE_IDENTITY_PROJECT="${1#*=}"
+        shift
+        ;;
       -h|--help)
-        sed -n '1,30p' "${BASH_SOURCE[0]}"
+        sed -n '1,33p' "${BASH_SOURCE[0]}"
         exit 0
         ;;
       *)

@@ -37,8 +37,9 @@ RESET_SCRIPT="${TUNE_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
 # records imageTag + imageId in the result note (minimal loop: no provenance,
 # no base digest pin). The rebuild itself stays explicitly --force-recreate.
 IMAGE_IDENTITY_SCRIPT="${TUNE_IMAGE_IDENTITY_SCRIPT:-$SCRIPT_DIR/image-identity.sh}"
-# Empty means "the app tier this script just recreated" (jl-<service>), resolved
-# in record_image_identity() where APP_SERVICES is already read.
+# Empty means "the app tier this script just recreated": the LOGICAL service
+# names of APP_SERVICES, expanded in record_image_identity(); image-identity.sh
+# resolves each one to the real container.
 IMAGE_IDENTITY_CONTAINERS="${TUNE_IMAGE_IDENTITY_CONTAINERS:-}"
 DOC_DIR="${TUNE_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 STATE_FILE="${TUNE_STATE_FILE:-$ROOT_DIR/tmp/tuning-state.env}"
@@ -134,7 +135,9 @@ Environment (all optional):
   TUNE_OPERATOR, TUNE_DEFAULT_DURATION=60s
   TUNE_APP_SERVICES="app-1 app-2 app-3" TUNE_APP_PROBE_SERVICE=app-1
   TUNE_IMAGE_IDENTITY_SCRIPT=code/lab/scripts/image-identity.sh
-  TUNE_IMAGE_IDENTITY_CONTAINERS="" (empty = jl-<each app service>)
+  TUNE_IMAGE_IDENTITY_CONTAINERS="" (empty = the TUNE_APP_SERVICES logical
+                                    service names; image-identity.sh resolves
+                                    each to the real container)
   TUNE_NGINX_CONTAINER=jl-nginx  TUNE_NGINX_HEALTH_URL
   TUNE_NGINX_API_PROBE_URL       TUNE_TOXIPROXY_CONTAINER=jl-toxiproxy
 EOF
@@ -373,7 +376,10 @@ record_image_identity() {
   IMAGE_IDENTITY_FILE=""
   local containers="${IMAGE_IDENTITY_CONTAINERS:-}"
   if [[ -z "$containers" ]]; then
-    containers="$(printf 'jl-%s ' "${APP_SERVICES[@]}")"
+    # Logical service names of the tier just recreated; image-identity.sh
+    # resolves each to the real container (jl-<service> here, a prefixed
+    # container in a stack without container_name).
+    containers="${APP_SERVICES[*]}"
   fi
   if [[ ! -f "$IMAGE_IDENTITY_SCRIPT" ]]; then
     warn "image identity script not found: $IMAGE_IDENTITY_SCRIPT; imageTag/imageId not recorded."
@@ -383,7 +389,8 @@ record_image_identity() {
   local out output rc=0
   out="$(mktemp "${TMPDIR:-/tmp}/tune-image-identity.XXXXXX")"
   TUNE_TMP_FILES+=("$out")
-  output="$(bash "$IMAGE_IDENTITY_SCRIPT" --out "$out" --containers "$containers" 2>&1)" || rc=$?
+  output="$(IMAGE_IDENTITY_PROJECT="$COMPOSE_PROJECT" \
+    bash "$IMAGE_IDENTITY_SCRIPT" --out "$out" --containers "$containers" 2>&1)" || rc=$?
   if [[ -n "$output" ]]; then
     printf '%s\n' "$output"
   fi
@@ -393,9 +400,10 @@ record_image_identity() {
     return 0
   fi
   IMAGE_IDENTITY_FILE="$out"
-  # One line per container in the hand-written JSON: container/imageTag/imageId/state.
+  # One line per container in the hand-written JSON: the RESOLVED container name
+  # (image-identity.sh takes logical service names now), then tag/id/state.
   IMAGE_IDENTITY_TABLE="$(sed -n \
-    's/^    "\([^"]*\)": {.*"imageTag": "\([^"]*\)".*"imageId": "\([^"]*\)".*"state": "\([^"]*\)".*/| `\1` | `\2` | `\3` | `\4` |/p' \
+    's/^    "[^"]*": {.*"container": "\([^"]*\)".*"imageTag": "\([^"]*\)".*"imageId": "\([^"]*\)".*"state": "\([^"]*\)".*/| `\1` | `\2` | `\3` | `\4` |/p' \
     "$out")"
   if [[ -z "$IMAGE_IDENTITY_TABLE" ]]; then
     warn "image identity record has no readable container entry."
