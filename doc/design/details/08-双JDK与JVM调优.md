@@ -1,9 +1,9 @@
 # 08 · 双 JDK 与 JVM 调优（JDK 21 / JDK 8 对比侧）
 
-> 一句话职责：在同一个 `seckill-core` 之上提供 JDK 21（Boot 3.5）与 JDK 8（Boot 2.7，EOL 教学壳）两个可观测运行时，为 D7 对比提供**同标签、同指标名**的数据面；调优台与 D8 尚未实现。
+> 一句话职责：在同一个 `seckill-core` 之上提供 JDK 21（Boot 3.5）与 JDK 8（Boot 2.7，EOL 教学壳）两个可观测运行时，为 D7 对比提供**同标签、同指标名**的数据面；调优台由 `tune.sh` + D8 面板承担（step-51）。
 > 代码基线：`294798a`
 
-D7 面板与 compose/Prometheus/k6 接线已落地（step-41），D7 正式归档目录、JVM 调优台、`bench.sh --jvm/--tuning` 仍不存在。本文把“已就绪的数据面/D7 面板”和“仍缺的调优台/D8”分开写，缺项仍标注 **未实现**。
+D7 面板与 compose/Prometheus/k6 接线已落地（step-41）；D8 与 `tune.sh` 调优运行器已落地（step-51）。仍缺：D7 正式归档目录、`bench.sh --jvm/--tuning`、自动参数扫描。
 
 ---
 
@@ -360,7 +360,7 @@ D7 面板已存在（`ha-d7`，step-41），第二步可直接看两侧同图对
 9. **启动耗时样本仍偏少**：step-41 两侧各 3 次（JDK 8 中位 9.332s、JDK 21 30.517s），但 JDK 21 是并发重建、有 CPU 争用；严格基准应逐实例串行、多轮取中位后再写入 `doc/process/benchmark/jvm-comparison/`。
 10. **JDK 8 侧功能不对等**：没有缓存 L1/L2、穿透防护、线程实验室、toggles、异步秒杀、登录、订单、Flyway；D7 只能比“裸读路径 + JVM/GC/堆/线程/启动”。
 11. **健康组写法不同**：8 侧 `include=db,ping`，21 侧 `exclude=redis`；将来给 8 侧加 contributor 时必须同步 include。
-12. **调优台 / D8 未实现**：设计 §10.3 的 `/tuning` 页面、GC/堆预设、白名单参数、重建容器、参数历史与 `doc/process/benchmark/jvm-tuning/` 在本基线中都没有代码；`chaos-controller` 没有调优端点。
+12. **调优台**：`code/lab/scripts/tune.sh`（切 JVM 参数、重建 app 层、打 Grafana annotation、可选短压测、前后对比记录）+ D8 面板已落地（step-51）。仍缺：设计 §10.3 的 `/tuning` 控制台页面与 chaos-controller 调优端点、GC/堆预设白名单、自动参数扫描与 `doc/process/benchmark/jvm-tuning/` 归档对比。
 13. **JDK 8 仅 JRE**：本机没有 javac 8，若要在容器里构建需要 JDK 8 基础镜像；当前未定镜像。
 
 ---

@@ -58,7 +58,7 @@
 | 应用侧 MySQL Router 双数据源（`MYSQL_MODE`） | **已合并（默认 standalone）** | 51a：`DataSourceAccessProperties` + `MySqlModeSwitchTest`；真机 Router 切换验收仍未做。见 `doc/process/step-29-mysql-router-client.md` |
 | 集群状态指标（`mysql_cluster_member_state` / `mysql_cluster_primary_info`） | **已合并** | `MysqlClusterMonitor` 导出 `mysql_cluster_member_state` / `mysql_cluster_primary`（`_info` 被剥）；`mysqld-exporter-ha` job 已内联（step-30/38）。 |
 | Toxiproxy / `chaos-proxy` | **已合并** | `compose.toxiproxy.yml` 覆盖层 + `ToxiproxyController`（toxic/reset/disable/enable，step-39/40）；`up.sh --profile chaos-proxy`。 |
-| D6 / D7 / D10 / D11 面板 | **已合并** | `ha-d6/7/10/11.json` 均已入库（step-36/37/41/38）；D5 由 Tempo UI 承担，D8 仍无独立文件（未实现） |
+| D6 / D7 / D8 / D10 / D11 面板 | **已合并** | `ha-d6/7/8/10/11.json` 均已入库（step-36/37/41/51/38）；D5 由 Tempo UI 承担 |
 | M4-2 评审修复（publish-through / retention 校验） | **已合并** | `34c0dfc` / `426e9c9` / `34c5df0`（2026-10-27） |
 
 ## 4. 文档状态与维护
