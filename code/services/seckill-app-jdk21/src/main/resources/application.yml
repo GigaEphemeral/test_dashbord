@@ -274,6 +274,11 @@ app:
           maximum-size: ${LAB_CACHE_L1_MAXIMUM_SIZE:10000}
           refresh-after-write-seconds: ${LAB_CACHE_L1_REFRESH_AFTER_WRITE_SECONDS:10}
           expire-after-write-seconds: ${LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS:60}
+          # B0-03: register the Caffeine-native L1 stats series (cache_l1_caffeine_*,
+          # cache_l1_estimated_size) with Micrometer for every L1 instance. Switch
+          # off only for diagnostics; with the cache toggle off the L1 never exists
+          # and NO series are registered either way (absence = not applicable).
+          micrometer-stats-enabled: ${LAB_CACHE_L1_MICROMETER_STATS_ENABLED:true}
 
     # Fault-thread lab (Task M5-1 / design 9.1). /lab/thread/** injects the seven
     # faulty-thread modes; every thread count, TTL, interval, chunk size, pool size

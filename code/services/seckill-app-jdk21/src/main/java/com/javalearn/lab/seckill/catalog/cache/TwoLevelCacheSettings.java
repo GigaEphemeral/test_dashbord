@@ -19,10 +19,26 @@ import java.util.Objects;
  * @param expireAfterWrite  hard physical lifetime of an L1 entry, the final
  *                          freshness bound even when refresh keeps failing
  *                          (design 8.4: 60s)
+ * @param micrometerStatsEnabled whether the Caffeine-native L1 stats series
+ *                          ({@code cache_l1_caffeine_*}, {@code cache_l1_estimated_size})
+ *                          are registered per cache instance; the production
+ *                          value comes from
+ *                          {@code app.lab.cache.preheat.l1.micrometer-stats-enabled}
  */
 public record TwoLevelCacheSettings(long maximumSize,
                                     Duration refreshAfterWrite,
-                                    Duration expireAfterWrite) {
+                                    Duration expireAfterWrite,
+                                    boolean micrometerStatsEnabled) {
+
+    /**
+     * Historical three-argument shape: stats registration on. Test and tool
+     * callers keep compiling; the Spring path binds the flag explicitly.
+     */
+    public TwoLevelCacheSettings(long maximumSize,
+                                 Duration refreshAfterWrite,
+                                 Duration expireAfterWrite) {
+        this(maximumSize, refreshAfterWrite, expireAfterWrite, true);
+    }
 
     public TwoLevelCacheSettings {
         Objects.requireNonNull(refreshAfterWrite, "refreshAfterWrite");

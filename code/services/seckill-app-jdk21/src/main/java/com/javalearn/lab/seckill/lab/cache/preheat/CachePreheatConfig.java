@@ -41,7 +41,8 @@ public class CachePreheatConfig {
         return new TwoLevelCacheSettings(
                 l1.getMaximumSize(),
                 Duration.ofSeconds(l1.getRefreshAfterWriteSeconds()),
-                Duration.ofSeconds(l1.getExpireAfterWriteSeconds()));
+                Duration.ofSeconds(l1.getExpireAfterWriteSeconds()),
+                l1.isMicrometerStatsEnabled());
     }
 
     @Bean

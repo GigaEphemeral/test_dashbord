@@ -1,9 +1,9 @@
 # Stage2 开发、测试与步骤验收计划
 
-> 版本：v1.1（2026-10-27）
+> 版本：v1.2（2026-10-28）
 > 分支基线：`feature/stage2-workbench`（从 `feature/ha-lab` HEAD `13d961e` 拉出）
 > 依据：`doc/design/Stage2/stage2-需求.md`（需求基线 v1，含 §十一 范围确认结论）、
-> `doc/design/Stage2/stage2改造方案.md`（v1.3）、
+> `doc/design/Stage2/stage2改造方案.md`（v1.4）、
 > `doc/process/Stage2/架构现状与功能清单.md`（事实底座）、`doc/design/工程规约.md`
 > 本文件是 Stage2 的执行计划：批次 → 步骤 → 开发内容 / 测试 / 验收闸门 / 交接文档。
 > 每步完成即按工程规约 §2 写 `doc/process/Stage2/step-S2-*.md` 五段式交接并随代码提交。
@@ -133,6 +133,9 @@ B3 依赖 B0 的 stats/代理/TTL 修复；B4 依赖 B1 台账 + B2 执行层；
   MySQL 杀主演练恰会命中台账写入窗口，`UNKNOWN` 恢复逻辑要覆盖"故障事件自身没记上"。状态机按方案 §10.5：
   `DRAFT→VALIDATING→READY→RUNNING→STOPPING→VERIFYING→COMPLETED / FAILED / INVALID / ABORTED`，
   控制器重启时未结束 run 标 `UNKNOWN` 并列出清理项。
+  库名与表清单已定稿（方案 §10.5）：库 `lab_ledger`（与业务库 `seckill` 物理分库），表
+  `lab_run`/`lab_run_step`/`lab_run_env`/`lab_run_param`/`lab_operation`/`lab_fault_event`/`lab_metric_window`/`lab_run_check`/`lab_ledger_stash`/`lab_env_lock`；
+  schema 用 Flyway 版本化；保留策略默认最近 50 个 run（级联清理，配置外置）。
 - 测试：单测状态转换合法性 + 台账库写失败重试路径；重启 chaos 容器后台账仍在、未决动作可见（A21）；
   db-ha 场演练期间台账不丢（暂存-补写路径）。
 - 验收：台账 CRUD API + 重启恢复通过；台账库 schema 版本化（Flyway 或等价）；与业务表物理分库。
@@ -224,8 +227,9 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 ### B3-02 数据播种目标规模 + SCAN 键查询 + 单键详情
 
 - 开发：DB 内置基础商品数据（已确认 #3）：Flyway/初始化脚本按**固定 seed 确定性生成 10,000 条**，
-  库存随 seed 随机、每次重置相同；数量与 seed 外置配置（默认 10000/固定种子），**遗留待确认**：是否替换商品
-  1/20 演示基线、库存具体区间（见 §9）。`POST /lab/cache/seed` 支持目标键数；`GET /lab/cache/keys`
+  库存随 seed 随机、每次重置相同；数量与 seed 外置配置（默认 10000/固定种子）。已确认（2026-10-28）：
+  **替换商品 1/20 演示基线**——引用商品 1/20 的场景与验收脚本（spike/smoke/verify）随本步骤一并改指内置商品；
+  库存区间 **0–500**（随 seed 确定性生成）。`POST /lab/cache/seed` 支持目标键数；`GET /lab/cache/keys`
   （SCAN 分页、白名单前缀如 `cache:product:*`、禁 `KEYS`、limit 上限）；`POST /lab/cache/key` 单键
   L1/L2 状态 + TTL + 值截断预览（响应字节限制）；`POST /lab/cache/reset` 一键还原实验数据（Stage1 缺口收口）。
 - 测试：单测（前缀过滤、分页游标、截断）；真机目标 10,000 播种后目标/实际/差值/核验时间齐全（A05、A06、A23、A24）。
@@ -376,12 +380,11 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 6 | chaos-proxy 互斥 | 维持互斥；C/D 组默认 `dev + chaos-proxy`（Toxiproxy 模拟 Redis 故障）；Redis/MySQL HA 切换走独立场景（容器动作），不叠加 Toxiproxy | B3-03；方案 §5.3 |
 | 7 | JDK 8 外壳 | 纳入每实例配置，标 `LIMITED-OBSERVABILITY`：镜像选择/JVM 参数/重启生效/GC 日志回读为必过项；热配置回读显式 `READBACK_UNAVAILABLE`，指标 GC 日志/JMX/外部兜底并标注来源；原因写入方案 §4.5 | B4-04；方案 §4.5 |
 | 8 | 镜像身份 | 最小闭环：tag+imageId 写 manifest/报告、重建显式 `--force-recreate`；不校验来源、不归档构建日志、不锁 base digest；Stage1 遗留 P0#3 以此口径收口 | B0-08/B4-02；方案 §10.4/§15 |
+| 9 | 商品基线替换 | 内置 10,000 商品**替换商品 1/20 演示基线**；引用 1/20 的场景与验收脚本随 B3-02 改指内置商品（2026-10-28 确认） | B3-02；方案 §2.2 |
+| 10 | 库存区间 | **0–500**，随 seed 确定性生成、每次重置相同（2026-10-28 确认） | B3-02；方案 §2.2 |
+| 11 | 台账库与表清单 | 库名 `lab_ledger`（与业务库 `seckill` 物理分库），10 张表 + Flyway 版本化 + 保留最近 50 个 run（外置配置），清单见方案 §10.5（2026-10-28 定稿） | B1-01；方案 §10.5 |
 
-**遗留待确认（不阻塞 B0 开工，须在 B3-02 设计评审时定稿）**：
-
-- 内置 10,000 商品是否替换现有商品 1/20 演示基线（spike 打商品 20、smoke/verify 用 1 与 20）。
-- 内置商品库存的具体区间。
-- 台账库库名与表清单（B1-01 细化时定）。
+三项遗留待确认已全部在 2026-10-28 确认，无遗留项。
 
 ---
 
@@ -400,3 +403,4 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 |---|---|
 | 2026-10-27 | v1.0 初版：B0–B5 步骤分解、闸门基线、A01–A32 映射、8 项待确认 |
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
+| 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
