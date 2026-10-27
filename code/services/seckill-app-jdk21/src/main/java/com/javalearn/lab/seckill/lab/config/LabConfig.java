@@ -11,6 +11,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.ConfigurableEnvironment;
 
 /**
  * Wires the runtime toggle store, the cache defense mode store and the
@@ -33,6 +34,16 @@ public class LabConfig {
     @Bean
     public CacheDefenseModeService cacheDefenseModeService(LabCacheProperties properties) {
         return new CacheDefenseModeService(properties);
+    }
+
+    /**
+     * B0-04 effective-value read-back for {@code GET /lab/config}. Built from the
+     * running {@link Environment}, so the payload is the wiring this instance
+     * actually resolved (no second table of defaults that could drift).
+     */
+    @Bean
+    public CacheEffectiveConfigReader cacheEffectiveConfigReader(ConfigurableEnvironment environment) {
+        return new CacheEffectiveConfigReader(environment);
     }
 
     @Bean

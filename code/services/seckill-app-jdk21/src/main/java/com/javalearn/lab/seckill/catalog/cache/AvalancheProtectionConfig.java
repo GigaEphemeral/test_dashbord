@@ -113,9 +113,10 @@ public class AvalancheProtectionConfig {
 
     /** Reads/writes the TTL of exactly the keys {@link TwoLevelCache} writes. */
     @Bean
-    public L2TtlAdjuster l2TtlAdjuster(StringRedisTemplate redisTemplate) {
+    public L2TtlAdjuster l2TtlAdjuster(StringRedisTemplate redisTemplate,
+                                       TwoLevelCacheSettings cacheSettings) {
         return new RedisL2TtlAdjuster(redisTemplate,
-                TwoLevelCacheManager.productL2KeyPrefix());
+                cacheSettings.l2PrefixFor(TwoLevelCacheManager.PRODUCT_CACHE));
     }
 
     /**

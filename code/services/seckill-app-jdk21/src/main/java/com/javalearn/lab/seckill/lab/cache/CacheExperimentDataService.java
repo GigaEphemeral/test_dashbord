@@ -7,6 +7,7 @@ import com.javalearn.lab.seckill.catalog.cache.ProductAvalancheDefense;
 import com.javalearn.lab.seckill.catalog.cache.ProductBloomFilterService;
 import com.javalearn.lab.seckill.catalog.cache.ProductBreakdownDefense;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
+import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
 import com.javalearn.lab.seckill.lab.api.CacheSeedResponse;
 import com.javalearn.lab.seckill.lab.api.CacheStateResponse;
 import com.javalearn.lab.seckill.lab.config.LabCacheAvalancheProperties;
@@ -86,6 +87,8 @@ public final class CacheExperimentDataService {
     private final LabCacheAvalancheProperties avalancheProperties;
     private final LabToggleService toggleService;
     private final CacheManager cacheManager;
+    /** Bound L2 key layout ({@code app.lab.cache.l2.key-prefix}) of the product cache. */
+    private final String productL2KeyPrefix;
 
     public CacheExperimentDataService(LabCacheProperties properties,
                                       JdbcTemplate jdbcTemplate,
@@ -98,7 +101,8 @@ public final class CacheExperimentDataService {
                                       ProductAvalancheDefense avalancheDefense,
                                       LabCacheAvalancheProperties avalancheProperties,
                                       LabToggleService toggleService,
-                                      CacheManager cacheManager) {
+                                      CacheManager cacheManager,
+                                      TwoLevelCacheSettings cacheSettings) {
         this.properties = Objects.requireNonNull(properties, "properties");
         this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate");
@@ -111,6 +115,8 @@ public final class CacheExperimentDataService {
         this.avalancheProperties = Objects.requireNonNull(avalancheProperties, "avalancheProperties");
         this.toggleService = Objects.requireNonNull(toggleService, "toggleService");
         this.cacheManager = Objects.requireNonNull(cacheManager, "cacheManager");
+        this.productL2KeyPrefix = Objects.requireNonNull(cacheSettings, "cacheSettings")
+                .l2PrefixFor(TwoLevelCacheManager.PRODUCT_CACHE);
     }
 
     public CacheSeedResponse seed() {
@@ -175,7 +181,7 @@ public final class CacheExperimentDataService {
         long hotKeyId = startId + seed.getHotKeyIndex();
         long rowsInRange = requiredCount(startId, endId);
 
-        String l2Prefix = TwoLevelCacheManager.productL2KeyPrefix();
+        String l2Prefix = productL2KeyPrefix;
         Set<Long> l2Ids;
         boolean redisReachable = true;
         try {
@@ -365,8 +371,8 @@ public final class CacheExperimentDataService {
         }
     }
 
-    private static String l2Key(long id) {
-        return TwoLevelCacheManager.productL2KeyPrefix() + id;
+    private String l2Key(long id) {
+        return productL2KeyPrefix + id;
     }
 
     /** Minimal projection of a seeded row, reused by the L2 warm-up. */

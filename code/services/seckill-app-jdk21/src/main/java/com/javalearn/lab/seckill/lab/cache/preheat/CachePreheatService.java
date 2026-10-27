@@ -6,6 +6,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.javalearn.lab.seckill.catalog.api.ProductResponse;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCache;
 import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheManager;
+import com.javalearn.lab.seckill.catalog.cache.TwoLevelCacheSettings;
 import com.javalearn.lab.seckill.lab.api.CachePreheatStateResponse;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -66,6 +67,8 @@ public final class CachePreheatService {
     private final MeterRegistry meterRegistry;
     private final HotKeyTracker tracker;
     private final Clock clock;
+    /** Bound L2 key layout ({@code app.lab.cache.l2.key-prefix}) of the product cache. */
+    private final String productL2KeyPrefix;
 
     private final Map<PreheatTrigger, Counter> runs = new EnumMap<>(PreheatTrigger.class);
     private final Map<PreheatTrigger, Counter> loaded = new EnumMap<>(PreheatTrigger.class);
@@ -81,7 +84,8 @@ public final class CachePreheatService {
                                CacheManager cacheManager,
                                MeterRegistry meterRegistry,
                                HotKeyTracker tracker,
-                               Clock clock) {
+                               Clock clock,
+                               TwoLevelCacheSettings cacheSettings) {
         this.properties = Objects.requireNonNull(properties, "properties");
         this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -89,6 +93,8 @@ public final class CachePreheatService {
         this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
         this.tracker = Objects.requireNonNull(tracker, "tracker");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.productL2KeyPrefix = Objects.requireNonNull(cacheSettings, "cacheSettings")
+                .l2PrefixFor(TwoLevelCacheManager.PRODUCT_CACHE);
 
         for (PreheatTrigger trigger : PreheatTrigger.values()) {
             runs.put(trigger, Counter.builder("cache_preheat_runs")
@@ -286,8 +292,8 @@ public final class CachePreheatService {
         }
     }
 
-    private static String l2Key(long productId) {
-        return TwoLevelCacheManager.productL2KeyPrefix() + productId;
+    private String l2Key(long productId) {
+        return productL2KeyPrefix + productId;
     }
 
     private static Counter failureCounter(String operation, MeterRegistry meterRegistry) {
