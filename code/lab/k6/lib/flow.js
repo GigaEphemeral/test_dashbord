@@ -70,6 +70,15 @@ export function product(productId) {
 /**
  * Creates one idempotent order; with `replay: true` it repeats the same
  * Idempotency-Key and asserts the same order id is returned (smoke only).
+ *
+ * `acceptStatuses` (default `[200]`) and `requireCode` (default `true`) let a
+ * failover scenario mark election-window 5xx as expected transport outcomes
+ * through `http.expectedStatuses` instead of hard failures. The return value
+ * keeps the historical `ok`/`orderId`/`key` fields and adds:
+ *   - `created`        - a durable order id was returned;
+ *   - `status`         - the HTTP status (0 on a transport error);
+ *   - `expectedFailure`- the status was accepted but is not a created order;
+ *   - `payload`        - the decoded envelope (diagnostics only).
  */
 export function order(options) {
   const opts = options || {};
@@ -79,21 +88,60 @@ export function order(options) {
     productId: config.productId,
     quantity: config.order.quantity,
   };
+  const acceptStatuses = opts.acceptStatuses || [200];
+  const requireCode = opts.requireCode === false ? false : true;
 
   const created = call('POST', config.paths.orders, {
     token,
     flow: 'order',
     body: payload,
     headers: { 'Idempotency-Key': key },
+    acceptStatuses,
+    requireCode,
+    tags: opts.tags,
     checkName: 'order ok',
-    validate: (body) => body !== null && body.data !== null && body.data.id !== undefined,
+    validate: (body, res) => {
+      if (res.status !== 200) {
+        // A status accepted through acceptStatuses is an expected outcome; the
+        // caller decides whether it is an election error or a real failure.
+        return true;
+      }
+      return body !== null && body.data !== null && body.data.id !== undefined;
+    },
   });
   if (!created.ok) {
-    return { ok: false, orderId: null, key };
+    return {
+      ok: false,
+      created: false,
+      expectedFailure: false,
+      orderId: null,
+      key,
+      status: created.status,
+      payload: created.payload,
+    };
+  }
+  if (created.status !== 200) {
+    return {
+      ok: true,
+      created: false,
+      expectedFailure: true,
+      orderId: null,
+      key,
+      status: created.status,
+      payload: created.payload,
+    };
   }
   const orderId = created.data.id;
   if (!opts.replay) {
-    return { ok: true, orderId, key };
+    return {
+      ok: true,
+      created: true,
+      expectedFailure: false,
+      orderId,
+      key,
+      status: 200,
+      payload: created.payload,
+    };
   }
 
   const replayed = call('POST', config.paths.orders, {
@@ -110,8 +158,12 @@ export function order(options) {
   });
   return {
     ok: replayed.ok && String(replayed.data.id) === String(orderId),
+    created: true,
+    expectedFailure: false,
     orderId,
     key,
+    status: replayed.status,
+    payload: replayed.payload,
   };
 }
 
