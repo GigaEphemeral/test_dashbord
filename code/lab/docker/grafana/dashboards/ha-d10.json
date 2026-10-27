@@ -23,7 +23,7 @@
       "id": 20,
       "options": {
         "mode": "markdown",
-        "content": "### D10 缓存实验室（设计 §7.4）\n\n- 数据源：Prometheus 抓取三个 `seckill-app` 实例的 `/actuator/prometheus`；缓存指标只在缓存实验开关打开、`cache=product` 缓存真正被访问后才出现。\n- 命中率口径：`L1 hit / L1 全部查询`、`L2 hit / L2 全部查询`（L2 只在 L1 miss 后才被查询）；分母统一 `clamp_min(..., 1e-9)`，无流量时显示 0 而不是 NaN。\n- `cache_db_fallbacks_total{reason}` 是一条有界标签族：本基线已有 `miss`（两级都没命中）、`penetration`（穿透防护放行后仍查库）、`breakdown`（击穿防护仍查库）；雪崩策略未合并，`reason=\"avalanche\"` 会在合并后自动出现在同一面板，无需改面板。\n- 当前策略（穿透模式 / 击穿模式）**没有导出为 Prometheus 指标**，因此本仪表盘不设“当前策略”面板；请读 `GET /lab/cache/state`（`X-Lab-Token`，非 Prometheus 数据）。\n- 现有 D1–D4/D9 的 `annotations.list` 均为空，环境也没有 provision annotation 数据源，因此策略切换不会出现在时间轴上；切换时间点需在实验记录里手工标注。\n- 预热指标只反映 L1 写入与运行结果，预热写入不计 `cache_l1_requests`（见 step-27）。"
+        "content": "### D10 缓存实验室（设计 §7.4）\n\n- 数据源：Prometheus 抓取三个 `seckill-app` 实例的 `/actuator/prometheus`；缓存指标只在缓存实验开关打开、`cache=product` 缓存真正被访问后才出现。\n- 命中率口径：`L1 hit / L1 全部查询`、`L2 hit / L2 全部查询`（L2 只在 L1 miss 后才被查询）；分母统一 `clamp_min(..., 1e-9)`，无流量时显示 0 而不是 NaN。\n- `cache_db_fallbacks_total{reason}` 是一条有界标签族：本基线已有 `miss`（两级都没命中）、`penetration`（穿透防护放行后仍查库）、`breakdown`（击穿防护仍查库）；M4-2b 合并后新增 `avalanche`（雪崩兜底仍查库）；文末四个雪崩专属面板查询 `cache_avalanche_*_total`，`reason=\"avalanche\"` 已出现在同一面板。\n- 当前策略（穿透模式 / 击穿模式）**没有导出为 Prometheus 指标**，因此本仪表盘不设“当前策略”面板；请读 `GET /lab/cache/state`（`X-Lab-Token`，非 Prometheus 数据）。\n- 现有 D1–D4/D9 的 `annotations.list` 均为空，环境也没有 provision annotation 数据源，因此策略切换不会出现在时间轴上；切换时间点需在实验记录里手工标注。\n- 预热指标只反映 L1 写入与运行结果，预热写入不计 `cache_l1_requests`（见 step-27）。"
       },
       "targets": [],
       "title": "D10 使用说明与口径",
@@ -331,7 +331,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "cache_db_fallbacks_total 按 reason 拆分：miss（两级缓存都空）、penetration（穿透防护开启后仍查库）、breakdown（击穿防护开启后仍查库）。雪崩策略合并后 reason=avalanche 会自动出现在此处。",
+      "description": "cache_db_fallbacks_total 按 reason 拆分：miss（两级缓存都空）、penetration（穿透防护开启后仍查库）、breakdown（击穿防护开启后仍查库）。M4-2b 合并后 reason=avalanche 已出现在此处。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1240,7 +1240,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "cache_preheat_duration_seconds 的 1 分钟窗口 P95，按触发源拆分。单轮跨度覆盖 Redis 读 + 反序列化 + L1 写入。",
+      "description": "cache_preheat_duration_seconds_max 是 Micrometer 导出的窗口最大值（本服务未开 percentile histogram，没有 _bucket 序列，无法计算 P95），按触发源拆分。单轮跨度覆盖 Redis 读 + 反序列化 + L1 写入。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1316,13 +1316,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(cache_preheat_duration_seconds_bucket{job=~\"seckill-app.*\",instance=~\"$instance\"}[1m])))",
-          "legendFormat": "{{trigger}} P95",
+          "expr": "max by (trigger) (cache_preheat_duration_seconds_max{job=~\"seckill-app.*\",instance=~\"$instance\"})",
+          "legendFormat": "{{trigger}} 最大",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "预热耗时 P95",
+      "title": "预热耗时（最大值）",
       "type": "timeseries"
     },
     {
@@ -1757,7 +1757,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (result) (rate(cache_avalanche_ttl_jitter_total{job=~\"seckill-app.*\",instance=~\"$instance\"}[1m]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
         }
@@ -1848,7 +1848,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (result) (rate(cache_avalanche_l1_total{job=~\"seckill-app.*\",instance=~\"$instance\"}[1m]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
         }
@@ -1939,7 +1939,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (result) (rate(cache_avalanche_l1_refresh_total{job=~\"seckill-app.*\",instance=~\"$instance\"}[1m]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
         }
@@ -2030,7 +2030,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (result) (rate(cache_avalanche_limiter_total{job=~\"seckill-app.*\",instance=~\"$instance\"}[1m]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
         },
@@ -2041,7 +2041,7 @@
           },
           "editorMode": "code",
           "expr": "sum (rate(cache_db_fallbacks_total{job=~\"seckill-app.*\",instance=~\"$instance\",reason=\"avalanche\"}[1m]))",
-          "legendFormat": "__auto",
+          "legendFormat": "avalanche 落库/s",
           "range": true,
           "refId": "B"
         }
