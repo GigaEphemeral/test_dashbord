@@ -287,6 +287,17 @@ services:
       # jmap -heap does not exist on 8u; heap-info uses JDK 8's jcmd (present in
       # the jdk-alpine image) and is the same text the JDK 21 bundle carries.
       LAB_SNAPSHOT_JCMD_PATH: jcmd
+      # Best-effort Grafana annotation (same POST /api/annotations contract as
+      # the JDK 21 tier). The JDK 8 shell reads its own LAB_SNAPSHOT_* namespace,
+      # but the URL value mirrors the app tier's LAB_THREAD_SNAPSHOT_GRAFANA_URL
+      # and the credentials are the same .env pair (never logged by the app).
+      LAB_SNAPSHOT_ANNOTATION_ENABLED: ${LAB_SNAPSHOT_ANNOTATION_ENABLED:-true}
+      LAB_SNAPSHOT_GRAFANA_URL: ${LAB_THREAD_SNAPSHOT_GRAFANA_URL:-http://grafana:3000}
+      GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      LAB_SNAPSHOT_ANNOTATION_CONNECT_TIMEOUT_MS: ${LAB_SNAPSHOT_ANNOTATION_CONNECT_TIMEOUT_MS:-2000}
+      LAB_SNAPSHOT_ANNOTATION_READ_TIMEOUT_MS: ${LAB_SNAPSHOT_ANNOTATION_READ_TIMEOUT_MS:-3000}
+      LAB_SNAPSHOT_ANNOTATION_TAGS: ${LAB_SNAPSHOT_ANNOTATION_TAGS:-}
       # The analysis template is the repository file, mounted read-only below;
       # the bundle copy is byte-identical to doc/process/snapshot-analysis-template.md.
       LAB_SNAPSHOT_TEMPLATE_PATH: /app/snapshot-analysis-template.md

@@ -5,6 +5,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -23,13 +25,22 @@ import java.util.Objects;
  *   <li>{@code thread_lab_snapshot_failures_total{trigger}}</li>
  *   <li>{@code thread_lab_snapshot_skipped_total{reason=disabled}}</li>
  *   <li>{@code thread_lab_snapshot_duration_seconds{trigger}} (count/sum/max)</li>
+ *   <li>{@code thread_lab_snapshot_annotations_total{result=posted|skipped|failed}}</li>
  *   <li>{@code thread_lab_snapshot_retention_deleted_total}</li>
  * </ul>
+ *
+ * <p>All three annotation results are registered eagerly (like the JDK 21
+ * metrics) so a D6 panel binds to the label set at zero instead of showing
+ * "no data" until the first annotation.</p>
  */
 public final class SnapshotMetrics {
 
     static final String TRIGGER_MANUAL = "manual";
     static final String SKIP_DISABLED = "disabled";
+
+    static final String ANNOTATION_POSTED = "posted";
+    static final String ANNOTATION_SKIPPED = "skipped";
+    static final String ANNOTATION_FAILED = "failed";
 
     private final Counter attempts;
     private final Counter successes;
@@ -37,6 +48,7 @@ public final class SnapshotMetrics {
     private final Counter skippedDisabled;
     private final Counter retentionDeleted;
     private final Timer duration;
+    private final Map<String, Counter> annotations = new LinkedHashMap<String, Counter>();
 
     public SnapshotMetrics(MeterRegistry registry) {
         Objects.requireNonNull(registry, "registry");
@@ -63,6 +75,13 @@ public final class SnapshotMetrics {
                 .description("Wall-clock capture time of one snapshot bundle")
                 .tag("trigger", TRIGGER_MANUAL)
                 .register(registry);
+        for (String result : new String[]{ANNOTATION_POSTED, ANNOTATION_SKIPPED,
+                ANNOTATION_FAILED}) {
+            annotations.put(result, Counter.builder("thread_lab_snapshot_annotations_total")
+                    .description("Best-effort Grafana annotations of snapshots, by result")
+                    .tag("result", result)
+                    .register(registry));
+        }
     }
 
     void onAttempt() {
@@ -83,6 +102,13 @@ public final class SnapshotMetrics {
 
     void onSkippedDisabled() {
         skippedDisabled.increment();
+    }
+
+    void onAnnotation(String result) {
+        Counter counter = annotations.get(result);
+        if (counter != null) {
+            counter.increment();
+        }
     }
 
     void onRetentionDeleted(int folders) {

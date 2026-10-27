@@ -98,6 +98,7 @@ public final class ThreadSnapshotService {
     private final JvmCommandExecutor executor;
     private final ObjectMapper objectMapper;
     private final SnapshotMetrics metrics;
+    private final SnapshotAnnotator annotator;
     private final Path root;
     private final Object captureLock = new Object();
 
@@ -107,7 +108,8 @@ public final class ThreadSnapshotService {
                                  Clock clock,
                                  JvmCommandExecutor executor,
                                  ObjectMapper objectMapper,
-                                 SnapshotMetrics metrics) {
+                                 SnapshotMetrics metrics,
+                                 SnapshotAnnotator annotator) {
         this.config = Objects.requireNonNull(config, "config");
         this.instanceId = sanitizeInstance(instanceId);
         this.pid = pid;
@@ -115,6 +117,7 @@ public final class ThreadSnapshotService {
         this.executor = Objects.requireNonNull(executor, "executor");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.annotator = Objects.requireNonNull(annotator, "annotator");
         this.root = Paths.get(config.getRootDir());
     }
 
@@ -148,11 +151,16 @@ public final class ThreadSnapshotService {
 
         metrics.onAttempt();
         long startNanos = System.nanoTime();
+        // One capture timestamp for the folder, metadata and the API view (and
+        // therefore the annotation time), like the JDK 21 implementation. Two
+        // separate clock reads would put metadata and annotation milliseconds
+        // apart, which makes cross-checking the Grafana marker needlessly hard.
+        long capturedAtEpochMs = clock.millis();
         Path directory = null;
         List<String> written = new ArrayList<String>();
         try {
             synchronized (captureLock) {
-                directory = createDirectory();
+                directory = createDirectory(capturedAtEpochMs);
                 List<SnapshotCommand> commands = SnapshotCommands.forCurrentJvm(config, pid);
                 for (SnapshotCommand command : commands) {
                     String output = executor.execute(command.getArgv(),
@@ -160,7 +168,7 @@ public final class ThreadSnapshotService {
                     writeText(directory.resolve(command.getFile()), output);
                     written.add(command.getFile());
                 }
-                writeMetadata(directory, written);
+                writeMetadata(directory, written, capturedAtEpochMs);
                 written.add(FILE_METADATA);
                 copyAnalysisTemplate(directory);
                 written.add(FILE_ANALYSIS_TEMPLATE);
@@ -172,9 +180,13 @@ public final class ThreadSnapshotService {
             SnapshotView view = new SnapshotView(true, TRIGGER_MANUAL,
                     directory.toAbsolutePath().toString(),
                     Collections.unmodifiableList(new ArrayList<String>(written)),
-                    elapsed.toMillis(), clock.millis(), null);
+                    elapsed.toMillis(), capturedAtEpochMs, null);
             log.info("Snapshot written: trigger={} toolset={} pid={} dir={}",
                     TRIGGER_MANUAL, TOOLSET, pid, directory.getFileName());
+            // Best-effort and after the bundle/metrics: a slow or broken Grafana
+            // can never fail the capture, and the annotation call is outside the
+            // capture lock so it cannot serialize a second capture either.
+            annotate(view);
             return view;
         } catch (Exception failure) {
             if (failure instanceof InterruptedException) {
@@ -189,7 +201,7 @@ public final class ThreadSnapshotService {
                     failure);
             return new SnapshotView(false, TRIGGER_MANUAL,
                     directory == null ? "" : directory.toAbsolutePath().toString(),
-                    Collections.<String>emptyList(), elapsed.toMillis(), clock.millis(), error);
+                    Collections.<String>emptyList(), elapsed.toMillis(), capturedAtEpochMs, error);
         }
     }
 
@@ -229,9 +241,10 @@ public final class ThreadSnapshotService {
 
     // ------------------------------------------------------------------ bundle
 
-    private Path createDirectory() throws IOException {
+    private Path createDirectory(long capturedAtEpochMs) throws IOException {
         Files.createDirectories(root);
-        String base = FOLDER_TIME.format(clock.instant()) + "_" + instanceId;
+        String base = FOLDER_TIME.format(Instant.ofEpochMilli(capturedAtEpochMs))
+                + "_" + instanceId;
         Path candidate = root.resolve(base);
         for (int suffix = 2; Files.exists(candidate); suffix++) {
             candidate = root.resolve(base + "-" + suffix);
@@ -239,7 +252,8 @@ public final class ThreadSnapshotService {
         return Files.createDirectory(candidate);
     }
 
-    private void writeMetadata(Path directory, List<String> written) throws IOException {
+    private void writeMetadata(Path directory, List<String> written, long capturedAtEpochMs)
+            throws IOException {
         RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
         Map<String, Object> metadata = new LinkedHashMap<String, Object>();
         metadata.put("instance", instanceId);
@@ -258,8 +272,8 @@ public final class ThreadSnapshotService {
         // the heap artefact shows geometry, this makes the collector explicit
         // (e.g. PS Scavenge / PS MarkSweep under -Xmx512m).
         metadata.put("gcCollectors", gcCollectors());
-        metadata.put("capturedAt", Instant.ofEpochMilli(clock.millis()).toString());
-        metadata.put("capturedAtEpochMs", clock.millis());
+        metadata.put("capturedAt", Instant.ofEpochMilli(capturedAtEpochMs).toString());
+        metadata.put("capturedAtEpochMs", capturedAtEpochMs);
         metadata.put("jmapMode", config.getJmapMode());
         // The manifest describes the complete bundle, not just the tool outputs:
         // metadata.json and the analysis template are written right after this
@@ -289,6 +303,16 @@ public final class ThreadSnapshotService {
 
     private static void writeText(Path file, String text) throws IOException {
         Files.write(file, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void annotate(SnapshotView view) {
+        try {
+            annotator.annotate(view);
+        } catch (RuntimeException failure) {
+            // The bundle is on disk and success is already counted; an annotator
+            // bug is logged, never propagated to POST /lab/snapshot.
+            log.warn("Snapshot annotation hook failed (ignored): {}", failure.toString());
+        }
     }
 
     private static String gcCollectors() {

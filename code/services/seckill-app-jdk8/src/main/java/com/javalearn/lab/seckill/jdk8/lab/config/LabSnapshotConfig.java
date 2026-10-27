@@ -2,8 +2,10 @@ package com.javalearn.lab.seckill.jdk8.lab.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.seckill.jdk8.lab.auth.LabTokenFilter;
+import com.javalearn.lab.seckill.jdk8.lab.snapshot.HttpGrafanaSnapshotAnnotator;
 import com.javalearn.lab.seckill.jdk8.lab.snapshot.JvmCommandExecutor;
 import com.javalearn.lab.seckill.jdk8.lab.snapshot.ProcessJvmCommandExecutor;
+import com.javalearn.lab.seckill.jdk8.lab.snapshot.SnapshotAnnotator;
 import com.javalearn.lab.seckill.jdk8.lab.snapshot.SnapshotMetrics;
 import com.javalearn.lab.seckill.jdk8.lab.snapshot.ThreadSnapshotService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -48,9 +50,13 @@ public class LabSnapshotConfig {
                                                        JvmCommandExecutor jvmCommandExecutor,
                                                        ObjectMapper objectMapper,
                                                        SnapshotMetrics snapshotMetrics) {
+        // Same best-effort Grafana marker as the JDK 21 shell, but over
+        // HttpURLConnection (Java 8 has no java.net.http). A blank URL is OFF.
+        SnapshotAnnotator annotator = new HttpGrafanaSnapshotAnnotator(
+                properties.getAnnotation(), instanceId, objectMapper, snapshotMetrics);
         return new ThreadSnapshotService(properties, instanceId,
                 ThreadSnapshotService.currentPid(), Clock.systemUTC(),
-                jvmCommandExecutor, objectMapper, snapshotMetrics);
+                jvmCommandExecutor, objectMapper, snapshotMetrics, annotator);
     }
 
     /** Registers the token gate for {@code /lab/*} only; {@code /api/**} stays public. */

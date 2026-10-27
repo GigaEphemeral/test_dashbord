@@ -54,6 +54,8 @@ public class SnapshotProperties {
      */
     private String templatePath;
 
+    private final Annotation annotation = new Annotation();
+
     @PostConstruct
     void validate() {
         requirePositive(commandTimeoutMs, "app.lab.snapshot.command-timeout-ms");
@@ -71,6 +73,17 @@ public class SnapshotProperties {
             throw new IllegalStateException("Configuration must be one of "
                     + JMAP_MODE_HISTO + "/" + JMAP_MODE_HISTO_LIVE + ": app.lab.snapshot.jmap-mode");
         }
+        requirePositive(annotation.connectTimeoutMs,
+                "app.lab.snapshot.annotation.connect-timeout-ms");
+        requireAtMost(annotation.connectTimeoutMs, Integer.MAX_VALUE,
+                "app.lab.snapshot.annotation.connect-timeout-ms");
+        requirePositive(annotation.readTimeoutMs,
+                "app.lab.snapshot.annotation.read-timeout-ms");
+        requireAtMost(annotation.readTimeoutMs, Integer.MAX_VALUE,
+                "app.lab.snapshot.annotation.read-timeout-ms");
+        // An annotation without a URL is a supported OFF state (skip, count it),
+        // not a misconfiguration; a supplied URL must be an absolute http(s) base.
+        annotation.buildAnnotationUri("app.lab.snapshot.annotation.url");
     }
 
     /** True when the configured mode asks jmap to run a full GC before counting. */
@@ -100,6 +113,13 @@ public class SnapshotProperties {
     private static void requireNonNegative(long value, String key) {
         if (value < 0L) {
             throw new IllegalStateException("Configuration must not be negative: " + key);
+        }
+    }
+
+    private static void requireAtMost(long value, long max, String key) {
+        if (value > max) {
+            throw new IllegalStateException(
+                    "Configuration must be at most " + max + ": " + key);
         }
     }
 
@@ -181,5 +201,116 @@ public class SnapshotProperties {
 
     public void setTemplatePath(String templatePath) {
         this.templatePath = templatePath;
+    }
+
+    public Annotation getAnnotation() {
+        return annotation;
+    }
+
+    /**
+     * Best-effort Grafana annotation of a successful snapshot (design §9.3).
+     * A blank {@code url} means OFF: the bundle is still written and the skip is
+     * counted. Credentials come from the environment and are never logged.
+     */
+    public static class Annotation {
+
+        /** Switch for the annotation call only; capture is governed by {@code enabled}. */
+        private boolean enabled;
+        /** Grafana base URL; blank means "do not annotate". */
+        private String url;
+        private String user;
+        private String password;
+        /** TCP connect budget for the annotation POST. */
+        private long connectTimeoutMs;
+        /** Response read budget for the annotation POST. */
+        private long readTimeoutMs;
+        /** Extra tags appended to the mandatory snapshot/thread-lab/instance set. */
+        private String tags;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public String getUser() {
+            return user;
+        }
+
+        public void setUser(String user) {
+            this.user = user;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+
+        public long getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(long connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public long getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(long readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
+        }
+
+        public String getTags() {
+            return tags;
+        }
+
+        public void setTags(String tags) {
+            this.tags = tags;
+        }
+
+        /**
+         * Builds {@code <base>/api/annotations}; returns {@code null} for a blank
+         * base URL (annotation OFF). A supplied URL must be absolute http(s) with
+         * a host, otherwise startup fails instead of silently never annotating.
+         */
+        public java.net.URI buildAnnotationUri(String key) {
+            if (url == null || url.trim().isEmpty()) {
+                return null;
+            }
+            String trimmed = url.trim();
+            while (trimmed.endsWith("/")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 1);
+            }
+            java.net.URI uri;
+            try {
+                uri = java.net.URI.create(trimmed + "/api/annotations");
+            } catch (IllegalArgumentException invalid) {
+                throw new IllegalStateException(
+                        key + " is not a valid URL: " + invalid.getMessage(), invalid);
+            }
+            String scheme = uri.getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                throw new IllegalStateException(key + " must be an absolute http(s) URL: " + url);
+            }
+            if (uri.getHost() == null || uri.getHost().trim().isEmpty()) {
+                throw new IllegalStateException(key + " must carry a host: " + url);
+            }
+            return uri;
+        }
     }
 }

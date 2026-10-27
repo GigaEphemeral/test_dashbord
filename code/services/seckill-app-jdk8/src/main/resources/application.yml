@@ -86,6 +86,20 @@ app:
       # Reuses the repository template instead of forking a copy into resources;
       # compose bind-mounts doc/process/snapshot-analysis-template.md read-only.
       template-path: ${LAB_SNAPSHOT_TEMPLATE_PATH:doc/process/snapshot-analysis-template.md}
+      # Best-effort Grafana marker of a successful capture (same wire contract
+      # as the JDK 21 shell: POST /api/annotations, basic auth, {time,tags,text}).
+      # A blank url is OFF: the bundle is still written and the skip is counted
+      # in thread_lab_snapshot_annotations_total{result="skipped"}.
+      annotation:
+        enabled: ${LAB_SNAPSHOT_ANNOTATION_ENABLED:true}
+        url: ${LAB_SNAPSHOT_GRAFANA_URL:}
+        user: ${GRAFANA_ADMIN_USER:}
+        password: ${GRAFANA_ADMIN_PASSWORD:}
+        # Bounded so a hung Grafana can delay only this one POST, never the
+        # capture (the bundle and its success metric are already recorded).
+        connect-timeout-ms: ${LAB_SNAPSHOT_ANNOTATION_CONNECT_TIMEOUT_MS:2000}
+        read-timeout-ms: ${LAB_SNAPSHOT_ANNOTATION_READ_TIMEOUT_MS:3000}
+        tags: ${LAB_SNAPSHOT_ANNOTATION_TAGS:}
 
 observability:
   env: ${OBSERVABILITY_ENV:dev}

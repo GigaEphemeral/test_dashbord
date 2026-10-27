@@ -650,6 +650,255 @@
       ],
       "title": "演示线程状态推进（每分钟，按目标态）",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "抓取速率（rate over 5m）。JDK 21 有 freeze（生命周期冻结时自动抓）与 manual（手动 POST）两个 trigger；JDK 8 只有 manual，因此 jvm_version=1.8.0_504 的 freeze 序列缺失是正常现象。三组线分别是 attempts / success / failures；失败尝试不会产生 success，禁用时的请求另记在 skipped_total{reason=disabled}。",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "captures/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+      "id": 13,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (trigger, jvm_version) (rate(thread_lab_snapshot_attempts_total{job=~\"seckill-app|seckill-app-jdk8\"}[5m]))",
+          "legendFormat": "attempts {{trigger}} {{jvm_version}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (trigger, jvm_version) (rate(thread_lab_snapshot_success_total{job=~\"seckill-app|seckill-app-jdk8\"}[5m]))",
+          "legendFormat": "success {{trigger}} {{jvm_version}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (trigger, jvm_version) (rate(thread_lab_snapshot_failures_total{job=~\"seckill-app|seckill-app-jdk8\"}[5m]))",
+          "legendFormat": "failures {{trigger}} {{jvm_version}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "快照抓取速率（attempts / success / failures，按 trigger 与运行时）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "抓取耗时按运行时。Micrometer 的 Prometheus 导出只有 _count/_sum/_max（percentiles-histogram 只对 http.server.requests 打开），没有 _bucket，因此这里展示均值（sum/count 的 rate）与历史最大 _max；真正的 P95 需要先给该 Timer 打开直方图，本页不伪造。",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "seconds",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 3,
+          "mappings": [],
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+      "id": 14,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (jvm_version) (rate(thread_lab_snapshot_duration_seconds_sum{job=~\"seckill-app|seckill-app-jdk8\"}[5m])) / clamp_min(sum by (jvm_version) (rate(thread_lab_snapshot_duration_seconds_count{job=~\"seckill-app|seckill-app-jdk8\"}[5m])), 0.000001)",
+          "legendFormat": "avg {{jvm_version}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "max by (jvm_version) (thread_lab_snapshot_duration_seconds_max{job=~\"seckill-app|seckill-app-jdk8\"})",
+          "legendFormat": "max {{jvm_version}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "快照抓取耗时（均值 / 最大，按运行时；无直方图故无 P95）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "保留策略删除速率（increase over 5m）。只在真实 prune 删掉目录时跳变；两个运行时共用宿主机 snapshots 根目录，因此 max-count 是跨运行时全局计数——JDK 21 抓得多时也可能删掉最老的 JDK 8 bundle，反之亦然。",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "deleted/5m",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 47 },
+      "id": 15,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (jvm_version) (increase(thread_lab_snapshot_retention_deleted_total{job=~\"seckill-app|seckill-app-jdk8\"}[5m]))",
+          "legendFormat": "deleted {{jvm_version}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "快照保留删除（每 5 分钟，按运行时）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "annotation 结果速率（increase over 5m），按 result=posted/skipped/failed 与运行时拆分。JDK 8 的 annotator 用 HttpURLConnection，与 JDK 21 同一 POST /api/annotations 契约；URL 为空或开关关闭记 skipped，非 2xx/超时记 failed，均不影响抓取。三种结果启动即注册，因此零值序列也存在。",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "annotations/5m",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 47 },
+      "id": 16,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (result, jvm_version) (increase(thread_lab_snapshot_annotations_total{job=~\"seckill-app|seckill-app-jdk8\"}[5m]))",
+          "legendFormat": "{{result}} {{jvm_version}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "快照 annotation 结果（每 5 分钟，按结果与运行时）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "两个运行时的快照工具链与限制，读面板前先读这里。",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 55 },
+      "id": 17,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "## 两个运行时的快照工具链\n\n- **JDK 21（app-1/2/3）**：`jcmd <pid> Thread.print -l`、`jcmd <pid> GC.heap_info`、`jcmd <pid> GC.class_histogram`。一个工具三条命令；trigger 有 `freeze`（单线程实验室冻结时自动）与 `manual`（`POST /lab/thread/snapshot`）。\n- **JDK 8（app-jdk8，`dual-jdk` profile）**：`jstack -l <pid>`、`jcmd <pid> GC.heap_info`、`jmap -histo <pid>`。没有 lifecycle demo，trigger 只有 `manual`（`POST /lab/snapshot`）；`freeze` 序列缺失是正常。\n- **为什么 JDK 8 的 heap-info 不用 `jmap -heap`**：该选项在 8u 已被移除（8u504 上直接打印 usage 并 exit 1）。`jcmd GC.heap_info` 是 JDK 8 仍保留、且与 JDK 21 完全同一条诊断命令，所以两个运行时的 `heap-info.txt` 可直接对比。\n- **`jmap -histo` 默认不带 `live`**：`-histo:live` 会先 Full GC，改变正要观察的堆；只有确认对象是否存活时才显式 opt-in（`LAB_SNAPSHOT_JMAP_MODE=histo-live`），该次抓取应注明触发了 GC。\n- **标签口径**：两个运行时的指标 family 同名，用 `jvm_version`（`21.0.12.1` vs `1.8.0_504`）区分；本页快照面板的 job 过滤是 `seckill-app|seckill-app-jdk8`。annotation 的 tags 固定为 `snapshot, thread-lab, <instance>, <trigger>`（JDK 8 的 instance 是 `app-jdk8`），时间取 `capturedAtEpochMs` 而非 HTTP 完成时刻。\n- **耗时面板的 P95 限制**：两个运行时的 snapshot Timer 都只导出 `_count/_sum/_max`，没有 `_bucket`，所以面板给均值与最大，不伪造 P95。",
+        "mode": "markdown"
+      },
+      "title": "两种运行时的快照工具链与读图说明",
+      "type": "text"
     }
   ],
   "refresh": "5s",
