@@ -44,7 +44,7 @@
       "id": 1,
       "options": {
         "mode": "markdown",
-        "content": "### D11 数据库高可用（设计 §7.4）\n\n- 集群成员/主节点来自 chaos-controller 每 10s 一次的只读探测（`performance_schema.replication_group_members`），标签 `member` 取 `MEMBER_HOST`（`mysql-1` 等，不带 `jl-` 前缀）；容器名才是 `jl-mysql-1`。\n- `mysql_cluster_primary_info` 在 Prometheus 侧被剥掉 `_info`，本页一律查询导出名 `mysql_cluster_primary`。\n- 探针失败时保留最后一次成功的成员/主节点序列，只把 `mysql_cluster_probe_up` 置 0：**probe_up=0 + 旧拓扑仍在**表示“探针坏了”，**probe_up=1 + 成员非 ONLINE** 才是“集群降级”。成员从视图中消失时其序列会被清除，状态时间轴出现空白。\n- 节点可达性用 `mysqld-exporter-ha` 的 `mysql_up`（每节点一个 target，带 `member` 标签）。**该抓取文件 `mysql-ha-scrape.yml` 当前仍是惰性文件**：`prometheus.yml` 没有 `scrape_config_files`，接线前本面板为空（见 step-38 runbook）。\n- Router 不暴露 Prometheus 指标：不要用假的时间序列表示 Router，状态与读写分流用本页探针 + `code/lab/scripts/db-cluster-status.sh` 观察（见页面底部说明）。\n- Redis 只抓 dev 单机 `redis-exporter`（`redis:6379`）；HA 的三个 `jl-redis-*-exporter` 与 Sentinel **都没有被 Prometheus 抓取**，Redis 面板不代表 Sentinel 拓扑。\n- 切换标注来自 chaos-controller 的 Grafana annotation（默认启用，强制带 `chaos` 标签），只覆盖经 chaos API 的动作；`docker stop/start` 手工操作不会出现在时间轴上。"
+        "content": "### D11 数据库高可用（设计 §7.4）\n\n- 集群成员/主节点来自 chaos-controller 每 10s 一次的只读探测（`performance_schema.replication_group_members`），标签 `member` 取 `MEMBER_HOST`（`mysql-1` 等，不带 `jl-` 前缀）；容器名才是 `jl-mysql-1`。\n- `mysql_cluster_primary_info` 在 Prometheus 侧被剥掉 `_info`，本页一律查询导出名 `mysql_cluster_primary`。\n- 探针失败时保留最后一次成功的成员/主节点序列，只把 `mysql_cluster_probe_up` 置 0：**probe_up=0 + 旧拓扑仍在**表示“探针坏了”，**probe_up=1 + 成员非 ONLINE** 才是“集群降级”。成员从视图中消失时其序列会被清除，状态时间轴出现空白。\n- 节点可达性用 `mysqld-exporter-ha` 的 `mysql_up`（每节点一个 target，带 `member` 标签）。该 job 已**内联**在 `prometheus.yml`（`c192a0a`），独立的 `mysql-ha-scrape.yml` 已删除，本面板有数据（见 step-38 补充）。\n- Router 不暴露 Prometheus 指标：不要用假的时间序列表示 Router，状态与读写分流用本页探针 + `code/lab/scripts/db-cluster-status.sh` 观察（见页面底部说明）。\n- Redis 只抓 dev 单机 `redis-exporter`（`redis:6379`）；HA 的三个 `jl-redis-*-exporter` 与 Sentinel **都没有被 Prometheus 抓取**，Redis 面板不代表 Sentinel 拓扑。\n- 切换标注来自 chaos-controller 的 Grafana annotation（默认启用，强制带 `chaos` 标签），只覆盖经 chaos API 的动作；`docker stop/start` 手工操作不会出现在时间轴上。"
       },
       "targets": [],
       "title": "D11 使用说明与口径",
@@ -621,7 +621,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "mysqld-exporter 的 mysql_up：1 = exporter 能连到本节点。job/member/instance 布局来自 mysql-ha-scrape.yml（三 target，member=mysql-1/2/3，instance=mysql-N-exporter:9104）。注意该抓取文件目前未被 prometheus.yml 引用，接线前面板为空。",
+      "description": "mysqld-exporter 的 mysql_up：1 = exporter 能连到本节点。job/member/instance 布局来自 `prometheus.yml` 内联的 `mysqld-exporter-ha` job（三 target，member=mysql-1/2/3，instance=mysql-N-exporter:9104）；原 `mysql-ha-scrape.yml` 已删除，面板有数据。",
       "fieldConfig": {
         "defaults": {
           "color": {
