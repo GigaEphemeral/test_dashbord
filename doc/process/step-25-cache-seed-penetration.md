@@ -84,3 +84,5 @@
 修复：断言只统计演示基线 `id < VERIFY_CATALOG_BASELINE_MAX_ID`（默认 1000，可环境变量覆盖），与 seed 的保护段设计对齐；实验商品存在与否不再影响 verify。
 
 验证：灌过 seed 的栈上 `verify.sh` → **104 PASS / 1 WARN / 0 FAIL**。
+
+补充（同日）：`inventory_stock` 同样会被 seed 灌入 1000 行，verify 的「一行一商品」检查按同一口径改为只统计 `product_id < VERIFY_CATALOG_BASELINE_MAX_ID`；变量统一定义在脚本顶部（首版补丁把它写在后面的检查里，导致前段检查 `unbound variable`）。

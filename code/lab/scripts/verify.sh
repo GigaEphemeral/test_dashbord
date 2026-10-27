@@ -108,6 +108,8 @@ LAB_TOGGLE_KEYS=(lock idempotency mq ratelimit circuitbreaker cache)
 
 # Task 18: Prometheus metric visibility window (scrape interval is 5s).
 METRIC_WAIT_RETRIES="${METRIC_WAIT_RETRIES:-30}"
+# Demo baseline only: /lab/cache/seed adds experiment products from id 90000.
+VERIFY_CATALOG_BASELINE_MAX_ID="${VERIFY_CATALOG_BASELINE_MAX_ID:-1000}"
 METRIC_WAIT_INTERVAL_SECONDS="${METRIC_WAIT_INTERVAL_SECONDS:-2}"
 
 compose() {
@@ -439,11 +441,11 @@ fi
 
 # 2d. Inventory + idempotent order flow through Nginx (Task 13). The three
 # instances share one database, so the retried POST may hit a different app.
-inventory_rows="$(mysql_scalar 'SELECT COUNT(*) FROM inventory_stock;')"
+inventory_rows="$(mysql_scalar "SELECT COUNT(*) FROM inventory_stock WHERE product_id < ${VERIFY_CATALOG_BASELINE_MAX_ID};")"
 if [[ "$inventory_rows" == "20" ]]; then
-  pass "mysql inventory_stock has one row per catalog product (20)"
+  pass "mysql inventory_stock has one row per baseline catalog product (20)"
 else
-  fail "mysql inventory_stock has one row per catalog product (20)" "count='${inventory_rows}'"
+  fail "mysql inventory_stock has one row per baseline catalog product (20)" "count='${inventory_rows}'"
 fi
 
 stock_before="$(mysql_scalar 'SELECT available FROM inventory_stock WHERE product_id = 1;')"
@@ -895,7 +897,6 @@ fi
 # command line or in output. Only the demo baseline is asserted: /lab/cache/seed
 # intentionally inserts experiment products from id 90000 upwards
 # (LAB_CACHE_SEED_START_ID), which must not look like a broken seed.
-VERIFY_CATALOG_BASELINE_MAX_ID="${VERIFY_CATALOG_BASELINE_MAX_ID:-1000}"
 catalog_count="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
   -e "SELECT COUNT(*) FROM catalog_product WHERE id < ${VERIFY_CATALOG_BASELINE_MAX_ID};" \
