@@ -5,7 +5,7 @@
 
 k6 remote write、应用 Actuator 抓取、各类 exporter、OTLP → OTel Collector → Tempo、Tempo 指标回写 Prometheus，以及 Grafana D1–D11 的消费关系。
 
-读图要点：Prometheus 无宿主端口，只经 Nginx `/prom/` 查询；`jl-traffic` 不做 remote write；D5/D7/D8 没有独立 dashboard JSON，标 `待补`。
+读图要点：Prometheus 无宿主端口，只经 Nginx `/prom/` 查询；`jl-traffic` 不做 remote write；D5/D8 没有独立 dashboard JSON，标 `待补`（D7 已落地）。
 
 ```mermaid
 %% 代码基线：504fc74
@@ -63,7 +63,7 @@ flowchart LR
   GRAF --> D4["D4 业务与高可用"]
   GRAF --> D5["D5 链路<br/>Tempo service graph / trace 查询<br/>无独立 dashboard JSON（待补）"]
   GRAF --> D6["D6 线程实验室"]
-  GRAF --> D7["D7 JDK 对比<br/>未实现（待补）"]
+  GRAF --> D7["D7 JDK 对比<br/>已落地（ha-d7）"]
   GRAF --> D8["D8 调优实验<br/>未实现（待补）"]
   GRAF --> D9["D9 压测"]
   GRAF --> D10["D10 缓存实验室"]

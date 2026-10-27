@@ -1,10 +1,10 @@
 # 05 · MySQL 高可用与读写路由
 
-> 一句话职责：把 3 节点 InnoDB Cluster（单主）+ MySQL Router（6446 读写 / 6447 只读）跑起来，并说明应用侧“按只读事务选池”的读写路由现状与尚未接线的部分。
+> 一句话职责：把 3 节点 InnoDB Cluster（单主）+ MySQL Router（6446 读写 / 6447 只读）跑起来，并说明应用侧“按只读事务选池”的读写路由现状与仍需真机验收的部分。
 >
 > 代码基线：`294798a`
 
-本文严格区分三件事：**集群本身已在线服务**（step-25b 实测）、**应用仍连 dev 单机 MySQL**（当前 `DB_WRITE_URL` / `DB_READ_URL` 只是钩子）、**应用侧 Router 模式与集群指标尚未实现**。不要把第三件写成已有能力。
+本文严格区分三件事：**集群本身已在线服务**（step-25b 实测）、**默认仍连 dev 单机 MySQL**（`DB_WRITE_URL` / `DB_READ_URL` 默认指 `mysql`）、**`MYSQL_MODE=router` 与集群指标已实现但真机切换未验收**。不要把“默认 standalone”写成 Router 已默认启用。
 
 ---
 
@@ -16,7 +16,7 @@
 | 集群引导 job | `jl-mysql-cluster-init` | 等三节点可用 → MySQL Shell AdminAPI 建组/加成员 → 在**主节点**建账号 | 一次性容器，退出码 0 才放行 Router 引导 |
 | Router 引导 job | `jl-mysql-router-init` | 校验日志级别 → 等元数据 schema → `mysqlrouter --bootstrap` → `chown` 数据目录 | 以 root 跑（`user: 0`），写配置后把卷交给 uid 999 |
 | Router | `jl-mysql-router` | 6446 跟随主、6447 在 ONLINE 从节点间轮询 | 只读配置；日志在卷内 `log/mysqlrouter.log`；宿主仅 127.0.0.1 发布 |
-| Exporter | `jl-mysql-N-exporter` | 每节点一个 `mysqld-exporter` | 只 `expose`，抓取配置尚未接进 Prometheus |
+| Exporter | `jl-mysql-N-exporter` | 每节点一个 `mysqld-exporter` | 只 `expose`；`mysqld-exporter-ha` job 已内联进 `prometheus.yml`（step-38 补充） |
 | 应用侧路由 | `DataSourceConfig` / `ReadWriteRoutingDataSource` | `@Transactional(readOnly=true)` → 读池，其余 → 写池 | `LazyConnectionDataSourceProxy` 是关键，否则连接先于只读标记被取走 |
 | 只读验收脚本 | `code/lab/scripts/db-cluster-status.sh` | 容器状态 + 成员视图 + 6446/6447 落地节点 | 退出码 0 当且仅当每节点应答且恰好一个 PRIMARY |
 | 编排入口 | `db-ha-up.sh` / `db-ha-down.sh` | 分层启停，保留卷 | `--profile db-ha` 只起本层；`--purge` 才删卷 |
@@ -99,7 +99,7 @@ flowchart LR
 
 - `application.yml` 中写池与读池都默认指向 `${MYSQL_HOST:mysql}:3306`，即 dev 单机库；两个 URL 只是 M3 的钩子。
 - `compose.base.yml` 的应用环境里只有 `MYSQL_HOST: mysql`，**没有**注入 `DB_WRITE_URL` / `DB_READ_URL`。因此当前所有 app 实例仍连单机 MySQL，Router 6446/6447 只有手工 `mysql` 客户端验证过。
-- 应用侧没有 `MYSQL_MODE` 开关，也没有 `mysql_cluster_*` 指标；`db-cluster-status.sh` 里的两条 SQL 只是未来指标的“契约草案”。这些属于**未实现/待补**。
+- 应用侧已有 `MYSQL_MODE=standalone|router`（step-29）与 `mysql_cluster_*` 指标（step-30）；`db-cluster-status.sh` 里的两条 SQL 与指标口径一致。默认仍为 standalone，Router 真机切换未验收。
 
 ---
 
@@ -299,7 +299,7 @@ bash code/lab/scripts/db-ha-down.sh --dry-run
 
 ## 9. 已知缺陷/边界
 
-1. **应用未接 Router**：`DB_WRITE_URL` / `DB_READ_URL` 只是钩子，compose 未注入，应用仍连 dev 单机 MySQL；`MYSQL_MODE`、`mysql_cluster_member_state` / `mysql_cluster_primary_info` 均**未实现/待补**。
+1. **默认未接 Router**：`DB_WRITE_URL` / `DB_READ_URL` 默认指单机 MySQL，compose 未注入；`MYSQL_MODE=router` 与 `mysql_cluster_member_state` / `mysql_cluster_primary` 已实现（step-29/30），但真机切换与故障转移未验收。
 2. **故障转移与重加入未演练**：`db-failover` 动作、被踢节点 `clone` 重加入、Router 切主都没有实测；step-25b 明确列为未验证。不要把它写成已支持。
 3. **Router 是单点**：设计 §8.6 接受；生产需多实例 + 前置负载均衡。
 4. **Router 路由健康检查只探 TCP**：容器 healthy 不代表 6446 真的接了可写成员（8.0/8.4 混搭事故就是这样发生的）。真正的门禁是 `db-cluster-status.sh` 的 6447/6446 后端探测。

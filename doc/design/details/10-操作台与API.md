@@ -39,7 +39,7 @@ flowchart LR
     S -->|"fetch /lab-api/**"| N
     C --> D["Docker API<br/>lab=java-learn 白名单"]
     C --> G["Grafana annotation（best-effort）"]
-    A -.->|"应用内 /lab/** 不经 Nginx"| X2["控制台不可达：/lab/thread · /lab/cache · /lab/toggles"]
+    A -.->|"应用内 /lab/** 不经 Nginx"| X2["控制台不可达：/lab/cache · /lab/toggles；/lab/thread 经窄代理可达"]
 ```
 
 路由细节：
@@ -386,7 +386,7 @@ bash code/lab/scripts/console-smoke.sh --no-build
 ## 10. 已知缺陷 / 边界
 
 1. **设计路由未实现**：§12.1 的 `/`（拓扑粒子）、`/scenario/:id`、`/thread`、`/cache`、`/tuning`、`/jdk`、`/bench` 都不存在；实际只有 `/lab/` 一个单页，没有 Vue Router。
-2. **线程/缓存实验室不在控制台**：控制器没有 `/lab/thread/**`、`/lab/cache/**` 代理，Nginx 也不代理应用内 `/lab/**`；控制台的“活动故障”只显示 chaos 动作（容器级），看不到七种故障线程。
+2. **缓存实验室不在控制台**：控制器只代理 `/lab/thread/**`，没有 `/lab/cache/**` 代理；Nginx 也不代理应用内 `/lab/**`。线程页经 `/chaos/app/{instance}/lab/thread/**` 可用，缓存实验仍需在容器网络内直连。
 3. **轮询 5s 而非设计 2s**：没有 WebSocket/SSE，拓扑动画与粒子视图不存在。
 4. **没有自动播放**：`atSeconds` 只用于展示与 k6 时间线；向导必须手动 `step`。
 5. **向导只覆盖容器动作**：事件动作白名单是 `kill/start/restart/freeze/resume`，不包含线程/缓存实验室动作。

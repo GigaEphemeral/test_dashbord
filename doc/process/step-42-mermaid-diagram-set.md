@@ -31,6 +31,8 @@ M6-2「全量 Mermaid 图表与导出」完成：在 `doc/design/details/diagram
 - **未做视觉渲染验证**：本机无 Mermaid 渲染器，只做了图类型关键字、围栏配对、无制表符、`alt/end` 与括号平衡、`.mmd` 与 `.md` 字节一致检查；图形效果未经验证。
 - **待补图**：D5/D7/D8 三个面板没有 JSON（D5 由 Tempo UI 承担），对应图在 README 中标记待补；MySQL Router 重定向与旧主归队的精确耗时只有 5s 采样，未写入图。
 - **文档漂移（本次未改，归 #61 批次文档刷新）**：`details/01`、`details/09` 仍写「Toxiproxy / D6 / D10 / D11 未实现」，D11 相关描述仍称 `mysql-ha-scrape.yml` 为惰性文件，而实际已改为 `prometheus.yml` 内联 `mysqld-exporter-ha` job。
+
+> 后续：`details/01`、`details/09` 的旧口径与 D11 面板文案已由本批文档修订改正（见 step-49 后续提交）。
 - 图未接入操作台动画（M6-1 的职责）。
 
 # 待定事项和注意事项

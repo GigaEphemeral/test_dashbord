@@ -157,7 +157,7 @@ curl -s -X POST http://127.0.0.1:8080/lab-api/chaos/toxiproxy/mysql/toxics \
 | 控制面 | `http://127.0.0.1:8080/lab-api/**` | chaos-controller：`/chaos/**`、`/lab/guide/**`、`/lab/traffic/**`、`/containers`、`/logs/{name}`、`/metrics` |
 | 应用内 lab API | 仅 `jl-net` 内 | `/lab/toggles`、`/lab/config`、`/lab/cache/*`、`/lab/thread/*`（Nginx 不代理） |
 | Prometheus 代理 | `http://127.0.0.1:8080/prom/` | 面板与查询 |
-| Grafana | `http://127.0.0.1:3000` | D1–D11 |
+| Grafana | `http://127.0.0.1:3000` | D1–D7、D9–D11（D8 未实现） |
 | RabbitMQ 管理 | `http://127.0.0.1:15672` | 队列与消息 |
 
 所有 `/lab-api/**` 与 `/lab/**` 都要求 `X-Lab-Token`（默认值见 `.env.example`，生产勿用）。
