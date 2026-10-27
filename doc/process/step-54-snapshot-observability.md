@@ -150,8 +150,8 @@ Grafana annotation（`GET /api/annotations?tags=snapshot`，逐字）：
 ```json
 {
   "id": 79,
-  "created": 1793084440152,
-  "updated": 1793084440152,
+  "created": 1793084440830,
+  "updated": 1793084440830,
   "time": 1793084440038,
   "timeEnd": 1793084440038,
   "text": "thread-lab snapshot: instance=app-jdk8 trigger=manual files=5 toolset=jstack+jmap+jcmd dir=20261027-070040-038_app-jdk8",
@@ -161,7 +161,7 @@ Grafana annotation（`GET /api/annotations?tags=snapshot`，逐字）：
 }
 ```
 
-`time == metadata.capturedAtEpochMs == 1793084440038`，tags 含 `app-jdk8`；`created` 比快照时刻晚 114 ms（HTTP 写入耗时），marker 仍落在快照瞬间。
+`time == metadata.capturedAtEpochMs == 1793084440038`，tags 含 `app-jdk8`；`created` 比快照时刻晚 792 ms（HTTP 写入耗时），marker 仍落在快照瞬间。
 
 ### 3.2 Prometheus：两个运行时的同名序列
 
