@@ -1,0 +1,231 @@
+# Documentation claim registry.
+#
+# Each entry is a falsifiable statement copied from (or implied by) the docs.
+# `verify` inspects the repository; it never talks to Docker, Maven or the
+# network. Run it with:
+#
+#   node code/lab/scripts/check-doc-claims.mjs
+#
+# Semantics
+# ---------
+# positive (default): the statement says the capability exists. If `verify`
+#                     does not match `expect`, the claim FAILs.
+# negative:           the statement says the capability is missing. If `verify`
+#                     now matches `expect` (for example ha-d8.json appeared),
+#                     the claim is STALE and the docs must be updated.
+#
+# `expect` is the observed value that would agree with the statement:
+#   - file_exists / file_contains / shell: true or false
+#   - grep_count: a number. 0 means "no matching line"; N > 0 means
+#     "at least N matching lines".
+# A negative claim therefore uses `expect: false` (or `expect: 0`).
+#
+# `path` values are relative to the repository root. `pattern` is a JavaScript
+# regular expression. `shell` commands must be fast and read-only.
+
+# ---------------------------------------------------------------------------
+# Positive claims: the capability exists in code, so the docs must not call it
+# missing. These are the exact features that drifted in 2026-10.
+# ---------------------------------------------------------------------------
+
+- id: toxiproxy-overlay-exists
+  doc:
+    - doc/design/details/01-总体架构与运行拓扑.md
+    - doc/process/step-39-toxiproxy-tier.md
+  statement: "Toxiproxy 叠加层已实现（compose.toxiproxy.yml + chaos-proxy profile + init job）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/compose.toxiproxy.yml
+    pattern: "toxiproxy-init:"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: toxiproxy-actions-exist
+  doc:
+    - doc/design/details/06-故障注入与实验向导.md
+    - doc/process/step-40-toxiproxy-actions.md
+  statement: "Toxiproxy 控制动作已实现（/chaos/toxiproxy/{proxy}/toxics|reset|disable|enable）"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/web/ToxiproxyController.java
+    pattern: "chaos/toxiproxy"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: d6-thread-dashboard-exists
+  doc:
+    - doc/design/details/07-线程实验室.md
+    - doc/process/step-36-d6-thread-panel.md
+  statement: "D6 线程实验室面板已实现（ha-d6.json）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/grafana/dashboards/ha-d6.json
+    pattern: "thread_lab_demo_state_code"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: d7-dual-jdk-dashboard-exists
+  doc:
+    - doc/design/details/08-双JDK与JVM调优.md
+    - doc/process/step-41-d7-dual-jdk.md
+  statement: "D7 双 JDK 对比面板已实现（ha-d7.json）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/grafana/dashboards/ha-d7.json
+    pattern: "jvm_version"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: d10-cache-dashboard-exists
+  doc:
+    - doc/design/details/03-缓存体系.md
+    - doc/process/step-37-d10-cache-panel.md
+  statement: "D10 缓存实验室面板已实现（ha-d10.json）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/grafana/dashboards/ha-d10.json
+    pattern: "cache_l1_requests_total"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: d11-db-ha-dashboard-exists
+  doc:
+    - doc/design/details/09-压测与观测.md
+    - doc/process/step-38-ha-acceptance.md
+  statement: "D11 数据库高可用面板已实现（ha-d11.json）"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/grafana/dashboards/ha-d11.json
+    pattern: "mysql_cluster_member_state"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: mysqld-exporter-ha-job-exists
+  doc:
+    - doc/design/details/09-压测与观测.md
+    - doc/process/step-38-ha-acceptance.md
+  statement: "mysqld-exporter-ha 抓取 job 已内联进 prometheus.yml"
+  verify:
+    kind: file_contains
+    path: code/lab/docker/prometheus/prometheus.yml
+    pattern: "job_name: mysqld-exporter-ha"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: mysql-cluster-probe-exists
+  doc:
+    - doc/design/details/05-MySQL高可用与读写路由.md
+    - doc/process/step-30-mysql-cluster-metrics.md
+  statement: "mysql_cluster_* 集群探针已实现（member_state / primary_info）"
+  verify:
+    kind: grep_count
+    path: code/services/chaos-controller/src/main/java
+    pattern: "mysql_cluster_(member_state|primary_info)"
+  expect: 2
+  last_verified: 2026-10-27
+
+- id: mysql-mode-switch-exists
+  doc:
+    - doc/design/details/05-MySQL高可用与读写路由.md
+    - doc/process/step-29-mysql-router-client.md
+  statement: "MYSQL_MODE=standalone|router 应用侧开关已实现"
+  verify:
+    kind: grep_count
+    path: code/services/seckill-app-jdk21/src/main
+    pattern: "MYSQL_MODE"
+  expect: 2
+  last_verified: 2026-10-27
+
+- id: thread-snapshots-exist
+  doc:
+    - doc/design/details/07-线程实验室.md
+    - doc/process/step-35-thread-snapshots.md
+  statement: "线程快照已实现（freeze 时执行 jcmd Thread.print -l / GC.heap_info）"
+  verify:
+    kind: grep_count
+    path: code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/lab/thread
+    pattern: "Thread[.]print|GC[.]heap_info"
+  expect: 2
+  last_verified: 2026-10-27
+
+- id: ha-acceptance-script-exists
+  doc:
+    - doc/process/step-45-ha-acceptance-script.md
+  statement: "HA 验收脚本已实现且可被 bash 解析（ha-acceptance.sh）"
+  verify:
+    kind: shell
+    command: "bash -n code/lab/scripts/ha-acceptance.sh"
+    timeout_ms: 10000
+  expect: true
+  last_verified: 2026-10-27
+
+- id: thread-console-proxy-exists
+  doc:
+    - doc/design/details/07-线程实验室.md
+    - doc/process/step-44-thread-console.md
+  statement: "chaos-controller 的 /lab/thread/** 窄代理已实现"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java
+    pattern: "/lab/thread"
+  expect: true
+  last_verified: 2026-10-27
+
+- id: chaos-counters-exist
+  doc:
+    - doc/design/details/09-压测与观测.md
+    - doc/process/step-21-chaos-actions.md
+  statement: "chaos_actions_total / chaos_reverts_total 指标已实现"
+  verify:
+    kind: grep_count
+    path: code/services/chaos-controller/src/main/java
+    pattern: "chaos[.](actions|reverts)"
+  expect: 2
+  last_verified: 2026-10-27
+
+# ---------------------------------------------------------------------------
+# Negative claims: the capability is still missing, so the docs may say so.
+# If the verification suddenly matches, the claim is STALE: the feature
+# shipped and every doc listed above must be revisited.
+# ---------------------------------------------------------------------------
+
+- id: d8-tuning-panel-missing
+  polarity: negative
+  doc:
+    - doc/design/details/09-压测与观测.md
+    - doc/design/details/README.md
+    - doc/process/retrospective-2026-10-27.md
+  statement: "D8 调优实验面板未实现（没有 ha-d8.json）"
+  verify:
+    kind: file_exists
+    path: code/lab/docker/grafana/dashboards/ha-d8.json
+  expect: false
+  last_verified: 2026-10-27
+
+- id: cache-console-page-missing
+  polarity: negative
+  doc:
+    - doc/design/details/README.md
+    - doc/process/retrospective-2026-10-27.md
+    - doc/readme.md
+  statement: "缓存实验控制台页未实现（前端不调用 /lab/cache/seed|mode|state）"
+  verify:
+    kind: grep_count
+    path: code/lab/dashboard/src
+    pattern: "/lab/cache/(seed|mode|state)"
+  expect: 0
+  last_verified: 2026-10-27
+
+- id: lab-cache-proxy-missing
+  polarity: negative
+  doc:
+    - doc/process/retrospective-2026-10-27.md
+    - doc/design/details/03-缓存体系.md
+    - doc/design/details/10-操作台与API.md
+  statement: "chaos-controller 尚未代理 /lab/cache/**（只代理 /lab/thread/**）"
+  verify:
+    kind: grep_count
+    path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java
+    pattern: "/lab/cache"
+  expect: 0
+  last_verified: 2026-10-27
