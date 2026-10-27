@@ -10,7 +10,7 @@
 ```mermaid
 %% 代码基线：504fc74
 %% 图 7 · 故障注入与向导状态机（两个独立状态机）
-%% 依据：GuideService、GuideStatus、ChaosActionService、ChaosActionStatus、doc/design/details/06-故障注入与实验向导.md
+%% 依据：GuideService、GuideStatus、ChaosActionService、ChaosActionStatus、doc/design/Stage1/details/06-故障注入与实验向导.md
 stateDiagram-v2
     state Guide {
         state "IDLE" as G_IDLE

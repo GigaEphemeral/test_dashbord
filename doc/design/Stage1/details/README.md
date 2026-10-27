@@ -1,6 +1,6 @@
 # 本地高可用 / 高并发教学实验室 · 详细设计文档索引
 
-> 目的：把 `doc/design/2026-10-26-ha-concurrency-lab-design.md` 的整体设计，拆成可按主题阅读、可对照代码、可在 5 分钟内演示的详细设计文档。
+> 目的：把 `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` 的整体设计，拆成可按主题阅读、可对照代码、可在 5 分钟内演示的详细设计文档。
 > 代码基线：`294798a`（01–03 编写时的基线）。04–11 由其他代理在相同/邻近基线上编写，合入时未改写正文基线，行号漂移请按符号名重新定位。
 > 文档范围：只描述本仓库已合并的代码；设计稿里有、代码里没有的能力一律标注为「未实现 / 待补」，不按已交付来写。
 
@@ -47,7 +47,7 @@
 1. **服务数不变式**（`docker compose … config --services` 实测）：`compose.base.yml` + `compose.dev.yml` 默认渲染 **16** 个服务；`--profile ha`（+`compose.ha.yml`）**25**；`--profile db-ha` 口径下的 `compose.mysql.yml`（+9）**25**；`--profile dual-jdk` **17**；`--profile chaos-proxy`（+`compose.toxiproxy.yml`）**18**。
    两个 overlay 同时选中是 **34 个服务**，但 `compose.mysql.yml` 里的 `jl-mysql-cluster-init` 与 `jl-mysql-router-init` 是一次性 job，跑完即退出，所以**常驻容器是 32 个**——引用这两个数字时务必区分「服务数」与「常驻容器数」。
 2. **`db-ha` 不是 `up.sh` 的 profile**：`up.sh` 一次只接受一个 profile 且显式拒绝 `db-ha`；MySQL InnoDB Cluster 走独立脚本 `code/lab/scripts/db-ha-up.sh`（集群需要先建组、再引导 Router，有固定顺序）。
-3. **应用侧 MySQL 双模式已真机验收**：`MYSQL_MODE=standalone|router` 已实现（`DataSourceAccessProperties`），默认与所有 compose 渲染仍是 `standalone`；`router` 模式写 6446/读 6447，杀主重选、Router 跟随、读路径保持 200 均已真机通过，并带 k6 压测版本（见 `doc/process/step-31-mysql-router-live-drill.md`、`step-48` 第 6 节）。
+3. **应用侧 MySQL 双模式已真机验收**：`MYSQL_MODE=standalone|router` 已实现（`DataSourceAccessProperties`），默认与所有 compose 渲染仍是 `standalone`；`router` 模式写 6446/读 6447，杀主重选、Router 跟随、读路径保持 200 均已真机通过，并带 k6 压测版本（见 `doc/process/Stage1/step-31-mysql-router-live-drill.md`、`step-48` 第 6 节）。
 4. **缓存四族防护全部已合并**：M4-1 穿透、M4-2a 击穿（含 publish-through 与 `retention-seconds > hot-key-ttl-seconds` 审核修复）、M4-2b 雪崩（`ttl-jitter` / `l1-cache` / 熔断降级 + 限流）、M4-3 Caffeine 预热（ZSet 热点榜、启动/周期预热、L1 `refreshAfterWrite` 外部化）均已接入读路径；seed 提供同 TTL 键与热点键用于触发。见 03 §12。
 
 ### 3.1 未实现 / 未合并清单（统一口径）
@@ -84,7 +84,7 @@
 | 线程 | 快照耗时 Timer 没开直方图，没有 `_bucket`，D6 只能给均值/`_max`，**做不了 P95** | 未接线 | `lab/thread/ThreadSnapshotMetrics.java:63-66` 无 `publishPercentileHistogram()`/`sla()` | 面板文案已改成「均值/最大值」，别再按 P95 讲 |
 | 线程 | `ha-d2.json` 里 `thread_lab_lifecycle_state_code` 的 `legendFormat` 写了不存在的 `{{thread}}` | 缺陷 | `ha-d2.json:394`；该指标只有 `instance`/`mode` 维度 | 图例显示空标签，容易被当成指标没数据 |
 | 线程 | 全局 `stop-all` 只覆盖故障注入，不覆盖生命周期演示机 | 未做 | `lab/api/LabThreadController.java:73-81` 只委托 `service.stopAll()` | 演示后生命周期机可能仍停在 ACTIVE，需要单独 `lifecycle/reset` |
-| 线程 | `FaultActionTest` 的 stop-leak 用例偶发抖动，未修 | 缺陷 | `step-35` §4（内层循环缺 `!stopped` 判定） | 全量 reactor 偶发红灯；先判定是测试错还是实现错（`doc/避坑/13`） |
+| 线程 | `FaultActionTest` 的 stop-leak 用例偶发抖动，未修 | 缺陷 | `step-35` §4（内层循环缺 `!stopped` 判定） | 全量 reactor 偶发红灯；先判定是测试错还是实现错（`doc/avoid_common_error/13`） |
 | 订单 | `OrderApplicationService` 的 `MAX_RETRIES=10` / `RETRY_SLEEP_MILLIS=50` 硬编码 | 缺陷 | `order/app/OrderApplicationService.java:36-37` | 重试预算不可调，压测下想改要重打镜像 |
 | 订单 | 读写数据源 `pool=10` / `idle=2` 硬编码 | 缺陷 | `step-29` §4；`DataSourceAccessProperties` 未暴露这两项 | router 模式下想压连接池只能改代码 |
 | 订单 | RabbitMQ 无 publisher confirm / DLQ / 消费重试；状态 JSON 覆盖写无 CAS；`restore` 的 EXISTS+INCRBY 非原子且无对账 | 未做 | `step-16` §4 清单仍然成立 | 异步秒杀的可靠性边界只能口头讲，演示里真会丢 |
@@ -94,8 +94,8 @@
 | 韧性 | toggle 变更无审计日志 | 未做 | `step-17` §4 | 演示后无法回答「谁在什么时候关了什么」 |
 | 观测 | Redis Sentinel 与 `jl-redis-*-exporter` 未纳入抓取 | 未接线 | `prometheus/prometheus.yml` 只有 `redis-exporter`（:45），无 sentinel / HA redis job；但 `ha-d11.json:624` 按有数据写 | D11 的 Redis 面板在 HA 演练时是空的 |
 | 观测 | MySQL Router 自身无指标，只有 6446/6447 探测 | 未做 | `db-cluster-status.sh:70-71,134,240-249`；D11「Router 状态」分组是文本面板 | Router 单点只能用间接证据（`hikaricp_connections_*{pool=write-pool|read-pool}`）讲 |
-| 观测 | 代码注册名 `mysql_cluster_primary_info` 与面板查询名 `mysql_cluster_primary` 不一致（Micrometer 剥 `_info`） | 口径 | `doc/避坑/02` | 照代码名写 PromQL 会查不到数 |
-| 观测 | 文档断言校验器存在但**未接进 verify/CI** | 未接线 | `grep docclaims code/lab/scripts/verify.sh` 为空 | 「文档说谎」仍靠人工发现（`doc/避坑/14`） |
+| 观测 | 代码注册名 `mysql_cluster_primary_info` 与面板查询名 `mysql_cluster_primary` 不一致（Micrometer 剥 `_info`） | 口径 | `doc/avoid_common_error/02` | 照代码名写 PromQL 会查不到数 |
+| 观测 | 文档断言校验器存在但**未接进 verify/CI** | 未接线 | `grep docclaims code/lab/scripts/verify.sh` 为空 | 「文档说谎」仍靠人工发现（`doc/avoid_common_error/14`） |
 | 观测 | Mermaid 与 `diagrams/` 的 PNG/SVG 无渲染校验，也没有 CI 出图 | 未验证 | `step-42` §4；仓库无 `.github/workflows/` | 图只做过围栏配对与图类型检查，视觉效果未证 |
 | 混沌 | `code/lab/scenarios/` 只有 3 个 JSON（`quick-failover`、`ha-app-failover`、`redis-sentinel-failover`），没有 `mysql-failover` / `db-failover` / `cache-*` | 未做 | 目录实测；k6 侧 `db-failover.js` 是硬编码时间线 | 控制台向导里选不到数据库切换与缓存实验场景 |
 | 混沌 | 控制器重启丢失活跃动作登记（无对账）；暂停态只存内存 | 未做 | `step-21` §4、`step-22b` §4 | 演练中途重建 controller，TTL 看门狗不会接管旧动作 |
@@ -103,14 +103,13 @@
 | 混沌 | `redis-sentinel-failover.json` 硬编码打击 `jl-redis-1` | 缺陷 | `code/lab/scenarios/redis-sentinel-failover.json` | 主不在 redis-1 时演练打在副本上，症状全变；跑前必须 `sentinel-status.sh` 核对 |
 | 混沌 | Toxiproxy 只演练过 `latency`/`timeout`，`bandwidth` 未验证；无对应 k6 场景；重启丢代理且无 keeper；verify 无 Toxiproxy 断言；`--profile dev` 后可能残留 `jl-toxiproxy*` | 未验证/未做 | `ToxicType.java:16-20`；`ls code/lab/k6/scenarios/`；`step-39` §6、`step-43` §4 | 网络故障这一族只有一半能演示 |
 | 混沌 | `CHAOS_APP_PROXY_INSTANCES` 未写进 compose，窄代理实例集合只能用代码默认 `app-1/2/3` | 未接线 | `config/ChaosProperties.java:177`；compose 里 grep 为空 | 想代理第 4 个实例或改端口要改代码重建 controller |
-| 压测 | `soak.js` / `stress.js` 从未按设计时长跑过（30m / 500 VU 阶梯） | 未验证 | `doc/process/benchmark/` 无对应归档 | 长稳与拐点结论都是外推，别当实测引用 |
+| 压测 | `soak.js` / `stress.js` 从未按设计时长跑过（30m / 500 VU 阶梯） | 未验证 | `doc/process/Stage1/benchmark/` 无对应归档 | 长稳与拐点结论都是外推，别当实测引用 |
 | 压测 | 没有独立的 Caffeine 预热场景（`caffeine-warmup.js` 不存在） | 未做 | `ls code/lab/k6/scenarios/` | 预热只能靠 `POST /lab/cache/preheat` 手动触发演示 |
 | 压测 | `cache-lab` 的 `db-fallback` dwell 与 `limiter_rejections` 还没有正向真机证据 | 未验证 | `step-56` §5 第 1 条（修 `maxDuration` 前被截断） | D10 的限流面板目前仍是空的 |
-| 调优 | `tune.sh` 无参数扫描；`benchmark/jvm-comparison/`、`benchmark/jvm-tuning/` 归档目录不存在，compare 未打通 | 未做 | `ls doc/process/benchmark/` 只有两份散 `tuning-*.md` | D8 的对比是手工两轮，不可复算 |
+| 调优 | `tune.sh` 无参数扫描；`benchmark/jvm-comparison/`、`benchmark/jvm-tuning/` 归档目录不存在，compare 未打通 | 未做 | `ls doc/process/Stage1/benchmark/` 只有两份散 `tuning-*.md` | D8 的对比是手工两轮，不可复算 |
 | 调优 | 只对比过 `-Xmx512m` vs `-Xmx256m`；G1/ZGC 未跑 | 未验证 | `step-51` §5-4 | 别把「JDK21 一定用 G1」当实验结论 |
 | 控制台 | 线程页 Playwright 只读状态，没有生命周期点击/快照断言；快照按钮未真点 | 未验证 | `console-smoke.mjs`（42 条断言无 lifecycle 点击） | 控制台线程页只有 API 级真机证据 |
 | 控制台 | D7（双 JDK 对比）没有控制台入口，只有 Grafana 面板 | 未做 | `dashboard/src/components/` 无对应组件 | 讲 JDK 对比要切到 Grafana |
-| 应用镜像 | 两份运行镜像已按 Dockerfile 正式重建并核对工具链，但**容器仍在跑重建前的镜像**（compose 只引用 tag，不比对 image ID） | 未验证 | `doc/design/安装与打包手册.md` §5.2 | 要拿到与文档一致的镜像需重建 app 层容器 |
 | 数据 | router 模式下 `reset-lab.sh` 默认清的是单机 `jl-mysql`，清集群要显式指 `RESET_MYSQL_CONTAINER` | 缺陷 | `code/lab/scripts/reset-lab.sh:45,80` | 演练后「数据已复位」可能是假象 |
 
 ### 3.3 已落地、但个别文档正文仍在说反话的位置
@@ -134,12 +133,12 @@
 - 01–11：全部已交付，包含代码对照表、配置项表、5 分钟演示步骤、已知缺陷/边界与关联文档。
 - 专题文档正文按各自基线编写；合并顺序晚于文档基线的能力（M4-3 预热、M4-2 审核修复、51a `MYSQL_MODE`）以第 3.1 节状态为准，正文如未提及不等于代码不存在；「还有什么没做」只看 §3.1 与 §3.2。
 - Mermaid 图使用标准 `flowchart` / `sequenceDiagram` / `stateDiagram-v2` 语法；本环境没有渲染器，**图的视觉效果未经验证**，只做了围栏配对与图类型检查。
-- 文档只写 `doc/design/details/`；不修改源码、测试、compose、脚本、`.env*` 或其他文档。
+- 文档只写 `doc/design/Stage1/details/`；不修改源码、测试、compose、脚本、`.env*` 或其他文档。
 
 ## 5. 关联入口
 
 - 总体设计：[`../2026-10-26-ha-concurrency-lab-design.md`](../2026-10-26-ha-concurrency-lab-design.md)
 - 数据库方案对比：[`../数据库高可用方案对比.md`](../数据库高可用方案对比.md)
-- 工程规约：[`../工程规约.md`](../工程规约.md)
-- 阶段交接（含缺陷/边界与未验证项）：[`../../process/阶段交接-2026-10-26.md`](../../process/阶段交接-2026-10-26.md)
+- 工程规约：[`../工程规约.md`](../../工程规约.md)
+- 阶段交接（含缺陷/边界与未验证项）：[`../../process/STAGE-01阶段交接-2026-10-26.md`](../../../process/STAGE-01阶段交接-2026-10-26.md)
 - 运行与演示脚本：`code/lab/scripts/`；Compose：`code/lab/docker/`；场景：`code/lab/scenarios/`；压测：`code/lab/k6/`；操作台：`code/lab/dashboard/`。

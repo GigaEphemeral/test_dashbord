@@ -5,8 +5,8 @@
 - 状态：待评审
 - 环境：Windows 10 + Docker Desktop（WSL2），16 核 / 16GB 可用
 - 关联文档：[数据库高可用方案对比](数据库高可用方案对比.md)
-- 工程规约：[工程规约](工程规约.md)
-- 阶段交接：[阶段交接-2026-10-26](../process/阶段交接-2026-10-26.md)
+- 工程规约：[工程规约](../工程规约.md)
+- 阶段交接：[阶段交接-2026-10-26](../../process/STAGE-01阶段交接-2026-10-26.md)
 
 ---
 
@@ -397,7 +397,7 @@ JAVA-LEARN/
 ### 9.3 快照与调试
 
 - 快照内容：`jcmd Thread.print -l`、`GC.heap_info`、类直方图；JDK 8 用 `jstack` + `jmap`
-- 存储：`doc/process/snapshots/<时间戳>/`，附一份分析模板
+- 存储：`doc/process/Stage1/snapshots/<时间戳>/`，附一份分析模板
 - Grafana 打 annotation 标记快照时刻
 - 故障清理：默认 TTL 120s；`manual hold` 保持；暂停时 TTL 冻结；全局 stop-all
 - 虚拟线程相关实验仅存在于 JDK 21 外壳，不进入共享库
@@ -424,7 +424,7 @@ JAVA-LEARN/
 
 - 相同 CPU/内存限额、相同 `-Xmx512m`、同一套依赖服务
 - 同一 k6 场景分别运行，记录吞吐、P99、GC 暂停、堆、线程数、启动耗时、镜像大小
-- 结果写入 `doc/process/benchmark/jvm-comparison/` 与 D7 面板
+- 结果写入 `doc/process/Stage1/benchmark/jvm-comparison/` 与 D7 面板
 
 ### 10.3 JVM 调优台
 
@@ -432,7 +432,7 @@ JAVA-LEARN/
 - 预设：均衡默认、小堆 128m、大堆 1g、G1、ZGC（仅 21）、Parallel、CMS（仅 8，历史演示）、虚拟线程开/关（仅 21）、Tomcat 线程数、Hikari 池大小
 - 自定义参数：白名单校验（`-Xms/-Xmx/-XX:Use*GC/-Xss/-XX:MaxMetaspaceSize` 等），拒绝任意命令；白名单按 JVM 版本区分，ZGC 与虚拟线程仅允许在 JDK 21 实例上使用
 - 生效方式：JVM 参数只在启动时生效，调优台**重建目标容器**；Nginx 将流量转给其他实例，顺带演示一次故障转移
-- 记录：参数、生效时间、2 分钟后指标快照、Grafana annotation；写入 `doc/process/benchmark/jvm-tuning/`
+- 记录：参数、生效时间、2 分钟后指标快照、Grafana annotation；写入 `doc/process/Stage1/benchmark/jvm-tuning/`
 - 还原：一键恢复基线，避免环境被调坏
 - 安全：仅内部网络可达，`X-Lab-Token` 鉴权，白名单参数，单次只重建一个实例
 
@@ -503,7 +503,7 @@ k6 通过 remote-write 写入 Prometheus：
 ### 11.4 压测报告与对比
 
 - 每次运行归档到 `code/lab/k6/reports/<run_id>/`：`report.html`、`summary.json`、`manifest.json`、`chaos.log`
-- 结论文档写入 `doc/process/benchmark/<日期>-<场景>-<run_id>.md`，含 Grafana 时间范围深链
+- 结论文档写入 `doc/process/Stage1/benchmark/<日期>-<场景>-<run_id>.md`，含 Grafana 时间范围深链
 - `manifest.json`：镜像标签、JVM 参数、场景步骤、预热时长、开始/结束时间
 - `compare.sh A B`：RPS、P95、P99、错误率、429 率、峰值堆、GC 暂停、线程峰值、判定结果及涨跌幅
 - 压测前自动复位数据（批量模式）；压测后按 `LAB_RESET_MODE` 决定是否自动还原

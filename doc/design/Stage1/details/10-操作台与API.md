@@ -450,11 +450,11 @@ bash code/lab/scripts/console-smoke.sh --no-build
 
 ## 11. 关联文档
 
-- `doc/design/details/07-线程实验室.md`：应用内 `/lab/thread/**` 的完整端点与指标（控制台经窄代理可达）。
-- `doc/design/details/08-双JDK与JVM调优.md`：JDK 8 不暴露 `/lab/**`。
-- `doc/design/details/09-压测与观测.md`：`/prom/`、D1–D9、`run_id` 与 bench 归档。
-- `doc/process/step-21-chaos-actions.md`、`step-22a-scenario-timeline.md`、`step-22b-guide-state.md`、`step-23-console-mvp.md`：控制器/向导/控制台交接。
-- `doc/design/2026-10-26-ha-concurrency-lab-design.md` §11.3、§12：控制器能力与控制台原始设计。
+- `doc/design/Stage1/details/07-线程实验室.md`：应用内 `/lab/thread/**` 的完整端点与指标（控制台经窄代理可达）。
+- `doc/design/Stage1/details/08-双JDK与JVM调优.md`：JDK 8 不暴露 `/lab/**`。
+- `doc/design/Stage1/details/09-压测与观测.md`：`/prom/`、D1–D9、`run_id` 与 bench 归档。
+- `doc/process/Stage1/step-21-chaos-actions.md`、`step-22a-scenario-timeline.md`、`step-22b-guide-state.md`、`step-23-console-mvp.md`：控制器/向导/控制台交接。
+- `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` §11.3、§12：控制器能力与控制台原始设计。
 - `code/lab/k6/README.md`：控制器与 k6 共用的场景 schema/命令。
 
 ---

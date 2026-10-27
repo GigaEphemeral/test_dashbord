@@ -10,7 +10,7 @@
 ```mermaid
 %% 代码基线：504fc74
 %% 图 5 · Redis Sentinel 切换时序
-%% 依据：RedisClientConfig、SentinelMasterDiscoveryReporter、compose.ha.yml、doc/process/step-24d-sentinel-live-drill.md、doc/process/step-38-ha-acceptance.md
+%% 依据：RedisClientConfig、SentinelMasterDiscoveryReporter、compose.ha.yml、doc/process/Stage1/step-24d-sentinel-live-drill.md、doc/process/Stage1/step-38-ha-acceptance.md
 sequenceDiagram
     autonumber
     actor OP as 操作者

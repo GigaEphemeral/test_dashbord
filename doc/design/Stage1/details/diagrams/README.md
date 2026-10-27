@@ -1,7 +1,7 @@
 # 跨专题图表集（Mermaid 源 + 渲染包装）
 
 > 代码基线：`504fc74`（`git rev-parse --short HEAD`，本目录所有图统一基线）
-> 范围：只画 `doc/design/details/01–11` 没有覆盖的**跨专题**视角；每个专题的细节分支仍以对应文档为准。
+> 范围：只画 `doc/design/Stage1/details/01–11` 没有覆盖的**跨专题**视角；每个专题的细节分支仍以对应文档为准。
 > 形态：每个图一份纯 Mermaid `.mmd` 源文件（无围栏），加一份 `.md` 包装（内含 mermaid 围栏，GitHub/GitLab 可直接渲染）。
 > 维护约定：先改 `.mmd`，再同步 `.md` 内的同一段源码；两者必须逐字一致，避免“源文件改了、渲染页没改”。
 
@@ -31,8 +31,8 @@
 | 2 | [`02-seckill-request-chain.mmd`](02-seckill-request-chain.mmd) / [`.md`](02-seckill-request-chain.md) | `sequenceDiagram` | 浏览器→Nginx→应用→Redis 锁/幂等/Lua→MQ→消费者→DB，含补偿与同步降级 | `SeckillAdmissionService.java`、`SeckillResilienceGuard.java`、`SeckillOrderConsumer.java`、`SeckillController.java` |
 | 3 | [`03-read-write-routing.mmd`](03-read-write-routing.mmd) / [`.md`](03-read-write-routing.md) | `flowchart TB` | `LazyConnectionDataSourceProxy`→`AbstractRoutingDataSource`→读写池，`MYSQL_MODE` 与 6446/6447 | `DataSourceConfig.java`、`ReadWriteRoutingDataSource.java`、`DataSourceAccessProperties.java`、`application.yml`（`app.datasource.*`） |
 | 4 | [`04-cache-read-path.mmd`](04-cache-read-path.mmd) / [`.md`](04-cache-read-path.md) | `flowchart TB` | L1→L2→穿透→击穿→雪崩→DB/限流，含运行时模式开关与指标 | `CachedProductViewService.java`、`TwoLevelCache.java`、`ProductAvalancheDefense.java`、`ProductBreakdownDefense.java`/`ProductPenetrationDefense.java` |
-| 5 | [`05-redis-sentinel-failover.mmd`](05-redis-sentinel-failover.mmd) / [`.md`](05-redis-sentinel-failover.md) | `sequenceDiagram` | 应用→Sentinel 发现→主→kill→sdown/odown→switch-master→重连 | `RedisClientConfig.java`、`SentinelMasterDiscoveryReporter.java`、`code/lab/docker/compose.ha.yml`、`doc/process/step-24d-sentinel-live-drill.md` |
-| 6 | [`06-mysql-cluster-failover.mmd`](06-mysql-cluster-failover.mmd) / [`.md`](06-mysql-cluster-failover.md) | `sequenceDiagram` | Router 6446/6447、kill 主、组选举、Router 重路由、TTL 重加入 | `DataSourceAccessProperties.java`、`code/lab/docker/compose.mysql.yml`、`code/lab/docker/prometheus/prometheus.yml`、`doc/process/step-31-mysql-router-live-drill.md` |
+| 5 | [`05-redis-sentinel-failover.mmd`](05-redis-sentinel-failover.mmd) / [`.md`](05-redis-sentinel-failover.md) | `sequenceDiagram` | 应用→Sentinel 发现→主→kill→sdown/odown→switch-master→重连 | `RedisClientConfig.java`、`SentinelMasterDiscoveryReporter.java`、`code/lab/docker/compose.ha.yml`、`doc/process/Stage1/step-24d-sentinel-live-drill.md` |
+| 6 | [`06-mysql-cluster-failover.mmd`](06-mysql-cluster-failover.mmd) / [`.md`](06-mysql-cluster-failover.md) | `sequenceDiagram` | Router 6446/6447、kill 主、组选举、Router 重路由、TTL 重加入 | `DataSourceAccessProperties.java`、`code/lab/docker/compose.mysql.yml`、`code/lab/docker/prometheus/prometheus.yml`、`doc/process/Stage1/step-31-mysql-router-live-drill.md` |
 | 7 | [`07-chaos-guide-state-machines.mmd`](07-chaos-guide-state-machines.mmd) / [`.md`](07-chaos-guide-state-machines.md) | `stateDiagram-v2` | 向导 IDLE/RUNNING/PAUSED/COMPLETED/FAILED 与动作 APPLYING/ACTIVE/REVERTING/REVERTED/FAILED/COMPLETED 两台状态机 | `GuideService.java`、`GuideStatus.java`、`ChaosActionService.java`、`ChaosActionStatus.java` |
 | 8 | [`08-thread-lab-lifecycle.mmd`](08-thread-lab-lifecycle.mmd) / [`.md`](08-thread-lab-lifecycle.md) | `stateDiagram-v2` | 单线程六态 NEW→…→TERMINATED 与故障 ACTIVE/PAUSED/STOPPED | `LifecycleDemoService.java`、`DemoState.java`、`ThreadFaultService.java`、`LifecycleState.java` |
 | 9 | [`09-load-and-observability-flow.mmd`](09-load-and-observability-flow.mmd) / [`.md`](09-load-and-observability-flow.md) | `flowchart LR` | k6 remote write、Actuator 抓取、exporter、OTLP→Tempo、Grafana D1–D11 | `code/lab/k6/run.sh`、`code/lab/docker/prometheus/prometheus.yml`、`otel-collector/otel-collector.yaml`、`tempo/tempo.yaml` |
@@ -74,14 +74,14 @@
 - [ ] `.../redis/RedisClientConfig.java`：Lettuce/Redisson 的 sentinel 配置同开关、`REDIS_MODE` 校验。
 - [ ] `.../redis/SentinelMasterDiscoveryReporter.java`：按 master 名发现、日志证据字段。
 - [ ] `code/lab/docker/compose.ha.yml`：`mymaster`、3 Sentinel、`down-after`/quorum、固定 IP。
-- [ ] `doc/process/step-24d-sentinel-live-drill.md`（及 `step-38-ha-acceptance.md` 的折算）：7.6s/9.1s 的时间戳来源。
+- [ ] `doc/process/Stage1/step-24d-sentinel-live-drill.md`（及 `step-38-ha-acceptance.md` 的折算）：7.6s/9.1s 的时间戳来源。
 
 ### 图 6 · MySQL InnoDB Cluster 切换
 
 - [ ] `.../datasource/DataSourceAccessProperties.java`：router 模式写 6446/读 6447 的绑定。
 - [ ] `code/lab/docker/compose.mysql.yml`：单主 Group Replication、Router、两个 init job、exporter 标签。
 - [ ] `code/lab/docker/prometheus/prometheus.yml`：`mysqld-exporter-ha` 已内联（不再是惰性文件），D11 的 `mysql_up` 依赖它。
-- [ ] `doc/process/step-31-mysql-router-live-drill.md`：kill、重路由、TTL 回滚与重加入的实测记录。
+- [ ] `doc/process/Stage1/step-31-mysql-router-live-drill.md`：kill、重路由、TTL 回滚与重加入的实测记录。
 
 ### 图 7 · 故障注入与向导状态机
 

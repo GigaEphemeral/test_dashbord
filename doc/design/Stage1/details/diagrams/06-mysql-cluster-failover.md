@@ -1,6 +1,16 @@
+# 图 6 · MySQL InnoDB Cluster 切换时序
+
+> 代码基线：`504fc74`（本目录所有图统一基线）
+> 源文件：[06-mysql-cluster-failover.mmd](06-mysql-cluster-failover.mmd) · 类型：`sequenceDiagram`
+
+应用经 Router 6446/6447 读写，kill 主后组内选举、Router 重路由、TTL 到点旧主以 SECONDARY 重加入。
+
+读图要点：Router 重路由的精确时刻与旧主完成重加入的时刻未逐秒记录，已标 `待补`；不要用 `mysql_cluster_*` 指标替代 Router 日志结论，探针本身也可能被误杀。
+
+```mermaid
 %% 代码基线：504fc74
 %% 图 6 · MySQL InnoDB Cluster 切换时序
-%% 依据：compose.mysql.yml、DataSourceAccessProperties、prometheus.yml（mysqld-exporter-ha）、MysqlClusterMonitor、doc/process/step-31-mysql-router-live-drill.md
+%% 依据：compose.mysql.yml、DataSourceAccessProperties、prometheus.yml（mysqld-exporter-ha）、MysqlClusterMonitor、doc/process/Stage1/step-31-mysql-router-live-drill.md
 sequenceDiagram
     autonumber
     actor OP as 操作者
@@ -37,3 +47,4 @@ sequenceDiagram
     ST-->>OP: 3/3 ONLINE，恰好一个 PRIMARY<br/>6446 → mysql-2（RW）<br/>6447 → mysql-1（RO，回组后）
     Note over RT: Router 无 Prometheus 指标端点<br/>D11 用 mysql_cluster_* 探针 + 脚本说明，不画假曲线
     Note over ST: 探针每 10s 查询 replication_group_members<br/>演练时不要把探针容器指向将被 kill 的节点
+```

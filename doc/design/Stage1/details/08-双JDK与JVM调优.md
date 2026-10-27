@@ -162,7 +162,7 @@ flowchart TD
     P1 --> P2["同一只读业务场景<br/>仅 product（避开 ensureLogin）"]
     P2 --> P3["分别执行 bench.sh / k6<br/>独立 run_id"]
     P3 --> P4["采集：吞吐 / P99 / GC / 堆 / 线程 / 启动耗时 / 镜像大小"]
-    P4 --> P5["归档 doc/process/benchmark/jvm-comparison/"]
+    P4 --> P5["归档 doc/process/Stage1/benchmark/jvm-comparison/"]
     P5 --> P6["D7 面板：JDK 8 vs 21"]
 
     N1["dual-jdk profile 需显式启动"] -.-> P1
@@ -177,7 +177,7 @@ flowchart TD
 
 - 同限额、同 `-Xmx512m`、同一套依赖服务；
 - 同一 k6 场景分别跑两壳，记录吞吐、P99、GC 暂停、堆、线程数、启动耗时、镜像大小；
-- 结果写入 `doc/process/benchmark/jvm-comparison/` 与 D7 面板。
+- 结果写入 `doc/process/Stage1/benchmark/jvm-comparison/` 与 D7 面板。
 
 当前**只完成了 JDK 8 数据源**：`/actuator/prometheus` 上同名的 JVM/HTTP/Tomcat/Hikari 指标已经可抓。缺的是 compose 服务、Prometheus job、k6 目标、归档脚本与面板。
 
@@ -256,13 +256,13 @@ flowchart TD
 | k6 登录路径 | `login` | `code/lab/k6/lib/config.js:236` | 默认 `/api/login` |
 | k6 登录函数 | `login` | `code/lab/k6/lib/flow.js:31` | POST `config.paths.login` |
 | k6 确保登录 | `ensureLogin` | `code/lab/k6/lib/flow.js:51` | token 为空即登录，JDK 8 上必失败 |
-| D7 未实现（step-33 交接时） | `compose` | `doc/process/step-33-jdk8-shell.md:61` | 当时缺 compose/D7/k6 接线；step-41 已补齐 |
-| jvm_info 缺失（交接） | `jvm_info` | `doc/process/step-33-jdk8-shell.md:62` | 必须改用 `jvm_version` 标签 |
-| 本机只有 JRE 8（交接） | `jre1.8.0_503` | `doc/process/step-33-jdk8-shell.md:64` | 无 javac 8 |
-| 测试在 JDK 25 的非受支持路径（交接） | `JDK 25` | `doc/process/step-33-jdk8-shell.md:65` | 建议统一 JDK 21 |
-| 启动样本不可直接入表（交接） | `Xmx512m` | `doc/process/step-33-jdk8-shell.md:66` | 需同限额 + 多次中位 |
-| k6 登录缺口（交接） | `ensureLogin` | `doc/process/step-33-jdk8-shell.md:73` | 三个处置选项 |
-| 各阶段未实现清单（历史） | `M5` | `doc/process/阶段交接-2026-10-26.md:439` | 当时 D6–D8 待办；D6/D7 后已落地，D8 仍缺 |
+| D7 未实现（step-33 交接时） | `compose` | `doc/process/Stage1/step-33-jdk8-shell.md:61` | 当时缺 compose/D7/k6 接线；step-41 已补齐 |
+| jvm_info 缺失（交接） | `jvm_info` | `doc/process/Stage1/step-33-jdk8-shell.md:62` | 必须改用 `jvm_version` 标签 |
+| 本机只有 JRE 8（交接） | `jre1.8.0_503` | `doc/process/Stage1/step-33-jdk8-shell.md:64` | 无 javac 8 |
+| 测试在 JDK 25 的非受支持路径（交接） | `JDK 25` | `doc/process/Stage1/step-33-jdk8-shell.md:65` | 建议统一 JDK 21 |
+| 启动样本不可直接入表（交接） | `Xmx512m` | `doc/process/Stage1/step-33-jdk8-shell.md:66` | 需同限额 + 多次中位 |
+| k6 登录缺口（交接） | `ensureLogin` | `doc/process/Stage1/step-33-jdk8-shell.md:73` | 三个处置选项 |
+| 各阶段未实现清单（历史） | `M5` | `doc/process/STAGE-01阶段交接-2026-10-26.md:439` | 当时 D6–D8 待办；D6/D7 后已落地，D8 仍缺 |
 
 ---
 
@@ -357,22 +357,22 @@ D7 面板已存在（`ha-d7`，step-41），第二步可直接看两侧同图对
 6. **D1/D2/D4 的标签事实**：D1/D2 按 `instance` 过滤且实例变量来自 `job=~"seckill-app.*"`；D4 精确 `job="seckill-app"`；`honor_labels=false` 会覆盖应用 `instance`。新 job 名必须匹配正则，区分两壳靠 `app`。
 7. **`mysql` profile 已真机验证**：step-41 以 `APP_PROFILE=mysql` 连共享 MySQL 启动 JDK 8，`ddl-auto=validate` 通过。
 8. **测试不在 JRE 8 上跑**：surefire 跟随 Maven 的 JDK（25 或 21）；JRE 8 只用于启动 jar 的冒烟。
-9. **启动耗时样本仍偏少**：step-41 两侧各 3 次（JDK 8 中位 9.332s、JDK 21 30.517s），但 JDK 21 是并发重建、有 CPU 争用；严格基准应逐实例串行、多轮取中位后再写入 `doc/process/benchmark/jvm-comparison/`。
+9. **启动耗时样本仍偏少**：step-41 两侧各 3 次（JDK 8 中位 9.332s、JDK 21 30.517s），但 JDK 21 是并发重建、有 CPU 争用；严格基准应逐实例串行、多轮取中位后再写入 `doc/process/Stage1/benchmark/jvm-comparison/`。
 10. **JDK 8 侧功能不对等**：没有缓存 L1/L2、穿透防护、线程实验室、toggles、异步秒杀、登录、订单、Flyway；D7 只能比“裸读路径 + JVM/GC/堆/线程/启动”。
 11. **健康组写法不同**：8 侧 `include=db,ping`，21 侧 `exclude=redis`；将来给 8 侧加 contributor 时必须同步 include。
-12. **调优台**：`code/lab/scripts/tune.sh`（切 JVM 参数、重建 app 层、打 Grafana annotation、可选短压测、前后对比记录）+ D8 面板已落地（step-51）。仍缺：设计 §10.3 的 `/tuning` 控制台页面与 chaos-controller 调优端点、GC/堆预设白名单、自动参数扫描与 `doc/process/benchmark/jvm-tuning/` 归档对比。
+12. **调优台**：`code/lab/scripts/tune.sh`（切 JVM 参数、重建 app 层、打 Grafana annotation、可选短压测、前后对比记录）+ D8 面板已落地（step-51）。仍缺：设计 §10.3 的 `/tuning` 控制台页面与 chaos-controller 调优端点、GC/堆预设白名单、自动参数扫描与 `doc/process/Stage1/benchmark/jvm-tuning/` 归档对比。
 13. **JDK 8 仅 JRE**：本机没有 javac 8，若要在容器里构建需要 JDK 8 基础镜像；当前未定镜像。
 
 ---
 
 ## 11. 关联文档
 
-- `doc/design/details/07-线程实验室.md`：线程实验室只在 JDK 21 外壳，JDK 8 无对等实现。
-- `doc/design/details/09-压测与观测.md`：k6 场景、Prometheus job、D1–D9 清单与 `run_id` 约定。
-- `doc/design/details/10-操作台与API.md`：`/lab-api/**` 只到 chaos-controller，JDK 8 不暴露 `/lab/**`。
-- `doc/process/step-33-jdk8-shell.md`：JDK 8 外壳交接（含本文件引用的四条 D7 约束）。
-- `doc/design/2026-10-26-ha-concurrency-lab-design.md` §10：双 JDK 与调优台原始设计。
-- `doc/process/阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单（历史记录；D6/D7 后已落地，D8 仍缺）。
+- `doc/design/Stage1/details/07-线程实验室.md`：线程实验室只在 JDK 21 外壳，JDK 8 无对等实现。
+- `doc/design/Stage1/details/09-压测与观测.md`：k6 场景、Prometheus job、D1–D9 清单与 `run_id` 约定。
+- `doc/design/Stage1/details/10-操作台与API.md`：`/lab-api/**` 只到 chaos-controller，JDK 8 不暴露 `/lab/**`。
+- `doc/process/Stage1/step-33-jdk8-shell.md`：JDK 8 外壳交接（含本文件引用的四条 D7 约束）。
+- `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` §10：双 JDK 与调优台原始设计。
+- `doc/process/STAGE-01阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单（历史记录；D6/D7 后已落地，D8 仍缺）。
 
 ---
 

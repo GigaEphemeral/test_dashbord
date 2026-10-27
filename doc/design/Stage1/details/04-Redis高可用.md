@@ -341,8 +341,8 @@ curl -sS http://127.0.0.1:8080/lab-api/chaos/actions -H "X-Lab-Token: $LAB_TOKEN
 
 ## 8. 关联文档
 
-- 总设计：`doc/design/2026-10-26-ha-concurrency-lab-design.md` §3.1 / §3.3 / §8.2
-- 步骤交接：`doc/process/step-24a-sentinel-compose.md`（拓扑与手工演练）、`doc/process/step-24b-sentinel-client.md`（双客户端与应用级演练）、`doc/process/step-24c-sentinel-targets.md`（数据存储允许名单与未做的活体验收）
+- 总设计：`doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` §3.1 / §3.3 / §8.2
+- 步骤交接：`doc/process/Stage1/step-24a-sentinel-compose.md`（拓扑与手工演练）、`doc/process/Stage1/step-24b-sentinel-client.md`（双客户端与应用级演练）、`doc/process/Stage1/step-24c-sentinel-targets.md`（数据存储允许名单与未做的活体验收）
 - 同目录：`05-MySQL高可用与读写路由.md`（数据层另一条 HA 链路）、`06-故障注入与实验向导.md`（TTL/看门狗/场景驱动）、`11-配置与安全边界.md`（键清单与安全边界）
 - 场景与压测：`code/lab/scenarios/README.md`、`code/lab/k6/README.md`
-- 汇总交接：`doc/process/阶段交接-2026-10-26.md`（缺陷/TODO 总表与历史硬编码清单）
+- 汇总交接：`doc/process/STAGE-01阶段交接-2026-10-26.md`（缺陷/TODO 总表与历史硬编码清单）
