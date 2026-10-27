@@ -86,5 +86,5 @@ LAB_TOKEN="$TOKEN" CACHE_LAB_MODE_DURATION=90s bash code/lab/k6/run.sh cache-lab
 - `code/lab/k6/reports/20261027-175754-cache-lab-armed/run.log`（被截断那次：7 次切换、`maxDuration: 10m0s`、`1 interrupted`）
 - `code/lab/k6/scenarios/cache-lab.js`（`timelineSlack` / `timelineMaxMs` 与 `options.scenarios.modes.maxDuration`）
 - `code/lab/k6/test/cache-lab-scenario.test.mjs`（预算断言）
-- `doc/process/step-56-cache-lab-defect-arming.md`「真机运行」节
+- `doc/process/Stage1/step-56-cache-lab-defect-arming.md`「真机运行」节
 - 修复提交 `96939cf`

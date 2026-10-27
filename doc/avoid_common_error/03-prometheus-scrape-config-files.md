@@ -48,5 +48,5 @@ curl -s 'http://127.0.0.1:8080/prom/api/v1/query?query=mysql_up' | head -c 400
 
 ## 出处
 
-- 现象与回退：`doc/process/step-38-ha-acceptance.md`「补充」
+- 现象与回退：`doc/process/Stage1/step-38-ha-acceptance.md`「补充」
 - 修复：commit `c192a0a`（内联 job、删除从未被读取的 `mysql-ha-scrape.yml`）

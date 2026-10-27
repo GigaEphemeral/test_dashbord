@@ -37,4 +37,4 @@ curl -s -X POST .../chaos/instances/79dbbf218e65/actions -d '{"action":"start"}'
 
 - 实现：`DatastoreTargetPolicy` / `ChaosActionService` / `DockerContainerGateway`
 - 审核修复：`876bf4b`/`5651b0e`（id 前缀），`72ac215`
-- 真机：`doc/process/step-24d-sentinel-live-drill.md`、`step-31-mysql-router-live-drill.md`
+- 真机：`doc/process/Stage1/step-24d-sentinel-live-drill.md`、`step-31-mysql-router-live-drill.md`

@@ -42,5 +42,5 @@ done
 
 ## 出处
 
-- `doc/process/step-32-thread-lab.md`「补充」节
+- `doc/process/Stage1/step-32-thread-lab.md`「补充」节
 - 修复：`a37abff`（相位偏移 + `ThreadMXBean` 采样）

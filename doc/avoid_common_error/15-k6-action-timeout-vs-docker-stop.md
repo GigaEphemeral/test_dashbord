@@ -64,4 +64,4 @@ LAB_TOKEN="$TOKEN" CHAOS_TARGET_PATTERN='^jl-mysql-[0-9]+$' \
 
 - `code/lab/k6/reports/20261027-160742-db-failover/k6.log`（超时那次）
 - `code/lab/k6/reports/20261027-161756-db-failover/k6.log`（修复后 202，stop 耗时 11s）
-- `doc/process/step-48-k6-ha-cache-scenarios.md`「真机运行」节
+- `doc/process/Stage1/step-48-k6-ha-cache-scenarios.md`「真机运行」节

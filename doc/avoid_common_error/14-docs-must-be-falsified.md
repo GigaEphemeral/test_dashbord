@@ -23,7 +23,7 @@
 2. **文档头部记代码基线**：`代码基线：<commit>`；行号与断言都只对该提交负责，后续变更以符号名重新定位。
 3. **审核按「文档断言」逐条打勾**：独立审核要专门检查交接文档里的数字、端点名、面板名、提交号，发现不符就记 Important。
 4. **代理回报必须带原样证据**：`git log --oneline`、`git diff --stat`、真实测试计数；主会话按 `git` 侧证抽查，不只看报告。
-5. **变更时同步三处**：代码 → `doc/process/step-*` → `doc/design/details`（含 Mermaid 图）。`details` 的 README 有一致性清单，按图回访代码。
+5. **变更时同步三处**：代码 → `doc/process/Stage1/step-*` → `doc/design/Stage1/details`（含 Mermaid 图）。`details` 的 README 有一致性清单，按图回访代码。
 
 ## 验证
 

@@ -34,5 +34,5 @@ docker exec jl-sentinel-1 sh -c 'head -1 /data/sentinel.conf | od -c | head -2' 
 
 ## 出处
 
-- `doc/process/step-24a-sentinel-compose.md`（`.gitattributes` + `tr -d '\r'` 修复，`3cbbbab`）
-- `doc/process/step-25a-mysql-cluster-compose.md`（`lib/render-tpl.sh`）
+- `doc/process/Stage1/step-24a-sentinel-compose.md`（`.gitattributes` + `tr -d '\r'` 修复，`3cbbbab`）
+- `doc/process/Stage1/step-25a-mysql-cluster-compose.md`（`lib/render-tpl.sh`）

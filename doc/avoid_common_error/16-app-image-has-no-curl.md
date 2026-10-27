@@ -61,5 +61,5 @@ BusyBox wget 的能力边界：只有 `-c -q -S --spider -O -o --header --post-d
 
 ## 出处
 
-- `doc/process/step-48-k6-ha-cache-scenarios.md` §7.4（发现现场与命令实测）
-- 修复：`doc/readme.md` §4.1/§4.4、`doc/process/step-35-thread-snapshots.md` 演示脚本改用 wget
+- `doc/process/Stage1/step-48-k6-ha-cache-scenarios.md` §7.4（发现现场与命令实测）
+- 修复：`doc/readme.md` §4.1/§4.4、`doc/process/Stage1/step-35-thread-snapshots.md` 演示脚本改用 wget

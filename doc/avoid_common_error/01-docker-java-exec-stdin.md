@@ -47,6 +47,6 @@ curl -s 'http://127.0.0.1:8080/prom/api/v1/query?query=mysql_cluster_member_coun
 
 ## 出处
 
-- 缺陷发现：`doc/process/step-31-mysql-router-live-drill.md`
+- 缺陷发现：`doc/process/Stage1/step-31-mysql-router-live-drill.md`
 - 修复：commit `fcd287d`（`ChaosProperties` / `MysqlClusterMonitor` / `application.yml`）
 - 复验记录：`step-31` 的「补充」节

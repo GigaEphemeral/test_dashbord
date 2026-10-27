@@ -39,6 +39,6 @@ bash code/lab/scripts/db-cluster-status.sh
 
 ## 出处
 
-- `doc/process/step-25a-mysql-cluster-compose.md`（静态层）
-- `doc/process/step-25b-mysql-live-bootstrap.md`（2061、镜像/参数、uid 999，真机）
-- `doc/process/step-31-mysql-router-live-drill.md`（切换与重定向）
+- `doc/process/Stage1/step-25a-mysql-cluster-compose.md`（静态层）
+- `doc/process/Stage1/step-25b-mysql-live-bootstrap.md`（2061、镜像/参数、uid 999，真机）
+- `doc/process/Stage1/step-31-mysql-router-live-drill.md`（切换与重定向）

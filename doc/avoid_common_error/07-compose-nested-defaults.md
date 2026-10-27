@@ -39,5 +39,5 @@ docker compose --project-name jl-check -f compose.base.yml -f compose.dev.yml -f
 
 ## 出处
 
-- 独立审核发现：`doc/process/step-24b-sentinel-client.md` 的「审核修复」节（`fe8dfb7`）
+- 独立审核发现：`doc/process/Stage1/step-24b-sentinel-client.md` 的「审核修复」节（`fe8dfb7`）
 - 脚本门：`code/lab/scripts/down.sh`、`step-24a`

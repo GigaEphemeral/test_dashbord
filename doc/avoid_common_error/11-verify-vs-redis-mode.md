@@ -32,6 +32,6 @@ bash code/lab/scripts/verify.sh                     # 期望 104 PASS / 1 WARN
 
 ## 出处
 
-- `doc/process/step-24b-sentinel-client.md`（还原 Runbook）
-- `doc/process/阶段交接-2026-10-26.md`「已知缺陷」第 6 条
+- `doc/process/Stage1/step-24b-sentinel-client.md`（还原 Runbook）
+- `doc/process/STAGE-01阶段交接-2026-10-26.md`「已知缺陷」第 6 条
 - `doc/readme.md` §8 FAQ

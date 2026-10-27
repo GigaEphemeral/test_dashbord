@@ -35,6 +35,6 @@ bash code/lab/scripts/sentinel-status.sh
 
 ## 出处
 
-- `doc/process/step-24a-sentinel-compose.md`
-- `doc/process/step-24b-sentinel-client.md`
-- `doc/process/step-24d-sentinel-live-drill.md`（真机切换与归队证据）
+- `doc/process/Stage1/step-24a-sentinel-compose.md`
+- `doc/process/Stage1/step-24b-sentinel-client.md`
+- `doc/process/Stage1/step-24d-sentinel-live-drill.md`（真机切换与归队证据）

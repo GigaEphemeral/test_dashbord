@@ -23,13 +23,14 @@
 | 16 | [app 运行镜像里没有 curl](16-app-image-has-no-curl.md) | Alpine 只有 BusyBox wget；文档里的 `docker exec ... curl` 照抄即失败 | 已写 |
 | 17 | [k6 的 per-vu-iterations 默认 maxDuration 截断时间线](17-k6-per-vu-iterations-max-duration.md) | `exit 0` + `checks 100%` 也会少跑一个 dwell；预算必须由 dwell 推导 | 已写 |
 | 18 | [`K6_SUMMARY_EXPORT` 是容器内路径](18-k6-summary-export-is-container-path.md) | 指到宿主路径会 exit 107：`/scripts` 是 `:ro` 挂载，必须落在 `/reports/` 下 | 已写 |
+| 19 | [改了 compose 挂载源但没重建容器](19-compose-bind-source-moved-without-recreate.md) | 宿主目录被移走后绑定挂载变悬空：`/app/lab-snapshots` 查不到，抓取返回 200 但 `captured=false` + `FileAlreadyExistsException`，宿主侧一个 bundle 都没有 | 已写 |
 
 ## 维护约定
 
-- 新坑先写入对应 `doc/process/step-*.md`，再提炼到本目录并登记索引。
+- 新坑先写入对应 `doc/process/Stage1/step-*.md`，再提炼到本目录并登记索引。
 - 每条必须能回答：怎么复现、怎么判断、怎么避免、去哪看证据。
 - 本目录不收录"设计上不打算做"的取舍（那些放 `doc/design/`），只收录会让人踩第二次的坑。
 
 ## 完成情况
 
-18 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/step-*.md`，再提炼到这里并登记。
+19 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/Stage1/step-*.md`，再提炼到这里并登记。

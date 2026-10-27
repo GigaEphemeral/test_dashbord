@@ -32,6 +32,6 @@ curl -s -o /dev/null -w "%{http_code} %{time_total}\n" http://127.0.0.1:8080/api
 
 ## 出处
 
-- `doc/process/step-24b-sentinel-client.md`（「L1 60s TTL 掩盖 failover」）
-- `doc/process/step-24d-sentinel-live-drill.md`（实测 9.1s 恢复、app 不重启）
-- `doc/design/details/03-缓存体系.md`（两级缓存与一致性窗口）
+- `doc/process/Stage1/step-24b-sentinel-client.md`（「L1 60s TTL 掩盖 failover」）
+- `doc/process/Stage1/step-24d-sentinel-live-drill.md`（实测 9.1s 恢复、app 不重启）
+- `doc/design/Stage1/details/03-缓存体系.md`（两级缓存与一致性窗口）

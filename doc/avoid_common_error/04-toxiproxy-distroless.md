@@ -43,6 +43,6 @@ docker exec jl-app-1 sh -c 'echo $REDIS_HOST'   # -> toxiproxy
 
 ## 出处
 
-- 真机演练：`doc/process/step-43-toxiproxy-live-drill.md`
+- 真机演练：`doc/process/Stage1/step-43-toxiproxy-live-drill.md`
 - 叠加层修正：`compose.toxiproxy.yml` + `.env.example`（`TOXIPROXY_INIT_IMAGE`）
 - 提交：`d61ecec`
