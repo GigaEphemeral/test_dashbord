@@ -892,14 +892,18 @@ else
 fi
 
 # 4b. Flyway-owned catalog data. MYSQL_PWD is passed via exec env, never on the
-# command line or in output.
+# command line or in output. Only the demo baseline is asserted: /lab/cache/seed
+# intentionally inserts experiment products from id 90000 upwards
+# (LAB_CACHE_SEED_START_ID), which must not look like a broken seed.
+VERIFY_CATALOG_BASELINE_MAX_ID="${VERIFY_CATALOG_BASELINE_MAX_ID:-1000}"
 catalog_count="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
-  -e 'SELECT COUNT(*) FROM catalog_product;' 2>/dev/null | tr -d '\r\n ')" || true
+  -e "SELECT COUNT(*) FROM catalog_product WHERE id < ${VERIFY_CATALOG_BASELINE_MAX_ID};" \
+  2>/dev/null | tr -d '\r\n ')" || true
 if [[ "$catalog_count" == "20" ]]; then
-  pass "mysql catalog_product has exactly 20 seeded rows"
+  pass "mysql catalog_product has exactly 20 baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)"
 else
-  fail "mysql catalog_product has exactly 20 seeded rows" "count='${catalog_count}'"
+  fail "mysql catalog_product has exactly 20 baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)" "count='${catalog_count}'"
 fi
 
 flyway_versions="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \

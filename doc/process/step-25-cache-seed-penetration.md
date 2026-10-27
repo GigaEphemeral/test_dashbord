@@ -74,3 +74,13 @@
 
 - 验证命令：`cd code && export JAVA_HOME="C:\Program Files\Java\jdk-21.0.12.1" && mvn -pl services/seckill-app-jdk21 -am test` → `Tests run: 192, Failures: 0, Errors: 0, Skipped: 0` / `BUILD SUCCESS`（日志 /tmp/m41-test-run2.log）。
 - 关键文件：`catalog/app/CachedProductViewService.java`、`catalog/cache/{ProductPenetrationDefense,NullValueMarkerStore,ProductBloomFilterService,PenetrationProtectionConfig}.java`、`lab/cache/{CacheExperimentDataService,CacheLabConfig}.java`、`lab/api/{LabCacheController,CacheModeResponse,CacheModeUpdateRequest,CacheSeedResponse,CacheStateResponse}.java`、`lab/toggle/{CacheDefenseMode,CacheDefenseModeService}.java`、`lab/config/LabCacheProperties.java`、`application.yml`（`app.lab.cache.*` 19 个键）。
+
+---
+
+## 补充（2026-10-27）：seed 的实验商品让 verify 断言失真
+
+`/lab/cache/seed` 会向 `catalog_product` 插入 1000 条实验商品（id ≥ `LAB_CACHE_SEED_START_ID=90000`，用于保护 1/20 号演示基线）。批次闸门里 `verify.sh` 的「catalog_product 恰好 20 条种子商品」在灌过 seed 的栈上必然失败（实测 `count='1020'`）。
+
+修复：断言只统计演示基线 `id < VERIFY_CATALOG_BASELINE_MAX_ID`（默认 1000，可环境变量覆盖），与 seed 的保护段设计对齐；实验商品存在与否不再影响 verify。
+
+验证：灌过 seed 的栈上 `verify.sh` → **104 PASS / 1 WARN / 0 FAIL**。
