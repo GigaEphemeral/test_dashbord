@@ -104,3 +104,33 @@ scrape_configs:
       - targets: ["mysql-3-exporter:9104"]
         labels:
           member: mysql-3
+
+  # ha tier (Redis): one exporter per Sentinel data node, mirroring the
+  # mysqld-exporter-ha job above. Each exporter is addressed by its fixed compose
+  # service name on jl-net plus redis_exporter's built-in 9121 (compose.ha.yml only
+  # `expose`s it, publishes no host port), so there is nothing operational to
+  # parameterise: exactly like the db-ha job the targets stay literal (Prometheus v3
+  # does not interpolate ${VAR} in this file). The `node` label (redis-1/2/3) is a
+  # low-cardinality per-node identity in the same class as `instance`, aligned with
+  # the standalone `redis-exporter` job's口径; because this is its OWN job the
+  # existing panels that bind `job="redis-exporter"` (D3 memory, D11 up/clients/
+  # slaves, all documented as dev-single) keep matching only the single dev node and
+  # never fan out to four targets. With the ha profile off the three targets simply
+  # report down (not an error), same as the db-ha exporters.
+  # Sentinel itself is intentionally NOT scraped: compose.ha.yml:309-312 ships no
+  # sentinel-exporter sidecar on purpose and Sentinel speaks RESP, not an HTTP
+  # /metrics endpoint. Master/replica evidence therefore comes from the data-node
+  # exporters themselves (redis_instance_info{role=…}, redis_connected_slaves,
+  # redis_master_link_up); the Sentinel quorum view stays on sentinel-status.sh.
+  # See step-S2-B0-07-ha-exporters-scrape.md for the wiring rationale.
+  - job_name: redis-exporter-ha
+    static_configs:
+      - targets: ["redis-1-exporter:9121"]
+        labels:
+          node: redis-1
+      - targets: ["redis-2-exporter:9121"]
+        labels:
+          node: redis-2
+      - targets: ["redis-3-exporter:9121"]
+        labels:
+          node: redis-3
