@@ -156,7 +156,7 @@ class HttpGrafanaSnapshotAnnotatorTest {
 
     private static ThreadSnapshotView view(String trigger) {
         return new ThreadSnapshotView(true, trigger,
-                "doc/process/snapshots/19700101-001640-000_app-1",
+                "doc/process/Stage1/snapshots/19700101-001640-000_app-1",
                 List.of("thread-dump.txt", "heap-info.txt", "class-histogram.txt",
                         "metadata.json", "analysis-template.md"),
                 12L, 1_000_000L, null);

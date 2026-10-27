@@ -28,7 +28,7 @@ dist/
 logs/
 tmp/
 *.hprof
-doc/process/snapshots/
+doc/process/Stage1/snapshots/
 code/lab/k6/reports/
 
 # OS

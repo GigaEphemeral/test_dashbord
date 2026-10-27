@@ -3,7 +3,7 @@
 > 本文件由 app 在抓取快照时自动复制进每个快照目录（design §9.3）。
 > 快照内容：`jcmd Thread.print -l`（`thread-dump.txt`）、`jcmd GC.heap_info`（`heap-info.txt`）、
 > `jcmd GC.class_histogram`（`class-histogram.txt`）、`metadata.json`。
-> 仓库内的同源副本：`doc/process/snapshot-analysis-template.md`（有测试保证两者一致）。
+> 仓库内的同源副本：`doc/process/Stage1/snapshot-analysis-template.md`（有测试保证两者一致）。
 
 ## 0. 先读 metadata.json
 
@@ -64,5 +64,5 @@
 ## 6. 保留与清理
 
 - 保留策略由 `app.lab.thread.snapshot.max-count` / `max-age-seconds` 控制，超出的目录会被自动删除。
-- 快照目录默认在 `doc/process/snapshots/`（已被 `.gitignore` 忽略）；容器内路径为
-  `/app/doc/process/snapshots`，可用 `docker cp jl-app-1:/app/doc/process/snapshots/<dir> .` 取出。
+- 快照目录默认在 `doc/process/Stage1/snapshots/`（已被 `.gitignore` 忽略）；容器内路径为
+  `/app/doc/process/Stage1/snapshots`，可用 `docker cp jl-app-1:/app/doc/process/Stage1/snapshots/<dir> .` 取出。

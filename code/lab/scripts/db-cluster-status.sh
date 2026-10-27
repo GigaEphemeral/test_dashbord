@@ -275,5 +275,5 @@ fi
 echo "RESULT: degraded - answering=$answers/$node_total, PRIMARY count=$primaries, failures=$FAILURES."
 echo "A missing PRIMARY, two PRIMARY rows or a member in RECOVERING/ERROR means the"
 echo "group is forming, rejoining or lost quorum; check 'docker logs jl-mysql-cluster-init'"
-echo "and the runbook in doc/process/step-25a-mysql-cluster-compose.md."
+echo "and the runbook in doc/process/Stage1/step-25a-mysql-cluster-compose.md."
 exit 1

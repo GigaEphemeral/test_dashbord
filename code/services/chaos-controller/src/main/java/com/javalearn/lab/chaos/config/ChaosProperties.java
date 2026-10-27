@@ -760,7 +760,7 @@ public class ChaosProperties {
      * every datastore-looking container (mysql/redis/rabbit/mongo/postgres) is
      * refused, exactly like the old absolute prohibition. Only an explicitly
      * configured pattern can admit one, and the lab uses it for the Redis
-     * Sentinel topology (see doc/process/step-24c-sentinel-targets.md). It is a
+     * Sentinel topology (see doc/process/Stage1/step-24c-sentinel-targets.md). It is a
      * teaching-lab safety valve, not a production affordance: the standalone
      * {@code jl-redis}, {@code jl-mysql}, {@code jl-rabbitmq}, the exporters and
      * every non-lab container must stay outside any pattern written to {@code .env}.

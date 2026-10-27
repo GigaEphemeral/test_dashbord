@@ -95,7 +95,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "id": 8,
-      "options": { "mode": "markdown", "content": "### D9 压测面板\n\n- 运行选择：右上角 `run_id` 变量（来自 k6 remote-write），支持多选/All；面板按 `run_id`（延迟再按 `flow`）分组，可同屏对比多次运行\n- k6 延迟来自 remote-write，原始单位为秒，面板已 ×1000 以 ms 展示\n- 归档：`code/lab/k6/reports/<run_id>/`（summary、manifest、report.html）\n- 结果文档：`doc/process/benchmark/`\n- 对比：`bash code/lab/scripts/compare.sh <runA> <runB>`\n- 429/409 是预期业务拒绝，不计入 k6 失败率。\n- 故障标注与运行 manifest 动态展示留待 Task 21/22（chaos）。" },
+      "options": { "mode": "markdown", "content": "### D9 压测面板\n\n- 运行选择：右上角 `run_id` 变量（来自 k6 remote-write），支持多选/All；面板按 `run_id`（延迟再按 `flow`）分组，可同屏对比多次运行\n- k6 延迟来自 remote-write，原始单位为秒，面板已 ×1000 以 ms 展示\n- 归档：`code/lab/k6/reports/<run_id>/`（summary、manifest、report.html）\n- 结果文档：`doc/process/Stage1/benchmark/`\n- 对比：`bash code/lab/scripts/compare.sh <runA> <runB>`\n- 429/409 是预期业务拒绝，不计入 k6 失败率。\n- 故障标注与运行 manifest 动态展示留待 Task 21/22（chaos）。" },
       "targets": [],
       "title": "运行信息",
       "type": "text"

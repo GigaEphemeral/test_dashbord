@@ -49,7 +49,7 @@ public class SnapshotProperties {
     private String jcmdPath;
     /**
      * The analysis template copied into every bundle. Points at the repository
-     * file {@code doc/process/snapshot-analysis-template.md} (reused, not forked);
+     * file {@code doc/process/Stage1/snapshot-analysis-template.md} (reused, not forked);
      * compose bind-mounts that file into the container.
      */
     private String templatePath;

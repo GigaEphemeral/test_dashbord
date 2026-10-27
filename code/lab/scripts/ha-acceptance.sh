@@ -26,7 +26,7 @@ set -euo pipefail
 # CONFIGURATION
 #   Process environment > code/lab/docker/.env > the defaults below.
 #   Every TWEAKABLE value is a HA_ACCEPT_* variable documented in
-#   doc/process/step-45-ha-acceptance-script.md and echoed by --help.
+#   doc/process/Stage1/step-45-ha-acceptance-script.md and echoed by --help.
 #   Nothing operational is hardcoded outside this block.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -195,7 +195,7 @@ defaults in the script. Useful overrides (all optional):
   HA_ACCEPT_MYSQL_REJOIN_BUDGET_SECONDS, HA_ACCEPT_MYSQL_TARGET
   HA_ACCEPT_MYSQL_PROBE_CONTAINER, HA_ACCEPT_MYSQL_REQUIRE_ROUTER_MODE
   HA_ACCEPT_HTTP_RECOVERY_THRESHOLD_SECONDS, HA_ACCEPT_POLL_INTERVAL_SECONDS
-Full table: doc/process/step-45-ha-acceptance-script.md.
+Full table: doc/process/Stage1/step-45-ha-acceptance-script.md.
 
 Safety notes
   * The target is the live master/primary, not a hardcoded name. An explicit

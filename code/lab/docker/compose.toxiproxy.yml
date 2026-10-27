@@ -1,7 +1,7 @@
 # Network-fault overlay: one Toxiproxy between the app tier and the
 # Redis/MySQL datastores, profile-gated behind "chaos-proxy".
 #
-# Design refs: doc/design/2026-10-26-ha-concurrency-lab-design.md §3.1 (one
+# Design refs: doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md §3.1 (one
 # Toxiproxy, 64MB, disabled by default, switch belongs to demo preparation),
 # §3.3 (the `chaos-proxy` profile), §11.3 (chaos-controller toxics: latency,
 # bandwidth, outage, recovery on the Redis/MySQL paths).
@@ -33,7 +33,7 @@
 # No datastore, exporter or controller service is redefined here. The only
 # non-app override is the chaos-controller's CHAOS_TOXIPROXY_URL, the base URL
 # the Java toxiproxy actions read (env key contract in
-# doc/process/step-39-toxiproxy-tier.md).
+# doc/process/Stage1/step-39-toxiproxy-tier.md).
 
 services:
   # --- the proxy itself ------------------------------------------------------

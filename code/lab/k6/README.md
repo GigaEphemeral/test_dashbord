@@ -137,7 +137,7 @@ datastore-shaped name (mysql/redis/rabbit/mongo/postgres) is refused on top of
 that unless `CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN` admits it by its **whole**
 name. That allow-list is empty by default - closed by default - so MySQL,
 standalone Redis and RabbitMQ stay out of every timeline until an operator
-opts in for a specific drill (M3-1c; see `doc/process/step-24c-sentinel-targets.md`).
+opts in for a specific drill (M3-1c; see `doc/process/Stage1/step-24c-sentinel-targets.md`).
 `kill` is a Docker stop, never a volume removal.
 
 Schema, field semantics and validation rules:
@@ -152,7 +152,7 @@ Schema, field semantics and validation rules:
 | `CHAOS_SCENARIO_FILE` | `ha-app-failover.json` | Bare name under `CHAOS_SCENARIO_DIR`, or an absolute path. |
 | `CHAOS_SCENARIO_DIR` | `/chaos-scenarios` | Container mount point of `code/lab/scenarios` (set by `run.sh`). |
 | `CHAOS_START_OFFSET` | `0s` | Delay before the timeline VU starts (k6 `startTime`); any zero form (`0`, `0.0`, `00`) is normalized to `0s`. |
-| `CHAOS_HTTP_TIMEOUT` | `20s` | Per-action HTTP timeout. Must stay above the controller's synchronous Docker budget: `POST /chaos/instances/{target}/actions` answers only after the stop returns, and `chaos.stop-grace-seconds` defaults to 10s (a MySQL kill measured 11s). A too-small value reports `HTTP 0` for a fault that **was** applied and aborts the remaining timeline events — see `doc/避坑/15-k6-action-timeout-vs-docker-stop.md`. |
+| `CHAOS_HTTP_TIMEOUT` | `20s` | Per-action HTTP timeout. Must stay above the controller's synchronous Docker budget: `POST /chaos/instances/{target}/actions` answers only after the stop returns, and `chaos.stop-grace-seconds` defaults to 10s (a MySQL kill measured 11s). A too-small value reports `HTTP 0` for a fault that **was** applied and aborts the remaining timeline events — see `doc/avoid_common_error/15-k6-action-timeout-vs-docker-stop.md`. |
 | `CHAOS_TEARDOWN_TIMEOUT` | `10s` | Timeout for the `stop-all` teardown call. |
 | `CHAOS_MAX_TTL` | `600` | Schema ceiling for `ttlSeconds` (matches `chaos.max-ttl-seconds`). |
 | `CHAOS_TARGET_PATTERN` | `^jl-app-[0-9]+$` | Allowed target regex; a datastore-shaped name needs the allow-list too, even if this is widened. |
@@ -282,7 +282,7 @@ all five thresholds passed:
 The first attempt (`20261027-160742-db-failover`, target `jl-mysql-2`) applied the
 kill but reported `HTTP 0` because `CHAOS_HTTP_TIMEOUT` was still 5s — shorter
 than the controller's synchronous Docker stop. That is
-`doc/避坑/15-k6-action-timeout-vs-docker-stop.md`.
+`doc/avoid_common_error/15-k6-action-timeout-vs-docker-stop.md`.
 
 The expected 5xx list (`DB_FAILOVER_WRITE_EXPECTED_STATUSES`, default
 `500,502,503,504`) is passed to `http.expectedStatuses` **only** between
@@ -387,7 +387,7 @@ than shortening the dwell, because the arm guard below rejects short dwells.
   (`+CACHE_LAB_TIMELINE_SLACK`, default 30s) — otherwise k6 interrupts the
   timeline mid-loop, the last mode never arms and the final `mode=off` reset is
   skipped, all while exiting 0 with every check passing. See
-  `doc/避坑/17-k6-per-vu-iterations-max-duration.md`.
+  `doc/avoid_common_error/17-k6-per-vu-iterations-max-duration.md`.
 
 This is **opt-in**: it writes 1000 experiment rows (`catalog_product`
 90000..90999 by default), warms Redis keys and flips the instance-level defense
@@ -519,7 +519,7 @@ resets the lab data, runs one k6 scenario, and archives the result. It never
 starts the stack.
 
 ```bash
-# Full archive + result doc under doc/process/benchmark/
+# Full archive + result doc under doc/process/Stage1/benchmark/
 bash code/lab/scripts/bench.sh smoke
 
 # Short load: k6 env overrides after "--"
@@ -542,7 +542,7 @@ Each run creates `code/lab/k6/reports/<run_id>/` (gitignored) with:
 | `report.html` | self-contained report (key metrics + threshold verdicts) |
 | `reset.log` | reset-lab.sh output when the reset ran |
 
-and `doc/process/benchmark/<date>-<scenario>-<run_id>.md` with key metrics,
+and `doc/process/Stage1/benchmark/<date>-<scenario>-<run_id>.md` with key metrics,
 threshold verdicts, Grafana time window, manifest summary and reset info.
 
 `bench.sh` exits with k6's code when it is non-zero (a crossed threshold is
@@ -598,7 +598,7 @@ exits 0.
 # Run id resolves under BENCH_REPORTS_DIR; a directory containing manifest.json
 # also works. Both runs must exist for comparison to start.
 bash code/lab/scripts/compare.sh 20261026-145555-smoke neg-threshold
-bash code/lab/scripts/compare.sh <runA> <runB> --out doc/process/benchmark/compare.md
+bash code/lab/scripts/compare.sh <runA> <runB> --out doc/process/Stage1/benchmark/compare.md
 
 # Point at another reports dir / Prometheus, or tune the query/peak window:
 BENCH_REPORTS_DIR=/path/to/reports PROM_URL=http://127.0.0.1:8080/prom \
@@ -959,7 +959,7 @@ curl -sS --get http://127.0.0.1:8080/prom/api/v1/query_range \
 ```
 
 The acceptance run used three ids (smoke, load, spike); see
-`doc/process/step-19-k6-base.md` for the exact results.
+`doc/process/Stage1/step-19-k6-base.md` for the exact results.
 
 ## Known WSL2 / Docker notes
 
@@ -985,14 +985,14 @@ The acceptance run used three ids (smoke, load, spike); see
 
 ## Related
 
-- Design: `doc/design/2026-10-26-ha-concurrency-lab-design.md` §11.1
+- Design: `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` §11.1
 - Existing HTTP smoke: `code/lab/scripts/smoke.sh`
-- Task 19 handover: `doc/process/step-19-k6-base.md`
-- Task 20a handover (reset/bench/archive): `doc/process/step-20a-bench-reset.md`
+- Task 19 handover: `doc/process/Stage1/step-19-k6-base.md`
+- Task 20a handover (reset/bench/archive): `doc/process/Stage1/step-20a-bench-reset.md`
 - Task 20b compare/D9: `code/lab/scripts/compare.sh`,
   `code/lab/docker/grafana/dashboards/ha-d9.json` and the handover
-  `doc/process/step-20b-compare-d9.md`; sample:
-  `doc/process/benchmark/compare-smoke-vs-neg.md`.
-- Task 21 handover (chaos actions/TTL): `doc/process/step-21-chaos-actions.md`
-- Task 22a handover (scenario JSON + timeline): `doc/process/step-22a-scenario-timeline.md`
+  `doc/process/Stage1/step-20b-compare-d9.md`; sample:
+  `doc/process/Stage1/benchmark/compare-smoke-vs-neg.md`.
+- Task 21 handover (chaos actions/TTL): `doc/process/Stage1/step-21-chaos-actions.md`
+- Task 22a handover (scenario JSON + timeline): `doc/process/Stage1/step-22a-scenario-timeline.md`
 - Scenario schema: `code/lab/scenarios/README.md`

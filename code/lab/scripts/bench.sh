@@ -12,7 +12,7 @@
 #   manifest.json scenario/run/git/reset/thresholds/verdict
 #   report.html   self-contained HTML rendered by bench-report.js
 #   reset.log     reset-lab.sh output (when reset ran)
-# and doc/process/benchmark/<date>-<scenario>-<run_id>.md.
+# and doc/process/Stage1/benchmark/<date>-<scenario>-<run_id>.md.
 #
 # Exit code: k6's exit code when it is non-zero (a crossed threshold is 99),
 # otherwise non-zero for an internal/report failure. The archive is written for
@@ -27,7 +27,7 @@ K6_RUNNER="${BENCH_K6_RUNNER:-$K6_DIR/run.sh}"
 REPORT_SCRIPT="${BENCH_REPORT_SCRIPT:-$SCRIPT_DIR/bench-report.js}"
 RESET_SCRIPT="${BENCH_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
 REPORTS_DIR="${BENCH_REPORTS_DIR:-$K6_DIR/reports}"
-DOC_DIR="${BENCH_DOC_DIR:-$ROOT_DIR/doc/process/benchmark}"
+DOC_DIR="${BENCH_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 ENV_FILE="${BENCH_ENV_FILE:-$ROOT_DIR/code/lab/docker/.env}"
 COMPOSE_PROJECT="${BENCH_COMPOSE_PROJECT:-java-learn-lab}"
 DOCKER_DIR="${BENCH_DOCKER_DIR:-$ROOT_DIR/code/lab/docker}"
@@ -71,7 +71,7 @@ The stack must already be running; bench.sh never starts it.
 
 Environment (defaults):
   BENCH_REPORTS_DIR=<repo>/code/lab/k6/reports
-  BENCH_DOC_DIR=<repo>/doc/process/benchmark
+  BENCH_DOC_DIR=<repo>/doc/process/Stage1/benchmark
   BENCH_GRAFANA_URL=http://127.0.0.1:3000
   BENCH_GRAFANA_DASHBOARD_UID=ha-d4
   BENCH_READY_TIMEOUT_SECONDS=60   BENCH_READY_INTERVAL_SECONDS=3

@@ -18,7 +18,7 @@ x-app-common: &app-common
   # read/inspected without `docker cp`; the app user (uid 100) writes into the
   # bind mount. The path is three levels up from code/lab/docker/ (repo root).
   volumes:
-    - ../../../doc/process/snapshots:/app/lab-snapshots
+    - ../../../doc/process/Stage1/snapshots:/app/lab-snapshots
   networks:
     - jl-net
   labels:
@@ -299,7 +299,7 @@ services:
       LAB_SNAPSHOT_ANNOTATION_READ_TIMEOUT_MS: ${LAB_SNAPSHOT_ANNOTATION_READ_TIMEOUT_MS:-3000}
       LAB_SNAPSHOT_ANNOTATION_TAGS: ${LAB_SNAPSHOT_ANNOTATION_TAGS:-}
       # The analysis template is the repository file, mounted read-only below;
-      # the bundle copy is byte-identical to doc/process/snapshot-analysis-template.md.
+      # the bundle copy is byte-identical to doc/process/Stage1/snapshot-analysis-template.md.
       LAB_SNAPSHOT_TEMPLATE_PATH: /app/snapshot-analysis-template.md
       # The shared lab database (same rows the JDK 21 shell's Flyway created).
       MYSQL_HOST: mysql
@@ -321,10 +321,10 @@ services:
     volumes:
       # Same host snapshots root as the JDK 21 tier (three levels up from
       # code/lab/docker/): both runtimes' bundles sit side by side for D7/D6.
-      - ../../../doc/process/snapshots:/app/lab-snapshots
+      - ../../../doc/process/Stage1/snapshots:/app/lab-snapshots
       # Reuse the repository analysis template instead of forking a copy into
       # the image; the service copies it into every bundle.
-      - ../../../doc/process/snapshot-analysis-template.md:/app/snapshot-analysis-template.md:ro
+      - ../../../doc/process/Stage1/snapshot-analysis-template.md:/app/snapshot-analysis-template.md:ro
     expose:
       - "8080"
     depends_on:

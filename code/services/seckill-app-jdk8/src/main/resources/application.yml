@@ -64,7 +64,7 @@ app:
     token: ${LAB_TOKEN:lab-token}
     snapshot:
       enabled: ${LAB_SNAPSHOT_ENABLED:true}
-      # Container path of the host mount doc/process/snapshots (compose.base.yml).
+      # Container path of the host mount doc/process/Stage1/snapshots (compose.base.yml).
       # Both runtimes write into the same root; this shell uses instance app-jdk8,
       # so its bundles sit next to the JDK 21 app-1/2/3 bundles.
       root-dir: ${LAB_SNAPSHOT_DIR:/app/lab-snapshots}
@@ -84,8 +84,8 @@ app:
       # `jcmd <pid> GC.heap_info` (the same diagnostic the JDK 21 bundle uses).
       jcmd-path: ${LAB_SNAPSHOT_JCMD_PATH:jcmd}
       # Reuses the repository template instead of forking a copy into resources;
-      # compose bind-mounts doc/process/snapshot-analysis-template.md read-only.
-      template-path: ${LAB_SNAPSHOT_TEMPLATE_PATH:doc/process/snapshot-analysis-template.md}
+      # compose bind-mounts doc/process/Stage1/snapshot-analysis-template.md read-only.
+      template-path: ${LAB_SNAPSHOT_TEMPLATE_PATH:doc/process/Stage1/snapshot-analysis-template.md}
       # Best-effort Grafana marker of a successful capture (same wire contract
       # as the JDK 21 shell: POST /api/annotations, basic auth, {time,tags,text}).
       # A blank url is OFF: the bundle is still written and the skip is counted

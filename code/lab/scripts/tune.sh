@@ -14,7 +14,7 @@
 #      probes /health plus /api/products/1 through Nginx;
 #   4. posts a best-effort Grafana annotation tagged tuning,<profile>;
 #   5. optionally resets lab data and runs a short k6 scenario;
-#   6. writes doc/process/benchmark/tuning-<timestamp>-<profile>.md with the
+#   6. writes doc/process/Stage1/benchmark/tuning-<timestamp>-<profile>.md with the
 #      before/after flags, run id and the PromQL needed to compare windows.
 #
 # The saved baseline is kept in $TUNE_STATE_FILE (default <repo>/tmp/...,
@@ -33,7 +33,7 @@ DOCKER_DIR="${TUNE_DOCKER_DIR:-$ROOT_DIR/code/lab/docker}"
 ENV_FILE="${TUNE_ENV_FILE:-$DOCKER_DIR/.env}"
 K6_RUNNER="${TUNE_K6_RUNNER:-$ROOT_DIR/code/lab/k6/run.sh}"
 RESET_SCRIPT="${TUNE_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
-DOC_DIR="${TUNE_DOC_DIR:-$ROOT_DIR/doc/process/benchmark}"
+DOC_DIR="${TUNE_DOC_DIR:-$ROOT_DIR/doc/process/Stage1/benchmark}"
 STATE_FILE="${TUNE_STATE_FILE:-$ROOT_DIR/tmp/tuning-state.env}"
 COMPOSE_PROJECT="${TUNE_COMPOSE_PROJECT:-java-learn-lab}"
 NGINX_CONTAINER="${TUNE_NGINX_CONTAINER:-jl-nginx}"
@@ -103,7 +103,7 @@ Behavior:
     first saved baseline is kept until --restore re-applies it.
   * A best-effort Grafana annotation (tags tuning,<profile>, and
     tuning,restore for --restore) is posted; failures only WARN.
-  * Result note: doc/process/benchmark/tuning-<timestamp>-<profile>.md.
+  * Result note: doc/process/Stage1/benchmark/tuning-<timestamp>-<profile>.md.
 
 Exit code: 0 on success; k6's status when k6 ran and failed; 2 on a usage or
 validation error; 1 on a runtime/preflight error.

@@ -166,7 +166,7 @@ class HttpGrafanaSnapshotAnnotatorTest {
         files.add("metadata.json");
         files.add("analysis-template.md");
         return new SnapshotView(true, trigger,
-                "doc/process/snapshots/19700101-001640-000_app-jdk8",
+                "doc/process/Stage1/snapshots/19700101-001640-000_app-jdk8",
                 files, 12L, 1_000_000L, null);
     }
 

@@ -30,8 +30,8 @@
 
 - id: toxiproxy-overlay-exists
   doc:
-    - doc/design/details/01-总体架构与运行拓扑.md
-    - doc/process/step-39-toxiproxy-tier.md
+    - doc/design/Stage1/details/01-总体架构与运行拓扑.md
+    - doc/process/Stage1/step-39-toxiproxy-tier.md
   statement: "Toxiproxy 叠加层已实现（compose.toxiproxy.yml + chaos-proxy profile + init job）"
   verify:
     kind: file_contains
@@ -42,8 +42,8 @@
 
 - id: toxiproxy-actions-exist
   doc:
-    - doc/design/details/06-故障注入与实验向导.md
-    - doc/process/step-40-toxiproxy-actions.md
+    - doc/design/Stage1/details/06-故障注入与实验向导.md
+    - doc/process/Stage1/step-40-toxiproxy-actions.md
   statement: "Toxiproxy 控制动作已实现（/chaos/toxiproxy/{proxy}/toxics|reset|disable|enable）"
   verify:
     kind: file_contains
@@ -54,8 +54,8 @@
 
 - id: d6-thread-dashboard-exists
   doc:
-    - doc/design/details/07-线程实验室.md
-    - doc/process/step-36-d6-thread-panel.md
+    - doc/design/Stage1/details/07-线程实验室.md
+    - doc/process/Stage1/step-36-d6-thread-panel.md
   statement: "D6 线程实验室面板已实现（ha-d6.json）"
   verify:
     kind: file_contains
@@ -66,8 +66,8 @@
 
 - id: d7-dual-jdk-dashboard-exists
   doc:
-    - doc/design/details/08-双JDK与JVM调优.md
-    - doc/process/step-41-d7-dual-jdk.md
+    - doc/design/Stage1/details/08-双JDK与JVM调优.md
+    - doc/process/Stage1/step-41-d7-dual-jdk.md
   statement: "D7 双 JDK 对比面板已实现（ha-d7.json）"
   verify:
     kind: file_contains
@@ -78,8 +78,8 @@
 
 - id: d10-cache-dashboard-exists
   doc:
-    - doc/design/details/03-缓存体系.md
-    - doc/process/step-37-d10-cache-panel.md
+    - doc/design/Stage1/details/03-缓存体系.md
+    - doc/process/Stage1/step-37-d10-cache-panel.md
   statement: "D10 缓存实验室面板已实现（ha-d10.json）"
   verify:
     kind: file_contains
@@ -94,7 +94,7 @@
 - id: d10-k6-runid-variable
   polarity: positive
   doc:
-    - doc/process/step-55-d10-cache-lab-runid.md
+    - doc/process/Stage1/step-55-d10-cache-lab-runid.md
   statement: "D10 已暴露 run_id 模板变量（label_values(k6_cache_lab_reads_total, run_id)，见 step-55）"
   verify:
     kind: file_contains
@@ -106,7 +106,7 @@
 - id: d10-k6-cache-lab-panels
   polarity: positive
   doc:
-    - doc/process/step-55-d10-cache-lab-runid.md
+    - doc/process/Stage1/step-55-d10-cache-lab-runid.md
   statement: "D10 已包含按 run_id/mode 过滤的 k6 cache-lab 对照面板（reads 速率与模式切换计数，见 step-55）"
   verify:
     kind: grep_count
@@ -117,8 +117,8 @@
 
 - id: d11-db-ha-dashboard-exists
   doc:
-    - doc/design/details/09-压测与观测.md
-    - doc/process/step-38-ha-acceptance.md
+    - doc/design/Stage1/details/09-压测与观测.md
+    - doc/process/Stage1/step-38-ha-acceptance.md
   statement: "D11 数据库高可用面板已实现（ha-d11.json）"
   verify:
     kind: file_contains
@@ -129,8 +129,8 @@
 
 - id: mysqld-exporter-ha-job-exists
   doc:
-    - doc/design/details/09-压测与观测.md
-    - doc/process/step-38-ha-acceptance.md
+    - doc/design/Stage1/details/09-压测与观测.md
+    - doc/process/Stage1/step-38-ha-acceptance.md
   statement: "mysqld-exporter-ha 抓取 job 已内联进 prometheus.yml"
   verify:
     kind: file_contains
@@ -141,8 +141,8 @@
 
 - id: mysql-cluster-probe-exists
   doc:
-    - doc/design/details/05-MySQL高可用与读写路由.md
-    - doc/process/step-30-mysql-cluster-metrics.md
+    - doc/design/Stage1/details/05-MySQL高可用与读写路由.md
+    - doc/process/Stage1/step-30-mysql-cluster-metrics.md
   statement: "mysql_cluster_* 集群探针已实现（member_state / primary_info）"
   verify:
     kind: grep_count
@@ -153,8 +153,8 @@
 
 - id: mysql-mode-switch-exists
   doc:
-    - doc/design/details/05-MySQL高可用与读写路由.md
-    - doc/process/step-29-mysql-router-client.md
+    - doc/design/Stage1/details/05-MySQL高可用与读写路由.md
+    - doc/process/Stage1/step-29-mysql-router-client.md
   statement: "MYSQL_MODE=standalone|router 应用侧开关已实现"
   verify:
     kind: grep_count
@@ -165,8 +165,8 @@
 
 - id: thread-snapshots-exist
   doc:
-    - doc/design/details/07-线程实验室.md
-    - doc/process/step-35-thread-snapshots.md
+    - doc/design/Stage1/details/07-线程实验室.md
+    - doc/process/Stage1/step-35-thread-snapshots.md
   statement: "线程快照已实现（freeze 时执行 jcmd Thread.print -l / GC.heap_info）"
   verify:
     kind: grep_count
@@ -181,11 +181,11 @@
 # marker (folder, five files, annotation id) and the reproduction commands.
 - id: thread-snapshot-live-capture
   doc:
-    - doc/process/step-52-thread-snapshot-live.md
+    - doc/process/Stage1/step-52-thread-snapshot-live.md
   statement: "线程快照已在实栈抓取（宿主机挂载收到五件套 + Grafana annotation，见 step-52）"
   verify:
     kind: file_contains
-    path: doc/process/step-52-thread-snapshot-live.md
+    path: doc/process/Stage1/step-52-thread-snapshot-live.md
     pattern: "live-capture-verified: thread-snapshot-live-capture"
   expect: true
   last_verified: 2026-10-27
@@ -195,7 +195,7 @@
 - id: jdk8-snapshot-capability
   polarity: positive
   doc:
-    - doc/process/step-53-jdk8-snapshots.md
+    - doc/process/Stage1/step-53-jdk8-snapshots.md
   statement: "JDK 8 外壳已实现 jstack/jmap 快照能力（token 保护的 POST/GET /lab/snapshot，五件套与 JDK 21 同构，见 step-53）"
   verify:
     kind: file_contains
@@ -209,7 +209,7 @@
 - id: jdk8-snapshot-annotation
   polarity: positive
   doc:
-    - doc/process/step-54-snapshot-observability.md
+    - doc/process/Stage1/step-54-snapshot-observability.md
   statement: "JDK 8 快照已实现 Grafana annotation（HttpURLConnection POST /api/annotations，env 凭据，结果计入 annotations_total，见 step-54）"
   verify:
     kind: file_contains
@@ -220,7 +220,7 @@
 
 - id: ha-acceptance-script-exists
   doc:
-    - doc/process/step-45-ha-acceptance-script.md
+    - doc/process/Stage1/step-45-ha-acceptance-script.md
   statement: "HA 验收脚本已实现且可被 bash 解析（ha-acceptance.sh）"
   verify:
     kind: shell
@@ -231,8 +231,8 @@
 
 - id: thread-console-proxy-exists
   doc:
-    - doc/design/details/07-线程实验室.md
-    - doc/process/step-44-thread-console.md
+    - doc/design/Stage1/details/07-线程实验室.md
+    - doc/process/Stage1/step-44-thread-console.md
   statement: "chaos-controller 的 /lab/thread/** 窄代理已实现"
   verify:
     kind: file_contains
@@ -243,8 +243,8 @@
 
 - id: chaos-counters-exist
   doc:
-    - doc/design/details/09-压测与观测.md
-    - doc/process/step-21-chaos-actions.md
+    - doc/design/Stage1/details/09-压测与观测.md
+    - doc/process/Stage1/step-21-chaos-actions.md
   statement: "chaos_actions_total / chaos_reverts_total 指标已实现"
   verify:
     kind: grep_count
@@ -264,7 +264,7 @@
 
 - id: d8-tuning-panel-exists
   doc:
-    - doc/process/step-51-jvm-tuning.md
+    - doc/process/Stage1/step-51-jvm-tuning.md
   statement: "D8 调优实验面板已实现（ha-d8.json，含 tuning annotation 图层）"
   verify:
     kind: file_contains
@@ -276,8 +276,8 @@
 - id: cache-console-page-exists
   polarity: positive
   doc:
-    - doc/design/details/README.md
-    - doc/design/details/10-操作台与API.md
+    - doc/design/Stage1/details/README.md
+    - doc/design/Stage1/details/10-操作台与API.md
     - doc/readme.md
   statement: "缓存实验控制台页已实现（CacheLab.vue，经 /lab-api 代理调用 /lab/cache/**）"
   verify:
@@ -290,9 +290,9 @@
 - id: lab-cache-proxy-exists
   polarity: positive
   doc:
-    - doc/design/details/03-缓存体系.md
-    - doc/design/details/10-操作台与API.md
-    - doc/process/step-50-cache-console.md
+    - doc/design/Stage1/details/03-缓存体系.md
+    - doc/design/Stage1/details/10-操作台与API.md
+    - doc/process/Stage1/step-50-cache-console.md
   statement: "chaos-controller 已代理 /lab/cache/**（state/preheat GET，mode/seed/preheat POST）"
   verify:
     kind: file_contains
@@ -305,7 +305,7 @@
   polarity: positive
   doc:
     - code/lab/k6/README.md
-    - doc/process/step-48-k6-ha-cache-scenarios.md
+    - doc/process/Stage1/step-48-k6-ha-cache-scenarios.md
   statement: "k6 动作客户端默认超时为 20s，大于控制器同步 Docker stop 预算（chaos.stop-grace-seconds 默认 10s，实测 kill MySQL 用 11s）"
   verify:
     kind: file_contains
@@ -318,7 +318,7 @@
   polarity: negative
   doc:
     - doc/readme.md
-    - doc/避坑/16-app-image-has-no-curl.md
+    - doc/avoid_common_error/16-app-image-has-no-curl.md
   statement: "doc/readme.md 里不存在 `docker exec jl-app-N ... curl` 形式的命令：运行镜像 eclipse-temurin:*-alpine 没有 curl，只有 BusyBox wget（照抄 curl 会报 not found）"
   verify:
     kind: grep_count
@@ -330,12 +330,12 @@
 - id: no-curl-commands-in-design-runbooks
   polarity: negative
   doc:
-    - doc/design/details/03-缓存体系.md
-    - doc/design/details/07-线程实验室.md
+    - doc/design/Stage1/details/03-缓存体系.md
+    - doc/design/Stage1/details/07-线程实验室.md
   statement: "细节设计里的 5 分钟演示脚本也不依赖 app 容器内的 curl（nginx 容器内打 app 用 http://app-N:8080）"
   verify:
     kind: grep_count
-    path: doc/design/details
+    path: doc/design/Stage1/details
     pattern: "docker exec jl-app-[0-9].*curl"
   expect: 0
   last_verified: 2026-10-27
@@ -373,12 +373,12 @@
 - id: config-audit-folded-into-details11
   polarity: positive
   doc:
-    - doc/design/details/11-配置与安全边界.md
-    - doc/process/阶段交接-2026-10-26.md
+    - doc/design/Stage1/details/11-配置与安全边界.md
+    - doc/process/STAGE-01阶段交接-2026-10-26.md
   statement: "步骤交接里的秒杀准入/弹性配置表已上收到 details/11 §3.1.1"
   verify:
     kind: file_contains
-    path: doc/design/details/11-配置与安全边界.md
+    path: doc/design/Stage1/details/11-配置与安全边界.md
     pattern: "### 3\\.1\\.1 秒杀准入与弹性键"
   expect: true
   last_verified: 2026-10-27
@@ -386,11 +386,11 @@
 - id: handover-no-longer-copies-seckill-keys
   polarity: negative
   doc:
-    - doc/process/阶段交接-2026-10-26.md
+    - doc/process/STAGE-01阶段交接-2026-10-26.md
   statement: "阶段交接不再复制配置键表（限流/熔断键只应存在于 details/11 §3.1.1 与 application.yml）"
   verify:
     kind: grep_count
-    path: doc/process/阶段交接-2026-10-26.md
+    path: doc/process/STAGE-01阶段交接-2026-10-26.md
     pattern: "SECKILL_RATE_LIMIT_PER_PERIOD"
   expect: 0
   last_verified: 2026-10-27
@@ -398,12 +398,12 @@
 - id: details-readme-owns-open-gaps
   polarity: positive
   doc:
-    - doc/design/details/README.md
-    - doc/process/阶段交接-2026-10-26.md
+    - doc/design/Stage1/details/README.md
+    - doc/process/STAGE-01阶段交接-2026-10-26.md
   statement: "「还有什么没做」的唯一口径是 details/README §3.2 未收口清单"
   verify:
     kind: file_contains
-    path: doc/design/details/README.md
+    path: doc/design/Stage1/details/README.md
     pattern: "### 3\\.2 未收口清单"
   expect: true
   last_verified: 2026-10-27
@@ -412,7 +412,7 @@
   polarity: positive
   doc:
     - code/lab/k6/README.md
-    - doc/design/details/09-压测与观测.md
+    - doc/design/Stage1/details/09-压测与观测.md
     - doc/design/安装与打包手册.md
   statement: "k6 run.sh 的白名单含 ha-failover / db-failover / cache-lab（details/09 的六场景说法已过期，登记在 details/README §3.3）"
   verify:
@@ -436,11 +436,11 @@
 - id: step-handovers-carry-gap-pointer
   doc:
     - doc/process/交接模板.md
-    - doc/process/step-57-doc-pass-three-kinds.md
+    - doc/process/Stage1/step-57-doc-pass-three-kinds.md
   statement: "每篇 step-*.md 交接头部都带「口径指针」行：历史待办不会被当成当前缺口，当前缺口只看 details/README §3.2"
   verify:
     kind: shell
-    command: "test -z \"$(grep -L 口径指针 doc/process/step-*.md)\""
+    command: "test -z \"$(grep -L 口径指针 doc/process/Stage1/step-*.md)\""
     timeout_ms: 10000
   expect: true
   last_verified: 2026-10-27

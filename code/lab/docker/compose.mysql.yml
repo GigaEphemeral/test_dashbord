@@ -4,9 +4,9 @@
 # is overridden, so the always-on single-node `mysql` (and the whole dev tier) is
 # untouched.
 #
-# Design refs: doc/design/2026-10-26-ha-concurrency-lab-design.md §8.3 (InnoDB
+# Design refs: doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md §8.3 (InnoDB
 # Cluster), §3.1 (budget ~1.8GB), §3.3 (profiles), §8.6 (Router is an accepted
-# single point), doc/design/数据库高可用方案对比.md §2 (方案 A, adopted).
+# single point), doc/design/Stage1/数据库高可用方案对比.md §2 (方案 A, adopted).
 #
 # Why `docker compose config --services` still reports the same always-on count:
 # every service here declares profiles, exactly like the `traffic` service in

@@ -5,7 +5,7 @@
  * Reads the k6 --summary-export JSON plus run metadata and writes:
  *   - manifest.json  machine-readable run record
  *   - report.html    self-contained HTML report
- *   - <result-doc>   Markdown result page under doc/process/benchmark
+ *   - <result-doc>   Markdown result page under doc/process/Stage1/benchmark
  *
  * Threshold verdicts come from the summary's per-metric `thresholds` results.
  * The runner's k6 exit code is authoritative: a crossed threshold exits 99 in
@@ -480,7 +480,7 @@ const html = `<!doctype html>
     <tr><td>archive</td><td><code>code/lab/k6/reports/${escapeHtml(reportDirName)}/</code></td></tr>
     ${grafanaLink ? `<tr><td>Grafana</td><td><a href="${escapeHtml(grafanaLink)}">D4 · ${escapeHtml(grafanaDashboard)}</a></td></tr>` : ''}
     ${prometheusLink ? `<tr><td>Prometheus</td><td><a href="${escapeHtml(prometheusLink)}">k6_http_reqs_total graph</a></td></tr>` : ''}
-    ${resultDocName ? `<tr><td>result doc</td><td><code>doc/process/benchmark/${escapeHtml(resultDocName)}</code></td></tr>` : ''}
+    ${resultDocName ? `<tr><td>result doc</td><td><code>doc/process/Stage1/benchmark/${escapeHtml(resultDocName)}</code></td></tr>` : ''}
   </tbody>
 </table>
 

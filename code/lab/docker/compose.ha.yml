@@ -1,7 +1,7 @@
 # HA overlay: Redis Sentinel topology (1 master + 2 replicas + 3 Sentinels),
 # profile-gated behind "ha" so the default dev stack never pays for it.
 #
-# Design ref: doc/design/2026-10-26-ha-concurrency-lab-design.md §8.2 (Redis
+# Design ref: doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md §8.2 (Redis
 # Sentinel), §3.1 (resource budget ~800MB), §3.3 (dev = single Redis, ha = Sentinel).
 #
 # Composition: this file is only ever used together with compose.base.yml and

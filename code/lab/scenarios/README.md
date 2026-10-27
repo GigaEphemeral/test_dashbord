@@ -171,7 +171,7 @@ CHAOS_DATASTORE_ALLOWED_TARGET_PATTERN='^jl-redis-[0-9]+$'
 
 With the default app-only pattern the scenario is invalid and simply **skipped**
 by `GET /lab/guide/scenarios` (logged, never half-loaded) - which is the closed
-default behaviour, not a bug. See `doc/process/step-24c-sentinel-targets.md` for
+default behaviour, not a bug. See `doc/process/Stage1/step-24c-sentinel-targets.md` for
 the full runbook and the compose wiring this step could not ship.
 
 ## How the driver consumes it

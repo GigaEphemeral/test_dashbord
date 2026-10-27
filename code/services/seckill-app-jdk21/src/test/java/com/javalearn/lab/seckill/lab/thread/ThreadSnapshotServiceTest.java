@@ -266,11 +266,11 @@ class ThreadSnapshotServiceTest {
     }
 
     private static Path repositoryTemplate() {
-        Path fromModule = Path.of("../../..", "doc", "process", "snapshot-analysis-template.md");
+        Path fromModule = Path.of("../../..", "doc", "process", "Stage1", "snapshot-analysis-template.md");
         if (Files.exists(fromModule)) {
             return fromModule;
         }
-        Path fromRoot = Path.of("doc", "process", "snapshot-analysis-template.md");
+        Path fromRoot = Path.of("doc", "process", "Stage1", "snapshot-analysis-template.md");
         assertThat(Files.exists(fromRoot))
                 .as("run the test from the module or the repository root")
                 .isTrue();

@@ -2,7 +2,7 @@
 # Compare two Task 20a bench runs (manifest + Prometheus peaks).
 #
 #   bash code/lab/scripts/compare.sh <runA> <runB>
-#   bash code/lab/scripts/compare.sh 20261026-145555-smoke neg-threshold --out doc/process/benchmark/compare.md
+#   bash code/lab/scripts/compare.sh 20261026-145555-smoke neg-threshold --out doc/process/Stage1/benchmark/compare.md
 #
 # Environment:
 #   BENCH_REPORTS_DIR                  default <repo>/code/lab/k6/reports

@@ -195,7 +195,7 @@ class SnapshotPropertiesValidationTest {
         properties.setJmapPath("jmap");
         properties.setJcmdPath("jcmd");
         properties.setTemplatePath(
-                Paths.get("doc", "process", "snapshot-analysis-template.md").toString());
+                Paths.get("doc", "process", "Stage1", "snapshot-analysis-template.md").toString());
         properties.getAnnotation().setConnectTimeoutMs(2_000L);
         properties.getAnnotation().setReadTimeoutMs(3_000L);
         return properties;

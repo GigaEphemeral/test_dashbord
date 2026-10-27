@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 
 /**
  * Writes the design §9.3 snapshot bundle to disk:
- * {@code doc/process/snapshots/<timestamp>_<instance>/} containing
+ * {@code doc/process/Stage1/snapshots/<timestamp>_<instance>/} containing
  * {@code thread-dump.txt} ({@code jcmd Thread.print -l}), {@code heap-info.txt}
  * ({@code jcmd GC.heap_info}), {@code class-histogram.txt}
  * ({@code jcmd GC.class_histogram}), a {@code metadata.json} and a copy of the
