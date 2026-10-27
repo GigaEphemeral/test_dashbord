@@ -128,6 +128,36 @@ export function stopAllFaults(token) {
   return postJson('/chaos/stop-all', token)
 }
 
+/** Network-fault layer ({ enabled, allowedProxies, proxies:[{name,present,enabled,toxics}] }). */
+export function fetchToxiproxyState(token) {
+  return getJson('/chaos/toxiproxy/state', token)
+}
+
+// ---------------------------------------------------------------- prometheus
+// Nginx proxies /prom/ to Prometheus (same origin, no CORS), so the animation
+// views read metrics through the console's own origin instead of the app's
+// internal /lab/cache/** endpoints, which are not reachable from the browser.
+const PROM_BASE = '/prom/api/v1'
+
+async function readProm(response) {
+  let payload = null
+  try {
+    payload = await response.json()
+  } catch {
+    // Non-JSON body: the proxy answered with an HTML error page.
+  }
+  if (!response.ok || payload?.status !== 'success') {
+    throw new ApiError(payload?.error || `HTTP ${response.status}`, response.status, payload?.errorType)
+  }
+  return payload.data?.result ?? []
+}
+
+/** Instant vector for one PromQL expression; [] means the series is absent. */
+export async function queryProm(expr) {
+  const query = new URLSearchParams({ query: expr })
+  return readProm(await fetch(`${PROM_BASE}/query?${query.toString()}`))
+}
+
 // ---------------------------------------------------------------- thread lab
 // Nginx never proxies the app's /lab/** paths; the controller's narrow proxy
 // (/chaos/app/{instance}/lab/thread/**) is the only route, and only the paths
