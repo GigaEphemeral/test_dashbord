@@ -139,3 +139,31 @@ run 预检查会要求背景 `jl-traffic` 停止，因此受控 run 的 `traffic
 - `dda2051` `feat(B2-03): add controlled traffic modes and per-instance attribution`
 - `b0a1b11` `chore(B2-03): externalize the nginx entry and target-instance table`
 - docs（本文件）提交见 `git log -- doc/process/Stage2/step-S2-B2-03-traffic-modes.md`
+
+
+## 补充：A17 真机核对与 UI 展示（主会话，2026-10-28）
+
+### target-instance → app-2（run-20261028-016）
+
+- 参数：`TRAFFIC_MODE=target-instance`、`TARGET_INSTANCE=app-2`、3 VU × 15s。
+- 容器/台账：`BASE_URL=http://app-2:8080`；标签 `lab.traffic-mode=target-instance`、`lab.target-instance=app-2`；start afterSummary 含 `k6TrafficMode/k6TargetInstance/k6BypassNginx=true/k6TrafficMixed=false/k6Upstream=app-1:8080=1,app-2:8080=1,app-3:8080=1`。
+- 应用侧（Prometheus `http_server_requests_seconds_count{job="seckill-app", uri!~"/actuator.*"}`，2m increase）：**app-2=39.66，app-1=0，app-3=0**。
+- k6 侧（`k6_http_reqs_total{run_id=...}`）：**instance=app-2，44.25**。
+- Nginx 访问日志（run 时间窗）中 `/api/*` 请求 **0 条**，证明定向确实绕过 Nginx。
+
+### via-nginx（run-20261028-017）
+
+- 默认模式，3 VU × 15s；状态 `trafficMode=via-nginx`、`targetInstance=nginx`。
+- k6 侧：**instance=nginx，44.25**（所有请求不再伪装成某实例）。
+- 应用侧 `[1m]`：app-1=14.18、app-2=13.09、app-3=14.18（合计 **41.5**）。
+- Nginx 访问日志（run 时间窗）：**38 条** `/api/*`（35 次 `GET /api/products/1` + 3 次 `POST /api/login`）。
+- 三条口径差异 ~15%：k6 的 5m `increase` 含采样插值与客户端计数，应用侧是 1m scrape 插值，Nginx 是逐条访问日志；**逐条日志 38 条是最可信的准入计数**，应用侧合计 41.5 与之同量级，分流为 1/3 均分。
+
+### UI 与冒烟
+
+- `RunLedger` 的 k6 卡新增 `traffic`（`k6-traffic-mode`/`k6-target-instance`）与 `bypass / mixed`（`k6-traffic-routing`）两行；混合流量明确标 `traffic_mixed=false`（受控 run 预检停背景流量，不做自动检测）。
+- `console-smoke` 新增 1 条：默认 run 的 k6 卡必须显示 `via-nginx` / `nginx`；真机 **72 PASS / 0 FAIL**（B2-03a 后 71 + 1）。
+
+### 真机部署
+
+- 控制器按本地 jar 离线重建并重建容器；新键 `LAB_BENCH_EXEC_NGINX_BASE_URL` / `TARGET_INSTANCES` / `TARGET_PORT` 已进容器。
