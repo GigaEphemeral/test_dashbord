@@ -399,9 +399,9 @@
         <table class="table">
           <thead><tr><th>实例</th><th>状态</th><th>基线组</th><th>实验组</th><th>差异</th><th></th></tr></thead>
           <tbody id="configRows">
-            <tr data-node-row="app-1"><td>app-1</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">-Xmx 512→256m · ParallelGC</span></td><td><button class="btn ghost" onclick="selectCfg('app-1')">编辑</button></td></tr>
-            <tr data-node-row="app-2"><td>app-2</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">L1 关闭 · 队列 500→200</span></td><td><button class="btn ghost" onclick="selectCfg('app-2')">编辑</button></td></tr>
-            <tr data-node-row="app-3"><td>app-3</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">无差异（对照组）</span></td><td><button class="btn ghost" onclick="selectCfg('app-3')">编辑</button></td></tr>
+            <tr data-node-row="app-1"><td>app-1</td><td data-config-status><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">-Xmx 512→256m · ParallelGC</span></td><td><button class="btn ghost" onclick="selectCfg('app-1')">编辑</button></td></tr>
+            <tr data-node-row="app-2"><td>app-2</td><td data-config-status><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">L1 关闭 · 队列 500→200</span></td><td><button class="btn ghost" onclick="selectCfg('app-2')">编辑</button></td></tr>
+            <tr data-node-row="app-3"><td>app-3</td><td data-config-status><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">无差异（对照组）</span></td><td><button class="btn ghost" onclick="selectCfg('app-3')">编辑</button></td></tr>
           </tbody>
         </table>
         <div class="notice info" id="configGateNotice" style="margin-top:8px">未启用的节点行置灰，且不会出现在下方编辑器的实例下拉框。</div>
@@ -479,7 +479,7 @@
               <div class="field"><label>写入后刷新 <span class="key">refreshAfterWriteSeconds</span></label><input class="input" value="20"><div class="help">异步刷新间隔；不等于过期。</div></div>
               <div class="field"><label>统计 <span class="key">recordStats</span></label><select><option>开启</option><option>关闭</option></select><div class="help">开启命中率/驱逐统计；关闭时指标显示不适用。</div></div>
             </div>
-            <div class="hint">目标条目数 vs 实际条目数分开显示；每实例独立。</div>
+            <div class="hint">过期/刷新参数按秒配置；0 表示不启用。关闭 L1 时清空本地条目，命中率/驱逐等指标显示“不适用”，不显示 0。目标条目数 vs 实际条目数分开显示；每实例独立。</div>
           </div>
         </div>
       </div>
@@ -609,7 +609,7 @@
 
     <!-- 实例 -->
         <section class="page" data-page="instances">
-      <div class="notice info">实例/JVM 配置属 B4：本页展示“当前状态 + 配置组库”，完整参数在向导第 3 步编辑；应用/重建/健康确认在预检查前完成。未启用节点置灰且不可操作。</div>
+      <div class="notice info">实例/JVM 配置属 B4：本页展示“当前状态 + 配置组库”，完整参数在向导第 3 步编辑；应用/重建/健康确认在预检查前完成。未启用节点置灰且不可操作。Caffeine 过期/刷新按秒配置，0=不启用；关闭 L1 时清空本地条目并显示“不适用”。</div>
       <div class="grid g3">
         <div class="card" data-instance-card="app-1">
           <div class="card-head"><h3>app-1</h3><span class="chip ok" id="instStatus-app-1" data-tip="配置已生效。">已生效</span></div>
@@ -790,9 +790,9 @@
         <div class="card">
           <div class="card-head"><h3>实例指标</h3><span class="chip gray" data-tip="B5-01：实例表与曲线完整版。">B5</span></div>
           <table class="table"><thead><tr><th>实例</th><th>Busy</th><th>Active</th><th>Queue</th><th>Hikari</th><th>状态</th></tr></thead><tbody>
-            <tr><td>app-1</td><td>42</td><td>18</td><td>0</td><td>0</td><td><span class="chip ok">正常</span></td></tr>
-            <tr><td>app-2</td><td>80</td><td>32</td><td>120</td><td>6</td><td><span class="chip warn">警告</span></td></tr>
-            <tr><td>app-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td><span class="chip gray">已冻结</span></td></tr>
+            <tr data-instance-row="app-1"><td>app-1</td><td>42</td><td>18</td><td>0</td><td>0</td><td data-row-status><span class="chip ok">正常</span></td></tr>
+            <tr data-instance-row="app-2"><td>app-2</td><td>80</td><td>32</td><td>120</td><td>6</td><td data-row-status><span class="chip warn">警告</span></td></tr>
+            <tr data-instance-row="app-3"><td>app-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td data-row-status><span class="chip gray">已冻结</span></td></tr>
           </tbody></table>
         </div>
       </div>
@@ -966,6 +966,11 @@ function applyGates() {
     if (/^mysql-([23]|router)/.test(n)) ok = state.mysqlMode === 'cluster';
     if (n === 'toxiproxy') ok = state.chaosProxy;
     el.classList.toggle('off', !ok);
+    const small = el.querySelector('small');
+    if (small) {
+      if (!el.dataset.onLabel) el.dataset.onLabel = small.innerHTML;
+      small.innerHTML = ok ? el.dataset.onLabel : '未启用';
+    }
   });
   const sidecars = $('#sidecars');
   if (sidecars) sidecars.style.display = state.showSidecars ? 'flex' : 'none';
@@ -995,11 +1000,31 @@ function applyGates() {
     card.classList.toggle('off', !on);
     card.style.opacity = on ? '' : '.38';
     card.style.filter = on ? '' : 'grayscale(1)';
+    const chip = card.querySelector('.card-head .chip');
+    if (chip) {
+      if (!chip.dataset.onText) { chip.dataset.onText = chip.textContent; chip.dataset.onClass = chip.className; }
+      if (on) { chip.textContent = chip.dataset.onText; chip.className = chip.dataset.onClass; }
+      else { chip.textContent = '未启用'; chip.className = 'chip gray'; }
+    }
+  });
+  $$('[data-instance-row]').forEach(row => {
+    const on = state.javaNodes.includes(row.dataset.instanceRow);
+    row.classList.toggle('off', !on);
+    const status = row.querySelector('[data-row-status]');
+    if (status) {
+      if (!status.dataset.onHtml) status.dataset.onHtml = status.innerHTML;
+      status.innerHTML = on ? status.dataset.onHtml : '<span class="chip gray">未启用</span>';
+    }
   });
   $$('[data-node-row]').forEach(row => {
     const on = state.javaNodes.includes(row.dataset.nodeRow);
     row.classList.toggle('off', !on);
     row.querySelectorAll('select,input,button').forEach(el => { el.disabled = !on; });
+    const status = row.querySelector('[data-config-status]');
+    if (status) {
+      if (!status.dataset.onHtml) status.dataset.onHtml = status.innerHTML;
+      status.innerHTML = on ? status.dataset.onHtml : '<span class="chip gray">未启用</span>';
+    }
   });
   if ($('#cfgEnabled')) $('#cfgEnabled').textContent = '已启用 ' + javaCount() + '/3';
   const missing = ['app-1','app-2','app-3'].filter(n => !state.javaNodes.includes(n));

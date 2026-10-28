@@ -6,7 +6,7 @@
 >
 > 状态标记：✅ 已实现　◐ 部分实现　○ 规划中（B3–B5）　⚠ 与设计有差异/待确认
 
-> 可交互 HTML 设计稿：[`stage2-交互稿演示.html`](../../design/Stage2/stage2-交互稿演示.html)（中文结构化表单、基础拓扑门禁、商品 ID 分布、线程新入口、状态提示）。
+> 可交互 HTML 设计稿：[`stage2-交互稿演示.html`](../../design/Stage2/stage2-交互稿演示.html)（v4：中文结构化表单、节点门禁、商品 ID 分布、JVM/线程池/Caffeine/GC 日志、时间轴与 k6 进度、状态提示）。
 
 ---
 
@@ -469,3 +469,54 @@
 - **实验记录**：新增“测试名称”（展示/筛选，runId 仍为主键）；列表支持归档与彻底删除（二次确认、级联 run/操作/事件/指标/报告）；报告对比补齐 RPS/请求量、P50/P95/P99、错误率、GC/堆、池拒绝/Hikari、L1/L2 命中、DB QPS、业务对账。
 - **状态**：保留英文枚举，所有徽标带中文 hint；stop-all 只提示“run 需手动 stop”，不强制收盘。
 - **可交互 HTML**：[`stage2-交互稿演示.html`](../../design/Stage2/stage2-交互稿演示.html)（v3，已实现上述门禁、向导步骤、时间轴图表与操作标签）。
+
+
+## 11. v4 配置组细化（2026-10-29，已确认）
+
+### 11.1 变量与配置组的门禁
+
+- 变量与配置组只对**基础配置中已启用的节点**可配：未启用行置灰、控件禁用、编辑器“编辑实例”下拉框排除。
+- 未启用节点在拓扑、实例指标表、实例卡片上显示“未启用”；拓扑保持完整结构，不删节点。
+- Java 节点可 1/2/3 个；少于 2 个时实例分流/实例故障禁用；MySQL 只分单机/集群；Redis 高可用和 chaos-proxy 分别门禁 Redis 切换与网络故障。
+- 实例页保留“当前状态 + 配置组库”；完整参数在向导第 3 步编辑，实例卡片提供“应用并重启 / 完整参数 / 回滚”。
+
+### 11.2 JVM / GC 参数
+
+- 运行时/堆：`jdkVersion`、`imageTag`、`-Xms`、`-Xmx`、`MaxMetaspaceSize`、`MaxDirectMemorySize`、`extraJvmArgs`（白名单，每行一个）。
+- G1：`MaxGCPauseMillis`、`G1NewSizePercent`、`G1MaxNewSizePercent`、`G1HeapRegionSize`、`InitiatingHeapOccupancyPercent`。
+- Parallel：`ParallelGCThreads`；通用：`NewRatio`、`SurvivorRatio`。
+- 不增加 `G1ReservePercent`、`G1ConcRefinementThreads`、ZGC（2026-10-29 确认）。
+- 每个字段中文名 + 说明 + 默认值；GC 字段按 GC 类型动态显示；JDK8 外壳标 `LIMITED-OBSERVABILITY`。
+
+### 11.3 业务线程池 / Tomcat
+
+- `corePoolSize`、`maxPoolSize`、`queueCapacity`、`keepAliveSeconds`、`rejectionPolicy`（Abort/CallerRuns/Discard/DiscardOldest）。
+- `server.tomcat.threads.max`、`acceptCount`、`minSpareThreads`。
+- 所有字段加中文 tooltip：核心线程常驻、队列满后扩容、拒绝策略语义、Tomcat 并发/连接队列。
+
+### 11.4 Caffeine
+
+- `caffeineEnabled`、`maximumSize`、`expireAfterWriteSeconds`、`expireAfterAccessSeconds`、`refreshAfterWriteSeconds`、`recordStats`。
+- 过期/刷新按“秒”配置，`0` 表示不启用。
+- 关闭 L1 时清空本地条目，命中率/驱逐等指标显示“不适用”，不显示 0；页面上必须出现该提示。
+
+### 11.5 GC 日志与重启
+
+- `gcLogEnabled`、`gcLogPath`、`gcLogFileSize`、`gcLogFileCount`、`heapDumpOnOutOfMemory`、`heapDumpPath`。
+- JDK8 用 `-Xloggc`，JDK21 用 `-Xlog:gc*`；路径外置、只读回读。
+- 重启：应用配置必须在预检查前完成；run 中禁止修改启动参数；状态 `待重启 / 应用中 / 已生效 / 已回滚`；重启后健康检查、Nginx 上游、Prometheus `up`、真实探针全过；失败自动回滚并进入稳定期。
+
+### 11.6 实时监控与 k6 进度
+
+- 时间轴：请求性能（RPS/P95/错误率）、JVM/GC、线程池/连接池；数据源 Prometheus，Grafana 同源；显示数据时间、抓取间隔、刷新间隔。
+- k6 进度/速度：进度条（已运行/计划）、VU、iterations/s、http_reqs/s；VU 与 iterations/s 时间轴；数据来自 k6 remote write 的 `run_id`。
+- Grafana 面板入口 + 时间范围深链；iframe 受限时降级为深链。
+
+### 11.7 已确认决策
+
+1. JVM/GC 不增加 `G1ReservePercent`、`G1ConcRefinementThreads`、ZGC。
+2. 重启语义按 §11.5。
+3. Caffeine 按秒、`0` 不启用；关闭 L1 清空并显示“不适用”，页面有提示。
+4. 未启用节点：配置行置灰 + 下拉框排除；拓扑/实例表/实例卡显示“未启用”。
+
+> 可交互稿：[`stage2-交互稿演示.html`](../../design/Stage2/stage2-交互稿演示.html)（v4）。

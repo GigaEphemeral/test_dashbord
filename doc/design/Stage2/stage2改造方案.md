@@ -1,9 +1,9 @@
 # Stage2 改造方案：Java 并发与高可用演练工作台
 
-- 文档版本：v1.4
-- 日期：2026-10-28
+- 文档版本：v1.5
+- 日期：2026-10-29
 - 基线：Stage1 当前实现与设计文档
-- 状态：方案评审稿（已纳入 B0 前置门禁、流量归因、崩溃恢复与负向验收；已纳入 2026-10-27 用户确认的 8 项范围结论与 2026-10-28 补充确认的 3 项遗留结论，见需求 §十一 与本文件 §15）
+- 状态：方案评审稿（已纳入 B0 前置门禁、流量归因、崩溃恢复与负向验收；已纳入 2026-10-27 用户确认的 8 项范围结论、2026-10-28 补充确认的 3 项遗留结论与 2026-10-29 交互稿 v4 对齐，见需求 §十一、本文件 §15/§16）
 - 范围：在 Stage1 基础上进行增量改造；本文件不代表代码已经实现
 
 ---
@@ -153,6 +153,8 @@ UI 应明确显示配置状态：`草稿`、`校验失败`、`待重启`、`应�
 
 ### 4.3 GC 参数配置（按 JDK/GC 类型动态显示）
 
+> 2026-10-29 v4：参数清单与动态显示以 §16.4 为准。
+
 GC 配置不能只有一个“GC 类型”下拉框。用户选择 GC 后，UI 应展示与当前 JDK 版本兼容的参数表单、参数说明、默认值/当前值、建议范围和是否需要重启。所有参数都以白名单字段生成 JVM 参数，禁止把整段文本直接拼接成 shell 命令。
 
 **G1 参数建议首批支持：**
@@ -185,6 +187,8 @@ GC 配置不能只有一个“GC 类型”下拉框。用户选择 GC 后，UI �
 
 ### 4.4 Java 业务线程池配置
 
+> 2026-10-29 v4：字段、tooltip 与 Tomcat 线程参数以 §16.5 为准。
+
 实例配置页应显式展示和配置业务线程池，不把业务线程池与 Tomcat Web 线程池、ForkJoinPool 或 Hikari 连接池混为一谈。先确认业务代码实际使用的线程池 bean/执行器，再将其纳入受控配置。
 
 | 参数 | 建议控件 | 生效方式与约束 |
@@ -204,6 +208,8 @@ GC 配置不能只有一个“GC 类型”下拉框。用户选择 GC 后，UI �
 - 报告记录每个实例的线程池配置快照，并与 k6 的实例请求数、响应时间、错误率和拒绝数关联分析。
 
 ### 4.5 JDK 8 / 21 约束
+
+> 2026-10-29 v4：LIMITED-OBSERVABILITY 字段与交互以 §16.4/§16.7 为准。
 
 - 只允许选择已构建、已测试的应用镜像。
 - JDK 8 与 JDK 21 应通过对应的应用外壳/构建目标提供；不能仅把容器内 `JAVA_HOME` 指向另一个路径就认为完成切换。
@@ -411,6 +417,8 @@ UI 只提供后端已实现且通过验收的场景，不直接拼接任意 shel
 所有动作限定在 `lab=java-learn` 的实验容器，并继续使用现有 token/白名单机制。
 
 ## 9. 简单 UI 设计（Markdown 线框图）
+
+> 2026-10-29 v4：一级导航收敛为 6 项（取消独立故障页），字段与交互以 §16 为准。
 
 以下线框图是页面布局建议，不是实际运行截图。**信息架构已确认（需求 §十一.2）：控制台一次性重构为侧边导航工作区**（总览 / 场景向导 / 实例与 JVM / Benchmark / 实时监控 / 故障与缓存实验 / 实验报告与对比），现有线程实验室、缓存实验室、向导、动画视图等组件逐步挂接迁移，不为换 UI 重写已可用能力；`console-smoke` 断言基线随重构一次性重写并在后续批次逐批增补。
 
@@ -832,6 +840,8 @@ DRAFT → VALIDATING → READY → RUNNING → STOPPING → VERIFYING → COMPLE
 
 ## 11. 实施批次
 
+> 2026-10-29 增补 B3-00 交互对齐；JVM/GC/Caffeine/GC 日志/重启字段以 §16 为准。
+
 ### B0：Stage1 基线修复与指标可用性审计（硬性前置门禁）
 
 - 修复/明确标记 `stock_oversold_total`、Caffeine stats、L2 TTL、代理 query string、router reset、Sentinel exporter、镜像 digest、chaos 状态恢复和 MySQL 探针隔离等已知缺口。
@@ -954,3 +964,97 @@ Stage2 应沿着“B0 基线修复与指标审计 → B1 持久化台账/状态�
 | 镜像完整溯源 | 首期只做 tag+imageId 最小记录（§10.4）；构建来源校验、构建日志归档、base digest 锁定不做 | 演示环境出现"镜像不可信"实际问题时再立项 |
 | JDK 8 外壳运行时热配置回读与完整应用内指标 | 按 `LIMITED-OBSERVABILITY` 边界处理（§4.5）；补齐需重写兼容层，收益仅一个对照页 | jdk-matrix 实验证明 GC 日志/JMX 兜底不够用时 |
 | chaos-proxy 与 ha/db-ha 组合 | 维持互斥（§5.3）；组合改造涉及 app 双数据源指向与探针链路 | C/D 故障演练在互斥口径下出现无法覆盖的教学场景时 |
+
+
+## 16. 交互稿 v4 对齐（2026-10-29 确认）
+
+> 依据：`doc/design/Stage2/stage2-交互稿演示.html` v4 与 `doc/process/Stage2/stage2-最终交互稿.md` §11。
+> 本章是已确认的目标交互与字段口径；不改变 B0–B2 已验收能力，实现分别落在 B3-00（交互对齐）、B4（JVM/配置闭环）、B5（观测/对比）。
+
+### 16.1 信息架构
+
+一级分区收敛为 6 项：总览 / 场景向导 / 实例与 JVM / Benchmark / 实时监控与操作 / 实验记录。
+- 取消独立「故障与缓存实验」：计划内故障进向导时间线；运行时注入/暂停/停止/预热/切缓存在「实时监控与操作」的“实时操作”标签；线程生命周期/快照/缓存键浏览放“实验工具”标签。
+- Benchmark 页保留场景库、最近运行、两次对比；执行参数移入向导第 4 步，避免两处配置源。
+- 实例与 JVM 页保留“当前状态 + 配置组库”；完整参数在向导第 3 步编辑。
+
+### 16.2 向导
+
+前置基础配置 + 7 步：实验目标（可多选）→ 目标与流量 → 变量与配置组 → **流量与执行配置（k6）** → 故障时间线 → 预检查与执行 → 报告与对比。
+- k6 是所有正式实验的统一流量触发层，配置固定在预检查前一步；启动成功后自动跳转实时监控与操作。
+- 实验目标与流量模型分离：吞吐基线/缓存穿透/缓存 A/B/JVM/实例故障等是目标；smoke/load/spike 是流量模型。
+
+### 16.3 节点启用与门禁
+
+- Java 节点 `app-1/2/3` 多选（1/2/3 个）；少于 2 个时实例分流/实例故障禁用；定向实例仍可用。
+- MySQL 只分单机 / Router 3 节点；单机时数据库故障/Router 切换禁用。
+- Redis 高可用开关；关闭时 Redis 切换禁用。
+- chaos-proxy 开关；关闭时网络故障禁用。
+- **未启用节点**：变量与配置组表格行置灰且控件禁用、编辑器实例下拉框排除；拓扑、实例表、实例卡片显示“未启用”；拓扑始终保留完整结构，不因未启用而删节点。
+- 拓扑节点：Nginx、app-1/2/3、redis-1/2/3、sentinel-1/2/3、mysql-1/2/3、mysql-router、RabbitMQ、Toxiproxy；exporter/sidecar 默认隐藏、可开关。
+
+### 16.4 JVM / GC 参数
+
+运行时与堆：`jdkVersion`、`imageTag`、`-Xms`、`-Xmx`、`MaxMetaspaceSize`、`MaxDirectMemorySize`、`extraJvmArgs`（白名单，每行一个）。
+
+GC：`gcCollector`（G1/Parallel/Serial，按 JDK 兼容性动态开放）。
+- G1：`MaxGCPauseMillis`、`G1NewSizePercent`、`G1MaxNewSizePercent`、`G1HeapRegionSize`、`InitiatingHeapOccupancyPercent`。
+- Parallel：`ParallelGCThreads`。
+- 通用：`NewRatio`、`SurvivorRatio`。
+- **明确不做**（2026-10-29 确认）：`G1ReservePercent`、`G1ConcRefinementThreads`、ZGC。
+- JDK8 外壳标 `LIMITED-OBSERVABILITY`；GC 参数受 JDK/GC 兼容校验；热配置回读 `READBACK_UNAVAILABLE`。
+
+### 16.5 业务线程池 / Tomcat
+
+- 业务池：`corePoolSize`、`maxPoolSize`、`queueCapacity`、`keepAliveSeconds`、`rejectionPolicy`（Abort/CallerRuns/Discard/DiscardOldest）。
+- Tomcat：`server.tomcat.threads.max`、`acceptCount`、`minSpareThreads`。
+- 每个参数必须有中文 tooltip/说明：核心线程常驻、最大线程与队列满后的扩容、拒绝策略语义、Tomcat 并发上限与连接等待队列。
+
+### 16.6 Caffeine
+
+`caffeineEnabled`、`maximumSize`、`expireAfterWriteSeconds`、`expireAfterAccessSeconds`、`refreshAfterWriteSeconds`、`recordStats`。
+- 过期/刷新参数按“秒”配置，`0` 表示不启用。
+- 关闭 L1 时清空本地条目，命中率/驱逐等指标显示“不适用”，不显示 0；页面上必须有该提示。
+- 目标条目数 vs 实际条目数分开显示；每实例独立。
+
+### 16.7 GC 日志与配置应用
+
+- GC 日志：`gcLogEnabled`、`gcLogPath`、`gcLogFileSize`、`gcLogFileCount`、`heapDumpOnOutOfMemory`、`heapDumpPath`。
+- JDK8 使用 `-Xloggc`；JDK21 使用 `-Xlog:gc*`；路径全部外置，只读回读。
+- 重启语义（2026-10-29 确认）：应用配置必须在预检查前完成；run 中禁止修改启动参数；UI 提供“应用并重启 / 仅保存 / 回滚”，状态为 `待重启 / 应用中 / 已生效 / 已回滚`；重启顺序：重建/重启 → 健康检查 → Nginx 上游 → Prometheus `up` → 真实请求探针；失败自动回滚并进入稳定期。
+
+### 16.8 故障时间线
+
+- “开始偏移”相对 k6 启动，`0` 表示一开始注入；时间线预览显示 0s/30s/60s 等事件。
+- 恢复方式：自动（TTL）/ 永不恢复；永不恢复时 TTL 置灰；API 接受 `ttlSeconds=-1` 并归一化为手动保持；stop-all 仍可清理。
+- 故障成功写 `lab_fault_event` 并进入 run 时间线；失败动作不写“已注入”事件。
+
+### 16.9 商品 ID 范围与热度分布
+
+- 采样范围预设：含越界（5000–20000）/ 库内热点（1–10000）/ 自定义。
+- `PRODUCT_ID_MIN`、`PRODUCT_ID_MAX`、`PRODUCT_ID_DISTRIBUTION`（uniform/normal）、`PRODUCT_ID_CONCENTRATION`。
+- 平均分布用于基线；正态分布让中间 ID 更热；越界 ID 用于缓存穿透/空值缓存/布隆过滤。
+- 数据库范围默认 1–10000（固定 seed 10,000、库存 0–500，B3-02）；采样范围可大于数据库范围。
+
+### 16.10 实时监控与操作
+
+- 时间轴图表：请求性能（RPS/P95/错误率）、JVM/GC、线程池/连接池；数据源 Prometheus，Grafana 同源；显示数据时间、Prometheus 抓取间隔、面板刷新间隔。
+- k6 进度/速度：进度条（已运行/计划）、VU、iterations/s、http_reqs/s；VU 与 iterations/s 时间轴；数据来自 k6 remote write 的 `run_id`。
+- Grafana 面板入口 + 当前时间范围深链；iframe 受登录/Cookie 限制时降级为深链。
+- 拓扑展示完整节点与每节点健康；“未启用”显示为灰色并标注“未启用”；无数据显示“无数据”，不显示 0。
+- 实时操作：运行时注入/暂停/停止/stop-all/预热/切缓存；实验工具：线程生命周期/快照/键浏览。
+- stop-all 只停 k6，不自动收盘 RUNNING run；页面必须提示“请到实验记录再 stop”。
+
+### 16.11 实验记录
+
+- 新增“测试名称”：用于展示/筛选/报告标题；runId 仍是不可变主键。
+- 列表支持归档（隐藏）与彻底删除（二次确认；级联 run/操作/故障事件/指标窗口/报告文件；运行中先 stop）。
+- 报告对比补齐：RPS/请求总量、P50/P95/P99、错误率/成功量、GC 暂停/堆峰值、池拒绝/Hikari 等待、L1/L2 命中率、DB QPS、业务对账、最终判定。
+- 单次 run 标“演示性结果，未重复验证”；B5 提供 N 次中位数/离散程度。
+
+### 16.12 已确认决策（2026-10-29）
+
+1. JVM/GC 不增加 `G1ReservePercent`、`G1ConcRefinementThreads`、ZGC。
+2. 重启语义按 §16.7：预检查前完成、run 中禁止改启动参数、失败自动回滚并进入稳定期。
+3. Caffeine 过期/刷新按秒、`0` 不启用；关闭 L1 清空并显示“不适用”，页面需有提示。
+4. 未启用节点：配置行置灰 + 下拉框排除；拓扑/实例表/实例卡显示“未启用”。

@@ -1,9 +1,9 @@
 # Stage2 开发、测试与步骤验收计划
 
-> 版本：v1.3（2026-10-28）
+> 版本：v1.4（2026-10-29）
 > 分支基线：`feature/stage2-workbench`（从 `feature/ha-lab` HEAD `13d961e` 拉出）
 > 依据：`doc/design/Stage2/stage2-需求.md`（需求基线 v1，含 §十一 范围确认结论）、
-> `doc/design/Stage2/stage2改造方案.md`（v1.4）、
+> `doc/design/Stage2/stage2改造方案.md`（v1.5）、
 > `doc/process/Stage2/架构现状与功能清单.md`（事实底座）、`doc/design/工程规约.md`
 > 本文件是 Stage2 的执行计划：批次 → 步骤 → 开发内容 / 测试 / 验收闸门 / 交接文档。
 > 每步完成即按工程规约 §2 写 `doc/process/Stage2/step-S2-*.md` 五段式交接并随代码提交。
@@ -239,6 +239,17 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 
 **收口标准**：A/B 变量受控；目标/实际键数、缓存指标与业务对账可追踪；正常关闭与 Redis 故障不混淆。
 
+### B3-00 交互对齐（B3 前置，2026-10-29）
+
+- 开发：按 `doc/design/Stage2/stage2-交互稿演示.html` v4 与方案 §16 落地 6 分区信息架构；向导前置基础配置 + 7 步；
+  Java 节点多选门禁；k6 结构化中文表单（smoke/load/spike、VU/时长/阈值/tooltip）；商品 ID 采样范围与平均/正态分布；
+  故障时间线（atSeconds、自动/永不恢复）；测试名称、归档/彻底删除（级联）；实时监控时间轴（Prometheus/Grafana 同源）
+  与 k6 进度/速度；拓扑/实例表/实例卡显示“未启用”。
+- 测试：console-smoke 增加表单/门禁/时间轴/清理断言；API 单测覆盖节点门禁、`PRODUCT_ID_*` 参数、名称/删除级联；
+  无数据不显示 0。
+- 验收：UI 与交互稿 v4 一致；UI/CLI 场景一致；删除级联无残留；console-smoke 新基线。
+- 交接：`step-S2-B3-00-interaction-alignment.md`。
+
 ### B3-01 独立 Caffeine L1 开关（含关闭语义）
 
 - 开发：`off` = 绕过 L1 读写并清空本地条目；每实例独立；纳入六开关体系或独立配置 API（按现有风格）；
@@ -286,6 +297,9 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 - 开发：JDK 镜像、`-Xms/-Xmx`、GC 类型 + 各 GC 参数（按 JDK 版本动态 schema，方案 §4.3）、
   业务线程池 core/max/queue/keepAlive/拒绝策略（方案 §4.4）——全部白名单字段生成参数，禁止字符串拼接；
   资源预算校验（`-Xmx` + Metaspace + 线程栈 + 直接内存 vs `mem_limit`）。
+- 字段按 v4（方案 §16.4–§16.7）：JVM 堆/Metaspace/Direct、G1/Parallel/通用 GC 参数
+  （不含 `G1ReservePercent`/`G1ConcRefinementThreads`/ZGC）、业务池/Tomcat、Caffeine
+  （`maximumSize`/过期/刷新/统计）、GC 日志（路径/滚动/OOM dump）、`extraJvmArgs` 白名单；每个字段有中文说明/tooltip。
 - 测试：单测覆盖拒绝路径（不兼容参数、危险选项、预算超限）——A28。
 - 验收：校验器不执行任意命令/挂载；错误信息可解释。
 
@@ -296,6 +310,8 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
   `nginx -t` + reload/解析 → 应用健康端点 + Nginx 上游 + Prometheus `up` + 真实请求探针全过；
   失败回滚上一版配置/镜像并记录；重建后清空 L1/计数器/连接池 → 可配置稳定期，期内禁起正式对照。
 - 测试：真机 A07、A18、A27；run 中修改启动参数被拒绝。
+- UI 语义（v4）：应用配置必须在预检查前完成；run 中禁止修改启动参数；提供“应用并重启/仅保存/回滚”，
+  状态 `待重启/应用中/已生效/已回滚`；失败自动回滚并进入稳定期。
 - 验收：`待重启/应用中/已生效/应用失败` 状态全程可见；有效参数经 `jcmd`/启动信息回读。
 
 ### B4-03 GC 日志与诊断采集
@@ -310,6 +326,8 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
   （记录外壳/依赖差异，明示非纯 JVM 因果对照，方案 §10.6 第 4 条）；**JDK 8 外壳纳入每实例配置并标
   `LIMITED-OBSERVABILITY`**（已确认 #7，方案 §4.5）：支持镜像选择、JVM 启动参数、重启生效、容器/进程/GC 日志回读；
   热配置回读与完整应用内指标显式 `READBACK_UNAVAILABLE`，指标用 GC 日志/JMX/外部采集兜底且报告标注来源。
+- 实例页按 v4：展示 JVM/GC/Caffeine/GC 日志摘要、应用并重启/回滚；未启用节点置灰并显示“未启用”；
+  完整参数编辑器在向导第 3 步（方案 §16.3–§16.7）。
 - 测试：console-smoke 增加实例页断言（含 jdk8 列的 LIMITED-OBSERVABILITY 状态呈现）；真机 A08。
 - 验收：jdk-matrix 实验必过项 = 8 号壳镜像选择 + 参数配置 + 重启生效 + GC 日志回读；
   三实例源码版本一致且报告可见 commit + tag/imageId。
@@ -325,6 +343,8 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 - 开发：节点/连线由当前拓扑数据生成（非静态图）；热度维度可切（综合/CPU/内存/线程池/网络 I/O），
   阈值可配置、图例必须存在；tooltip 与点击详情含实例名、健康、JDK、CPU、内存 used/limit、线程、业务池
   active/max/queue/rejected、请求数、平均响应、P95、更新时间；网络不可采集处显示"无数据/未接线"。
+- 时间轴（Prometheus/Grafana 同源）与 k6 进度/速度（VU、iterations/s、http_reqs/s）；拓扑全量节点
+  （Nginx/app/Redis/Sentinel/MySQL/Router/RabbitMQ/Toxiproxy），未启用置灰并显示“未启用”；exporter/sidecar 默认隐藏。
 - 测试：console-smoke 注入一次 freeze 断言节点变红与 tooltip 真实值（A16）。
 - 验收：压测中热度变化与 Grafana 同源一致。
 
@@ -332,6 +352,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 
 - 开发：Benchmark 结果区"负载均衡分流"表（命中数/占比/成功失败/平均响应/P95/P99/RPS/错误率/线程池拒绝/配置组），
   Nginx upstream 与应用侧计数交叉核对，`/actuator/**` 不计入业务命中，口径标注（方案 §9.6）。
+- 实例分流表与时间轴口径一致；无数据不显示 0；定向模式只命中目标实例，其余≈0。
 - 测试：真机 load run 核对占比与权重一致性；权重不一致时提示分流不均衡。
 - 验收：A17 完整口径。
 
@@ -405,6 +426,10 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 9 | 商品基线替换 | 内置 10,000 商品**替换商品 1/20 演示基线**；引用 1/20 的场景与验收脚本随 B3-02 改指内置商品（2026-10-28 确认） | B3-02；方案 §2.2 |
 | 10 | 库存区间 | **0–500**，随 seed 确定性生成、每次重置相同（2026-10-28 确认） | B3-02；方案 §2.2 |
 | 11 | 台账库与表清单 | 库名 `lab_ledger`（与业务库 `seckill` 物理分库），10 张表 + Flyway 版本化 + 保留最近 50 个 run（外置配置），清单见方案 §10.5（2026-10-28 定稿） | B1-01；方案 §10.5 |
+| 12 | JVM/GC 参数范围（2026-10-29） | 不增加 `G1ReservePercent`、`G1ConcRefinementThreads`、ZGC；其余按方案 §16.4 | B4-01 |
+| 13 | 配置应用/重启语义（2026-10-29） | 预检查前完成；run 中禁止改启动参数；失败自动回滚并进入稳定期；UI 显示待重启/应用中/已生效/已回滚 | B4-02/B4-04 |
+| 14 | Caffeine 语义（2026-10-29） | 过期/刷新按秒，`0` 不启用；关闭 L1 清空并显示“不适用”，页面有提示 | B3-01/B3-00 |
+| 15 | 未启用节点（2026-10-29） | 配置行置灰 + 下拉框排除；拓扑/实例表/实例卡显示“未启用” | B3-00/B4-04 |
 
 三项遗留待确认已全部在 2026-10-28 确认，无遗留项。
 
@@ -426,4 +451,5 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.0 初版：B0–B5 步骤分解、闸门基线、A01–A32 映射、8 项待确认 |
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
+| 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
 | 2026-10-28 | v1.3：B0 收口——§0 闸门表加「B0 收口基线（现行）」列（reactor 851 / app 469 / chaos 296；console-smoke 42 未重跑并标注原因）；§1 顶部登记收口状态与真机台账指针；顺延项（cursor E2E、db-ha 真 `--yes`、failure-container-check 细节）在 `b0-live-verification.md` 登记 |
