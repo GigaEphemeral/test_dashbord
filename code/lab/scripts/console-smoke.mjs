@@ -1030,6 +1030,16 @@ async function main() {
         k6Container,
       );
 
+      // B2-03b: the default run goes through Nginx; the card must show the
+      // attribution the runner actually injected, not a guessed label.
+      const k6Mode = ((await page.getByTestId('k6-traffic-mode').textContent()) || '').trim();
+      const k6Target = ((await page.getByTestId('k6-target-instance').textContent()) || '').trim();
+      check(
+        'runs: the k6 card shows the via-nginx traffic attribution',
+        k6Mode === 'via-nginx' && k6Target === 'nginx',
+        `mode=${k6Mode} target=${k6Target}`,
+      );
+
       if (k6Card.ok) {
         try {
           await page.getByTestId('k6-log-refresh').click({ timeout: 5000 });

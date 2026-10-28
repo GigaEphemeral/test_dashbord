@@ -985,6 +985,16 @@ onBeforeUnmount(() => {
           <dd><code data-testid="k6-container">{{ k6?.containerName || '—' }}</code></dd>
           <dt>scenario</dt>
           <dd data-testid="k6-scenario">{{ k6?.scenario || '—' }}</dd>
+          <dt>traffic</dt>
+          <dd>
+            <span data-testid="k6-traffic-mode">{{ k6?.trafficMode || '—' }}</span>
+            · <span data-testid="k6-target-instance">{{ k6?.targetInstance || '—' }}</span>
+          </dd>
+          <dt>bypass / mixed</dt>
+          <dd data-testid="k6-traffic-routing">
+            {{ k6?.trafficMode === 'target-instance' ? '绕过 Nginx' : '经 Nginx upstream' }}
+            · traffic_mixed=false（受控 run 预检查停背景流量）
+          </dd>
           <dt>exitCode</dt>
           <dd data-testid="k6-exit-code">{{ k6?.exitCode ?? '—' }}</dd>
           <dt>startedAt</dt>
