@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Browser smoke test for the lab console (code/lab/dashboard).
 #
-# Drives the built 实验操作台 with Playwright against the running stack:
-# wizard load -> skip -> reset, background traffic start/stop, the log panel,
-# the thread lab and the animation view (topology / instances / cache flow).
+# B1-05 rewrote the console as a seven-section sidebar workspace and rewrote
+# this smoke against it: 总览 / 场景向导 / 实例与 JVM / Benchmark / 实时监控 /
+# 故障与缓存实验 / 实验记录. The ledger block creates a uniquely named DRAFT
+# run, reads its pre-check, drives start/stop through the operation contract,
+# checks metric quality badges and proves a reload restores the selected run.
+# A BLOCKED pre-check is asserted through its evidence instead of being forced.
 # The animation block injects one 10s `freeze` on jl-app-2 to assert the fault
 # badge, then calls chaos stop-all; start and exit both call stop-all, so the
 # script leaves no active fault and the app instances healthy. It does reset the
@@ -51,6 +54,11 @@ Environment (environment > lab .env > default):
   SMOKE_SCENARIO_ID           wizard scenario to load, default quick-failover
   SMOKE_LOG_CONTAINER         container whose logs are read, default jl-app-1
   SMOKE_ACTION_TIMEOUT_MS     per-assertion polling budget, default 20000
+  SMOKE_RUN_SCENARIO          ledger run scenario, default console-smoke-<epoch>
+  SMOKE_RUN_SCENARIO_PREFIX   ownership prefix for leftover-run cleanup, default console-smoke-
+  SMOKE_RUN_PARAMS            ledger run params JSON, default {"note":"console-smoke",...}
+  SMOKE_KPI_COUNT             observe KPI card count, default 12
+  SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package
   CONSOLE_SMOKE_SCRIPT        path to the smoke script, default alongside this file

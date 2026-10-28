@@ -1,14 +1,20 @@
 /**
- * Task 23 console smoke test: drives the built 实验操作台 in a real browser.
+ * Console smoke test for the side-navigation workspace (B1-05).
  *
- * It walks the scenario wizard, toggles the background traffic container and
- * reads the log panel, asserting the button-availability contract the
- * chaos-controller documents (step/skip/pause only while running, resume only
- * while paused, reset always). The pending wizard step is skipped, so jl-app-3
- * stays up. The animation-view block injects one short `freeze` (TTL 10s, a
- * safety net only) on jl-app-2 to prove the fault badge, then calls stop-all
- * immediately; start and finally both call stop-all so no fault is ever left
- * behind and the app instances return to healthy.
+ * The old four-tab single page is gone: this script walks the seven sections
+ * (总览 / 场景向导 / 实例与 JVM / Benchmark / 实时监控 / 故障与缓存实验 / 实验记录)
+ * and asserts the same capabilities on their new pages. The ledger block is new:
+ * it creates a uniquely named DRAFT run, reads its pre-check, drives start/stop
+ * through the operation contract, checks the metric quality badges, reloads the
+ * page and proves the selected run is restored from localStorage.
+ *
+ * A BLOCKED pre-check is a valid outcome (the controller refuses the start with
+ * 409/40903); in that branch the script asserts the blocking evidence and the
+ * disabled start button instead of forcing the run. Both branches keep the same
+ * number of assertions so the baseline is stable.
+ *
+ * Cleanup: traffic stop, guide reset, chaos stop-all, thread stop-all, cache
+ * mode off and stop any RUNNING/UNKNOWN run left by a crashed attempt.
  *
  * Run through code/lab/scripts/console-smoke.sh (it resolves Playwright,
  * CONSOLE_URL and the lab token). Requires the stack running and the dashboard
@@ -25,6 +31,13 @@ const API_BASE = process.env.LAB_API_BASE || 'http://127.0.0.1:8080/lab-api';
 const SCENARIO_ID = process.env.SMOKE_SCENARIO_ID || 'quick-failover';
 const LOG_CONTAINER = process.env.SMOKE_LOG_CONTAINER || 'jl-app-1';
 const ACTION_TIMEOUT_MS = Number(process.env.SMOKE_ACTION_TIMEOUT_MS || 20000);
+// Unique per run so the ledger assertions never depend on an empty database.
+const RUN_SCENARIO_PREFIX = process.env.SMOKE_RUN_SCENARIO_PREFIX || 'console-smoke-';
+const RUN_SCENARIO = process.env.SMOKE_RUN_SCENARIO || `${RUN_SCENARIO_PREFIX}${Date.now()}`;
+const RUN_PARAMS = process.env.SMOKE_RUN_PARAMS || '{"note":"console-smoke","source":"playwright"}';
+// Defaults mirror VITE_LAB_KPI_KEYS / VITE_LAB_RUN_METRIC_KEYS (12 + 1 probe).
+const KPI_COUNT = Number(process.env.SMOKE_KPI_COUNT || 12);
+const RUN_METRIC_COUNT = Number(process.env.SMOKE_RUN_METRIC_COUNT || 13);
 // TTL is a safety net: the smoke clears the fault with stop-all as soon as the
 // badge is asserted. Ten seconds leaves room for one manual sync plus a 5s poll
 // without pausing jl-app-2 for long enough to affect its healthcheck.
@@ -37,6 +50,8 @@ const CACHE_MODES = [
   'off', 'null-cache', 'bloom', 'mutex',
   'logical-expire', 'ttl-jitter', 'l1-cache', 'db-fallback',
 ];
+const SECTIONS = ['overview', 'wizard', 'instances', 'bench', 'observe', 'faults', 'runs'];
+const QUALITY = ['OK', 'NO_DATA', 'COLLECTING', 'DEGRADED'];
 
 let passed = 0;
 const failures = [];
@@ -92,8 +107,13 @@ async function launchBrowser(chromium) {
   }
 }
 
-async function apiRequest(path, { method = 'GET', body } = {}) {
-  const headers = { 'X-Lab-Token': LAB_TOKEN };
+function newIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `smoke-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function apiRequest(path, { method = 'GET', body, headers: extraHeaders = {} } = {}) {
+  const headers = { 'X-Lab-Token': LAB_TOKEN, ...extraHeaders };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
@@ -115,6 +135,34 @@ function unwrap(payload) {
 
 async function apiPost(path, body) {
   return apiRequest(path, { method: 'POST', body });
+}
+
+/**
+ * A crashed smoke may still hold the write-run lock. Only runs this tool owns
+ * (scenario prefix) are closed; a user's active demo is left alone.
+ */
+async function stopActiveRuns() {
+  for (const status of ['RUNNING', 'UNKNOWN']) {
+    try {
+      const page = unwrap(await apiRequest(`/lab/runs?status=${status}&limit=10`));
+      const owned = (page?.items || []).filter(
+        (run) => String(run.scenario || '').startsWith(RUN_SCENARIO_PREFIX),
+      );
+      for (const run of owned) {
+        try {
+          await apiRequest(`/lab/runs/${encodeURIComponent(run.runId)}/stop`, {
+            method: 'POST',
+            headers: { 'Idempotency-Key': newIdempotencyKey() },
+          });
+          console.log(`INFO  stopped leftover ${status} run ${run.runId}`);
+        } catch (err) {
+          console.log(`WARN  could not stop leftover run ${run.runId}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      console.log(`WARN  could not list ${status} runs: ${err.message}`);
+    }
+  }
 }
 
 /** Best-effort cleanup so a failed smoke never leaves the lab in a stuck state. */
@@ -153,6 +201,7 @@ async function restoreLabState(page) {
       console.log(`WARN  could not reset ${instance} cache mode to off: ${err.message}`);
     }
   }
+  await stopActiveRuns();
   if (page && (await page.getByTestId('wizard-refresh').count()) > 0) {
     try {
       await page.getByTestId('wizard-refresh').click({ timeout: 5000 });
@@ -171,10 +220,33 @@ async function refreshAnimation(page) {
   }
 }
 
+async function gotoSection(page, id) {
+  const button = page.getByTestId(`nav-${id}`);
+  await button.click();
+  await button.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+}
+
+/** Read the settled operation card after start/stop. */
+async function waitOperation(page, timeoutMs = ACTION_TIMEOUT_MS) {
+  return waitForCondition(async () => {
+    const idLoc = page.getByTestId('run-operation-id');
+    if ((await idLoc.count()) === 0) {
+      return { ok: false, detail: 'operation id not rendered' };
+    }
+    const id = ((await idLoc.textContent()) || '').trim();
+    const statusLoc = page.getByTestId('run-operation-status');
+    const status = ((await statusLoc.textContent()) || '').trim();
+    return {
+      ok: Boolean(id) && ['APPLIED', 'RESTORED', 'FAILED', 'UNKNOWN'].includes(status),
+      detail: `${id} ${status}`,
+    };
+  }, timeoutMs);
+}
+
 async function main() {
   const chromium = loadChromium();
-  // A previous crashed run can leave the wizard RUNNING or traffic generating
-  // load; both would make the assertions below meaningless.
+  // A previous crashed run can leave the wizard RUNNING, traffic generating
+  // load or a RUNNING run holding the write lock; all would skew the checks.
   await restoreLabState(null);
   const browser = await launchBrowser(chromium);
   const page = await browser.newPage();
@@ -208,19 +280,24 @@ async function main() {
     await page.getByTestId('token-input').fill(LAB_TOKEN);
     await page.getByTestId('connect').click();
 
+    const navButtons = page.locator('.workspace-sidebar [data-testid^="nav-"]');
+    const navIds = await navButtons.evaluateAll((nodes) => nodes.map((node) => node.dataset.testid));
+    check(
+      'sidebar exposes the seven workspace sections in order',
+      navIds.length === SECTIONS.length && SECTIONS.every((id, index) => navIds[index] === `nav-${id}`),
+      navIds.join(','),
+    );
+
     const healthPill = page.locator('.topbar-meta .pill').first();
     await expectCondition('controller reports online', async () => {
       const text = ((await healthPill.textContent()) || '').trim();
       return { ok: text.includes('在线'), detail: text };
     });
 
-    const status = page.getByTestId('guide-status');
-    const trafficState = page.getByTestId('traffic-state');
+    // ------------------------------------------------------------- overview
+    await expectText(page.getByTestId('guide-status'), 'idle', 'overview: guide starts idle');
     const rollup = page.getByTestId('container-rollup');
-    await expectText(status, 'idle', 'guide starts idle');
-    // The container list and the traffic state arrive in separate round trips,
-    // and jl-traffic leaves the rollup only once its name is known.
-    await expectCondition('every always-on container is running', async () => {
+    await expectCondition('overview: every always-on container is running', async () => {
       const text = ((await rollup.textContent()) || '').trim();
       // "0/0" is the first render (containers not fetched yet) and also the
       // shape of a failed fetch whose banner was later cleared; up === total
@@ -230,67 +307,124 @@ async function main() {
       return { ok, detail: text };
     });
     check(
-      'reset mode shows the manual default',
+      'overview: reset mode shows the manual default',
       (await page.getByTestId('reset-mode').textContent()).includes('manual'),
     );
-    await expectCondition('traffic container state is known', async () => {
+    const ledgerState = ((await page.getByTestId('overview-ledger-state').textContent()) || '').trim();
+    check(
+      'overview: ledger state is readable',
+      ['OK', 'DEGRADED', 'NO_DATA'].includes(ledgerState),
+      ledgerState,
+    );
+
+    // --------------------------------------------------------------- wizard
+    await gotoSection(page, 'wizard');
+    const select = page.getByTestId('scenario-select');
+    const options = await select.locator('option').allTextContents();
+    check('wizard: scenario list is loaded from the controller', options.length >= 1, options.join(' | '));
+    await select.selectOption(SCENARIO_ID);
+    check(
+      'wizard: scenario description is rendered',
+      (await page.locator('.scenario-desc').textContent()).length > 10,
+    );
+
+    const wizardStatus = page.getByTestId('wizard-status');
+    await page.getByTestId('scenario-start').click();
+    await expectText(wizardStatus, 'running', 'wizard: running after loading the scenario');
+    check(
+      'wizard: shows one pending step',
+      (await page.getByTestId('step-list').locator('.step').count()) >= 1,
+    );
+    const explain = page.getByTestId('step-explain');
+    check('wizard: per-step 现象/根因/处方/预期曲线 text is rendered', await explain.isVisible());
+    const explainText = await explain.textContent();
+    check(
+      'wizard: explain block carries the four labels',
+      ['现象', '根因', '处方', '预期曲线'].every((label) => explainText.includes(label)),
+      explainText,
+    );
+
+    await expectCondition('wizard: pause is enabled while running', async () => ({
+      ok: await page.getByTestId('action-pause').isEnabled(),
+    }));
+    check('wizard: resume is disabled while running', !(await page.getByTestId('action-resume').isEnabled()));
+
+    await page.getByTestId('action-skip').click();
+    await expectText(wizardStatus, 'completed', 'wizard: skipping the only step completes the wizard');
+    await expectCondition('wizard: reset stays available as the escape hatch', async () => ({
+      ok: await page.getByTestId('action-reset').isEnabled(),
+    }));
+    check('wizard: step is disabled once completed', !(await page.getByTestId('action-step').isEnabled()));
+    check('wizard: pause is disabled once completed', !(await page.getByTestId('action-pause').isEnabled()));
+
+    await gotoSection(page, 'overview');
+    const faultsAfterSkip = await page.getByTestId('fault-count').textContent();
+    check('wizard: skipping injected no fault', faultsAfterSkip.trim() === '0', faultsAfterSkip);
+    await gotoSection(page, 'wizard');
+    await page.getByTestId('action-reset').click();
+    await expectText(wizardStatus, 'idle', 'wizard: reset returns the wizard to idle');
+
+    // ---------------------------------------------------------------- bench
+    await gotoSection(page, 'bench');
+    const trafficState = page.getByTestId('traffic-state');
+    await expectCondition('bench: traffic container state is known', async () => {
       const text = ((await trafficState.textContent()) || '').trim();
       return { ok: ['created', 'exited', 'running', 'restarting', 'missing'].includes(text), detail: text };
     });
-
-    const select = page.getByTestId('scenario-select');
-    const options = await select.locator('option').allTextContents();
-    check('scenario list is loaded from the controller', options.length >= 1, options.join(' | '));
-    await select.selectOption(SCENARIO_ID);
-    check('scenario description is rendered',
-      (await page.locator('.scenario-desc').textContent()).length > 10);
-
-    await page.getByTestId('scenario-start').click();
-    await expectText(status, 'running', 'wizard is running after loading the scenario');
-    check('wizard shows one pending step',
-      (await page.getByTestId('step-list').locator('.step').count()) >= 1);
-    const explain = page.getByTestId('step-explain');
-    check('per-step 现象/根因/处方/预期曲线 text is rendered', await explain.isVisible());
-    const explainText = await explain.textContent();
-    check('explain block carries the four labels',
-      ['现象', '根因', '处方', '预期曲线'].every((label) => explainText.includes(label)), explainText);
-
-    await expectCondition('pause is enabled while running', async () => ({
-      ok: await page.getByTestId('action-pause').isEnabled(),
-    }));
-    check('resume is disabled while running', !(await page.getByTestId('action-resume').isEnabled()));
-
-    await page.getByTestId('action-skip').click();
-    await expectText(status, 'completed', 'skipping the only step completes the wizard');
-    // reset is disabled only while a request is in flight, so waiting for it to
-    // become enabled also proves the busy flag has cleared before the checks below.
-    await expectCondition('reset stays available as the escape hatch', async () => ({
-      ok: await page.getByTestId('action-reset').isEnabled(),
-    }));
-    check('step is disabled once completed', !(await page.getByTestId('action-step').isEnabled()));
-    check('pause is disabled once completed', !(await page.getByTestId('action-pause').isEnabled()));
-    const faultsAfterSkip = await page.getByTestId('fault-count').textContent();
-    check('skipping injected no fault', faultsAfterSkip.trim() === '0', faultsAfterSkip);
-
-    await page.getByTestId('action-reset').click();
-    await expectText(status, 'idle', 'reset returns the wizard to idle');
-
     await page.getByTestId('traffic-start').click();
-    await expectText(trafficState, 'running', 'background traffic start shows in the status bar');
+    await expectText(trafficState, 'running', 'bench: background traffic start shows running');
     await page.getByTestId('traffic-stop').click();
-    await expectText(trafficState, 'exited', 'background traffic stop shows in the status bar');
+    await expectText(trafficState, 'exited', 'bench: background traffic stop shows exited');
 
     await page.getByTestId('log-container').selectOption(LOG_CONTAINER);
     await page.getByTestId('log-refresh').click();
-    await expectCondition('log panel renders container output', async () => {
+    await expectCondition('bench: log panel renders container output', async () => {
       const logs = ((await page.getByTestId('log-view').textContent()) || '').trim();
       return { ok: logs.length > 20, detail: `${logs.length} chars` };
     });
+    check(
+      'bench: stop-all is available as the global clear action',
+      await page.getByTestId('stop-all').isEnabled(),
+    );
 
-    // --- Thread lab page (proxy + 5s poll) --------------------------------
+    // ------------------------------------------------------------ instances
+    await gotoSection(page, 'instances');
+    let cards = await waitForCondition(async () => {
+      if ((await page.getByTestId('instances-page').count()) === 0) {
+        return { ok: false, detail: 'instances page not rendered' };
+      }
+      const missing = [];
+      for (const name of ['app-1', 'app-2', 'app-3']) {
+        if ((await page.getByTestId(`instance-card-${name}`).count()) === 0) {
+          missing.push(name);
+        }
+      }
+      if (missing.length) {
+        return { ok: false, detail: `missing cards ${missing.join(',')}` };
+      }
+      const cpu = ((await page.getByTestId('instance-cpu-app-1').textContent()) || '').trim();
+      const rate = ((await page.getByTestId('instance-rate-app-1').textContent()) || '').trim();
+      return { ok: cpu !== '无数据' && rate !== '无数据', detail: `cpu=${cpu} rate=${rate}` };
+    });
+    let opened = { ok: false, detail: 'instance card not clickable' };
+    if (cards.ok) {
+      await page.getByTestId('instance-open-thread-app-2').click();
+      opened = await waitForCondition(async () => {
+        if ((await page.getByTestId('thread-page').count()) === 0) {
+          return { ok: false, detail: 'thread page not rendered' };
+        }
+        const value = await page.getByTestId('thread-instance').inputValue();
+        return { ok: value === 'app-2', detail: `thread-instance=${value}` };
+      });
+    }
+    check(
+      'instances: three cards show live metrics and open the thread lab at app-2',
+      cards.ok && opened.ok,
+      `cards: ${cards.detail}; thread: ${opened.detail}`,
+    );
+
     const demoStates = ['NEW', 'RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING', 'TERMINATED'];
-    await page.getByTestId('nav-thread').click();
-    await expectCondition('thread lab page opens with the six-state display', async () => {
+    await expectCondition('instances: thread lab opens with the six-state display', async () => {
       const threadPage = page.getByTestId('thread-page');
       if ((await threadPage.count()) === 0) {
         return { ok: false, detail: 'thread page not rendered' };
@@ -306,7 +440,7 @@ async function main() {
     await page.getByTestId('thread-hold').selectOption('auto');
     await page.getByTestId('thread-ttl').fill('5');
     await page.getByTestId('thread-inject').click();
-    await expectCondition('injected cpu-burn fault is listed as ACTIVE', async () => {
+    await expectCondition('instances: injected cpu-burn fault is listed as ACTIVE', async () => {
       const row = page.getByTestId('thread-fault-cpu-burn');
       if ((await row.count()) === 0) {
         return { ok: false, detail: 'not listed' };
@@ -316,7 +450,7 @@ async function main() {
     });
 
     await page.getByTestId('thread-stop-cpu-burn').click();
-    await expectCondition('stopping the fault empties the thread fault list', async () => ({
+    await expectCondition('instances: stopping the fault empties the thread fault list', async () => ({
       ok: (await page.getByTestId('thread-fault-cpu-burn').count()) === 0,
     }));
 
@@ -325,14 +459,14 @@ async function main() {
     });
     const leftover = await leftoverResponse.json();
     check(
-      'proxy reports no active thread fault after cleanup',
+      'instances: proxy reports no active thread fault after cleanup',
       Array.isArray(leftover.data) && leftover.data.length === 0,
       JSON.stringify(leftover.data),
     );
 
-    // --- Cache lab page (second proxy allow-list + 5s poll) ---------------
-    await page.getByTestId('nav-cache').click();
-    await expectCondition('cache lab page opens with a known mode and D10 link', async () => {
+    // --------------------------------------------------------------- faults
+    await gotoSection(page, 'faults');
+    await expectCondition('faults: cache lab opens with a known mode and D10 link', async () => {
       if ((await page.getByTestId('cache-page').count()) === 0) {
         return { ok: false, detail: 'cache page not rendered' };
       }
@@ -359,7 +493,7 @@ async function main() {
     await expectText(
       page.getByTestId('cache-mode'),
       'null-cache',
-      'cache mode switches to null-cache through the proxy',
+      'faults: cache mode switches to null-cache through the proxy',
     );
 
     await page.getByTestId('cache-mode-select').selectOption('off');
@@ -367,11 +501,11 @@ async function main() {
     await expectText(
       page.getByTestId('cache-mode'),
       'off',
-      'cache mode switches back to off through the proxy',
+      'faults: cache mode switches back to off through the proxy',
     );
 
     await page.getByTestId('cache-seed').click();
-    await expectCondition('cache seed returns an id range and row count', async () => {
+    await expectCondition('faults: cache seed returns an id range and row count', async () => {
       const result = page.getByTestId('cache-seed-result');
       if ((await result.count()) === 0) {
         return { ok: false, detail: 'seed result not rendered' };
@@ -384,7 +518,7 @@ async function main() {
     }, ACTION_TIMEOUT_MS * 2);
 
     await page.getByTestId('cache-preheat-run').click();
-    await expectCondition('cache preheat reports the manual run it just did', async () => {
+    await expectCondition('faults: cache preheat reports the manual run it just did', async () => {
       const last = page.getByTestId('cache-preheat-last');
       if ((await last.count()) === 0) {
         return { ok: false, detail: 'last run not rendered' };
@@ -396,9 +530,7 @@ async function main() {
       };
     });
 
-    // --- Animation view: topology / instances / cache flow ----------------
-    await page.getByTestId('nav-animation').click();
-    await expectCondition('animation view opens on the live topology', async () => {
+    await expectCondition('faults: animation view opens on the live topology', async () => {
       if ((await page.getByTestId('animation-page').count()) === 0) {
         return { ok: false, detail: 'animation page not rendered' };
       }
@@ -419,7 +551,7 @@ async function main() {
     // every entry, so both sides must agree exactly. The probe re-reads the API
     // each round, so a container transitioning between the two calls is retried
     // rather than excused.
-    await expectCondition('topology draws one node per /lab-api/containers entry', async () => {
+    await expectCondition('faults: topology draws one node per /lab-api/containers entry', async () => {
       const list = unwrap(await apiRequest('/containers')) || [];
       const nodes = await page.locator('[data-testid^="topology-node-"]').count();
       return { ok: nodes === list.length, detail: `nodes=${nodes} api=${list.length}` };
@@ -475,47 +607,8 @@ async function main() {
         // the finally block retries
       }
     }
-    check('freeze badge appears on jl-app-2 and stop-all clears it', faultOk, faultDetail);
+    check('faults: freeze badge appears on jl-app-2 and stop-all clears it', faultOk, faultDetail);
 
-    await page.getByTestId('animation-tab-instances').click();
-    const cards = await waitForCondition(async () => {
-      if ((await page.getByTestId('instances-page').count()) === 0) {
-        return { ok: false, detail: 'instances page not rendered' };
-      }
-      const missing = [];
-      for (const name of ['app-1', 'app-2', 'app-3']) {
-        if ((await page.getByTestId(`instance-card-${name}`).count()) === 0) {
-          missing.push(name);
-        }
-      }
-      if (missing.length) {
-        return { ok: false, detail: `missing cards ${missing.join(',')}` };
-      }
-      if ((await page.getByTestId('instances-prom-note').count()) > 0) {
-        return { ok: false, detail: 'prom note visible' };
-      }
-      const cpu = ((await page.getByTestId('instance-cpu-app-1').textContent()) || '').trim();
-      const rate = ((await page.getByTestId('instance-rate-app-1').textContent()) || '').trim();
-      return { ok: cpu !== '无数据' && rate !== '无数据', detail: `cpu=${cpu} rate=${rate}` };
-    });
-    let opened = { ok: false, detail: 'instance card not clickable' };
-    if (cards.ok) {
-      await page.getByTestId('instance-open-thread-app-2').click();
-      opened = await waitForCondition(async () => {
-        if ((await page.getByTestId('thread-page').count()) === 0) {
-          return { ok: false, detail: 'thread page not rendered' };
-        }
-        const value = await page.getByTestId('thread-instance').inputValue();
-        return { ok: value === 'app-2', detail: `thread-instance=${value}` };
-      });
-    }
-    check(
-      'three instance cards show live metrics and open thread lab at app-2',
-      cards.ok && opened.ok,
-      `cards: ${cards.detail}; thread: ${opened.detail}`,
-    );
-
-    await page.getByTestId('nav-animation').click();
     await page.getByTestId('animation-tab-cache').click();
     // The tab click starts a refresh that loads the three cache queries; wait
     // for it to finish so the empty state below is real and not first render.
@@ -523,7 +616,7 @@ async function main() {
       ok: await page.getByTestId('animation-refresh').isEnabled(),
       detail: ((await page.getByTestId('animation-refresh').textContent()) || '').trim(),
     }));
-    await expectCondition('cache flow shows moving data or an explicit idle/empty state', async () => {
+    await expectCondition('faults: cache flow shows moving data or an explicit idle/empty state', async () => {
       if ((await page.getByTestId('cache-flow').count()) === 0) {
         return { ok: false, detail: 'cache-flow missing' };
       }
@@ -654,7 +747,7 @@ async function main() {
         console.log(`WARN  could not stop background traffic after the pause test: ${err.message}`);
       }
     }
-    check('pause freezes the particles while the 5s poller keeps syncing', pauseOk, pauseDetail);
+    check('faults: pause freezes the particles while the 5s poller keeps syncing', pauseOk, pauseDetail);
 
     // Accessibility: a fresh context with reduced motion (no stored preference)
     // must start paused, and the visible button must still be able to override.
@@ -667,7 +760,7 @@ async function main() {
       await reducedPage.goto(CONSOLE_URL, { waitUntil: 'load' });
       await reducedPage.getByTestId('token-input').fill(LAB_TOKEN);
       await reducedPage.getByTestId('connect').click();
-      await reducedPage.getByTestId('nav-animation').click();
+      await reducedPage.getByTestId('nav-faults').click();
       await reducedPage.getByTestId('animation-tab-cache').click();
       reducedPaused = await waitForCondition(async () => {
         if ((await reducedPage.getByTestId('cache-reduced-motion').count()) === 0) {
@@ -695,15 +788,229 @@ async function main() {
       await reducedContext.close();
     }
     check(
-      'reduced motion starts paused and the play button overrides it',
+      'faults: reduced motion starts paused and the play button overrides it',
       reducedPaused.ok && reducedPlay.ok,
       `paused: ${reducedPaused.detail}; play: ${reducedPlay.detail}`,
     );
 
+    // -------------------------------------------------------------- observe
+    await gotoSection(page, 'observe');
+    await expectCondition('observe: topology and KPI cards share the live workspace', async () => {
+      if ((await page.getByTestId('topology-page').count()) === 0) {
+        return { ok: false, detail: 'topology not rendered' };
+      }
+      const nginx = await page.getByTestId('topology-node-jl-nginx').isVisible().catch(() => false);
+      const app1 = await page.getByTestId('topology-node-jl-app-1').isVisible().catch(() => false);
+      return { ok: nginx && app1, detail: `nginx=${nginx} app-1=${app1}` };
+    });
+
+    await expectCondition('observe: one KPI card per catalog key is rendered', async () => {
+      const count = await page.locator('.metric-card').count();
+      return { ok: count === KPI_COUNT, detail: `cards=${count} expected=${KPI_COUNT}` };
+    });
+    await expectCondition('observe: every KPI card carries a quality badge and update time', async () => {
+      const cards = await page.locator('.metric-card').evaluateAll((nodes) => nodes.map((node) => {
+        const badge = node.querySelector('[data-testid^="metric-quality-"]');
+        const updated = node.querySelector('[data-testid^="metric-updated-"]');
+        return {
+          quality: badge ? badge.textContent.trim() : '',
+          updated: updated ? updated.textContent.trim() : '',
+        };
+      }));
+      const bad = cards.filter((card) => !QUALITY.includes(card.quality) || !card.updated.startsWith('更新'));
+      return { ok: cards.length > 0 && bad.length === 0, detail: JSON.stringify(bad.slice(0, 3)) };
+    });
+
+    const heapQuality = ((await page.getByTestId('metric-quality-jvm.heap.used').textContent()) || '').trim();
+    const heapValue = ((await page.getByTestId('metric-value-jvm.heap.used').textContent()) || '').trim();
     check(
-      'no in-page error banner',
-      (await page.getByTestId('error-banner').count()) === 0
-        && (await page.getByTestId('animation-error').count()) === 0,
+      'observe: a wired KPI (heap) is OK with a real value',
+      heapQuality === 'OK' && heapValue !== '无数据' && heapValue !== '0',
+      `quality=${heapQuality} value=${heapValue}`,
+    );
+
+    // cache.l2.* is OK when the Redis exporter is scraped (dev stack) and
+    // NO_DATA/COLLECTING otherwise; both are honest, a synthetic 0 is not.
+    const l2Quality = ((await page.getByTestId('metric-quality-cache.l2.keys').textContent()) || '').trim();
+    const l2Value = ((await page.getByTestId('metric-value-cache.l2.keys').textContent()) || '').trim();
+    const l2Ok = l2Quality === 'OK'
+      ? l2Value !== '无数据' && l2Value !== '0'
+      : ['NO_DATA', 'COLLECTING'].includes(l2Quality) && l2Value === '无数据';
+    check(
+      'observe: cache.l2.keys follows the quality contract without a fake 0',
+      l2Ok,
+      `quality=${l2Quality} value=${l2Value}`,
+    );
+
+    const rejectedQuality = ((await page.getByTestId('metric-quality-executor.rejected').textContent()) || '').trim();
+    const rejectedValue = ((await page.getByTestId('metric-value-executor.rejected').textContent()) || '').trim();
+    check(
+      'observe: unwired executor.rejected shows no data, never 0',
+      rejectedQuality !== 'OK' && rejectedValue !== '0' && rejectedValue !== '0.00',
+      `quality=${rejectedQuality} value=${rejectedValue}`,
+    );
+
+    // ---------------------------------------------------------------- runs
+    await gotoSection(page, 'runs');
+    await expectCondition('runs: ledger list is visible', async () => {
+      const list = page.getByTestId('run-list');
+      if ((await list.count()) === 0) {
+        return { ok: false, detail: 'run-list not rendered' };
+      }
+      const degraded = await page.getByTestId('ledger-degraded').count();
+      return { ok: degraded === 0, detail: degraded ? 'ledger DEGRADED' : 'list rendered' };
+    });
+
+    await page.getByTestId('run-create-scenario').fill(RUN_SCENARIO);
+    await page.getByTestId('run-create-params').fill(RUN_PARAMS);
+    await page.getByTestId('run-create-submit').click();
+    const created = await waitForCondition(async () => {
+      const result = page.getByTestId('run-create-result');
+      if ((await result.count()) === 0) {
+        const err = page.getByTestId('run-create-error');
+        return { ok: false, detail: (await err.count()) ? ((await err.textContent()) || '').trim() : 'no result yet' };
+      }
+      const runId = ((await page.getByTestId('run-created-id').textContent()) || '').trim();
+      return { ok: Boolean(runId), detail: runId };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: a new DRAFT run can be created from the page', created.ok, created.detail);
+    const createdRunId = created.detail;
+
+    await expectText(
+      page.getByTestId('run-status-badge'),
+      'DRAFT',
+      'runs: the new run is shown as DRAFT in the detail view',
+    );
+    const detailId = await waitForCondition(async () => {
+      const idLoc = page.getByTestId('run-detail-run-id');
+      if ((await idLoc.count()) === 0) {
+        return { ok: false, detail: 'detail not rendered' };
+      }
+      const text = ((await idLoc.textContent()) || '').trim();
+      return { ok: text === createdRunId, detail: text };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: the created run is selected in the detail view', detailId.ok, detailId.detail);
+
+    const precheckReady = await waitForCondition(async () => {
+      const verdictLoc = page.getByTestId('run-precheck-verdict');
+      if ((await verdictLoc.count()) === 0) {
+        const err = page.getByTestId('run-precheck-error');
+        return { ok: false, detail: (await err.count()) ? ((await err.textContent()) || '').trim() : 'verdict not rendered' };
+      }
+      const text = ((await verdictLoc.textContent()) || '').trim();
+      return { ok: ['PASS', 'WARN', 'BLOCKED'].includes(text), detail: text };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: pre-check verdict is rendered with blocking/warning sections', precheckReady.ok, precheckReady.detail);
+    const verdict = precheckReady.ok ? precheckReady.detail : '';
+    const blocked = verdict === 'BLOCKED';
+
+    // Both branches emit four assertions so the baseline does not depend on
+    // whether the environment passes the pre-check.
+    if (!blocked) {
+      await page.getByTestId('run-start').click();
+      const started = await waitOperation(page);
+      const running = await waitForCondition(async () => {
+        const text = ((await page.getByTestId('run-status-badge').textContent()) || '').trim();
+        return { ok: text === 'RUNNING', detail: text };
+      });
+      check(
+        'runs: start returns an operation and moves the run to RUNNING',
+        started.ok && running.ok,
+        `${started.detail}; status=${running.detail}`,
+      );
+
+      const timeline = await waitForCondition(async () => {
+        const steps = await page.locator('[data-testid^="run-step-"]').count();
+        return { ok: steps >= 2, detail: `steps=${steps}` };
+      });
+      check('runs: timeline records the DRAFT → RUNNING transitions', timeline.ok, timeline.detail);
+
+      if (running.ok) {
+        await page.getByTestId('run-stop').click();
+        const stopped = await waitOperation(page);
+        const completed = await waitForCondition(async () => {
+          const text = ((await page.getByTestId('run-status-badge').textContent()) || '').trim();
+          return { ok: text === 'COMPLETED', detail: text };
+        });
+        check(
+          'runs: stop returns an operation and completes the run',
+          stopped.ok && completed.ok,
+          `${stopped.detail}; status=${completed.detail}`,
+        );
+      } else {
+        check('runs: stop returns an operation and completes the run', false, 'start did not reach RUNNING');
+      }
+
+      const expectedOps = running.ok ? 2 : 1;
+      const ops = await waitForCondition(async () => {
+        const rows = await page.locator('[data-testid^="run-operation-row-"]').count();
+        return { ok: rows >= expectedOps, detail: `rows=${rows} expected>=${expectedOps}` };
+      });
+      check('runs: operation ledger reflects the start/stop attempts', ops.ok, ops.detail);
+    } else {
+      // Blocking pre-check: the start button is disabled and the evidence is
+      // rendered in the same shape the 409/40903 refusal returns.
+      check(
+        'runs: blocking pre-check keeps start disabled',
+        !(await page.getByTestId('run-start').isEnabled()),
+      );
+      const evidence = await page.locator('[data-testid="run-precheck-blocking"] li code').count();
+      const evidenceText = ((await page.locator('[data-testid="run-precheck-blocking"] li').first().textContent()) || '').trim();
+      check(
+        'runs: blocking pre-check lists the blocking item',
+        evidence > 0 && evidenceText.length > 0,
+        `items=${evidence} text=${evidenceText}`,
+      );
+      check(
+        'runs: a blocked DRAFT keeps an explicit empty timeline',
+        (await page.getByTestId('run-steps-empty').count()) > 0,
+      );
+      const stillDraft = ((await page.getByTestId('run-status-badge').textContent()) || '').trim() === 'DRAFT';
+      const noOps = (await page.getByTestId('run-operations-empty').count()) > 0;
+      check(
+        'runs: a blocked pre-check leaves the DRAFT with no operation',
+        stillDraft && noOps,
+        `draft=${stillDraft} emptyOps=${noOps}`,
+      );
+    }
+
+    const runMetrics = await waitForCondition(async () => {
+      const count = await page.locator('.metric-card').count();
+      const probe = page.getByTestId('metric-quality-executor.rejected');
+      if (count !== RUN_METRIC_COUNT || (await probe.count()) === 0) {
+        return { ok: false, detail: `cards=${count} expected=${RUN_METRIC_COUNT}` };
+      }
+      return { ok: true, detail: `cards=${count}` };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: run metrics reuse the quality-badge cards', runMetrics.ok, runMetrics.detail);
+    const runRejectedQuality = ((await page.getByTestId('metric-quality-executor.rejected').textContent()) || '').trim();
+    const runRejectedValue = ((await page.getByTestId('metric-value-executor.rejected').textContent()) || '').trim();
+    check(
+      'runs: unwired executor.rejected in run metrics is not rendered as 0',
+      runRejectedQuality !== 'OK' && runRejectedValue !== '0' && runRejectedValue !== '0.00',
+      `quality=${runRejectedQuality} value=${runRejectedValue}`,
+    );
+
+    // Refresh self-recovery: the runId lives in localStorage, so a full reload
+    // must return to the same audit trail without re-creating anything.
+    await page.reload({ waitUntil: 'load' });
+    await page.getByTestId('token-input').fill(LAB_TOKEN);
+    await page.getByTestId('connect').click();
+    await gotoSection(page, 'runs');
+    const restored = await waitForCondition(async () => {
+      const idLoc = page.getByTestId('run-detail-run-id');
+      if ((await idLoc.count()) === 0) {
+        return { ok: false, detail: 'detail not restored' };
+      }
+      const text = ((await idLoc.textContent()) || '').trim();
+      return { ok: text === createdRunId, detail: text };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: a browser reload restores the last selected run', restored.ok, restored.detail);
+
+    check(
+      'no visible error banner',
+      (await page.locator('[role="alert"]').count()) === 0,
+      (await page.locator('[role="alert"]').allTextContents()).join(' | '),
     );
     check('no uncaught page errors', pageErrors.length === 0, pageErrors.join(' | '));
     check('no failed /lab-api or /prom requests', failedRequests.length === 0, failedRequests.join(' | '));
