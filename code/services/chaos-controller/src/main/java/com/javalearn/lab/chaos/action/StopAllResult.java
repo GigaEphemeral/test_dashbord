@@ -16,11 +16,24 @@ package com.javalearn.lab.chaos.action;
  *                  demo is recoverable by one button. {@code not-configured}
  *                  only appears through test seams that do not wire the
  *                  network cleaner.
+ * @param operationId B1-02 operation contract id; null when the service is
+ *                  called directly (tests, internal callers)
  */
-public record StopAllResult(int reverted, int failed, int pending, NetworkResetReport toxiproxy) {
+public record StopAllResult(int reverted, int failed, int pending, NetworkResetReport toxiproxy,
+                            String operationId) {
 
     /** Compatibility constructor for callers/tests that predate network support. */
     public StopAllResult(int reverted, int failed, int pending) {
-        this(reverted, failed, pending, NetworkResetReport.notConfigured());
+        this(reverted, failed, pending, NetworkResetReport.notConfigured(), null);
+    }
+
+    /** Compatibility constructor for callers/tests that predate B1-02. */
+    public StopAllResult(int reverted, int failed, int pending, NetworkResetReport toxiproxy) {
+        this(reverted, failed, pending, toxiproxy, null);
+    }
+
+    /** Copy with the operation id attached by the REST layer. */
+    public StopAllResult withOperationId(String operationId) {
+        return new StopAllResult(reverted, failed, pending, toxiproxy, operationId);
     }
 }

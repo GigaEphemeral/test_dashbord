@@ -194,23 +194,11 @@ public class RunLedgerService {
     }
 
     private void requireReady() {
-        if (!properties.isEnabled()) {
-            throw new LedgerUnavailableException(
-                    "ledger is disabled (lab.ledger.enabled=false; env LAB_LEDGER_ENABLED)");
-        }
-        LedgerBootstrap.BootstrapStatus current = bootstrap.status();
-        if (current.state() != LedgerBootstrap.State.OK) {
-            throw new LedgerUnavailableException("ledger state is " + current.state()
-                    + (current.lastError() == null ? "" : ": " + current.lastError())
-                    + "; see GET /lab/ledger/status");
-        }
+        LedgerReadiness.requireReady(properties, bootstrap);
     }
 
     private LedgerUnavailableException unavailable(DataAccessException e) {
-        String message = e.getMostSpecificCause().getMessage();
-        bootstrap.recordFailure("ledger query failed: " + message);
-        return new LedgerUnavailableException("ledger query failed: " + message
-                + "; see GET /lab/ledger/status");
+        return LedgerReadiness.unavailable(bootstrap, e, "ledger query");
     }
 
     private String nextRunId(Instant now) {
@@ -297,7 +285,8 @@ public class RunLedgerService {
         return new OperationView(operation.operationId(), operation.runId(), operation.targetKind(),
                 operation.targetName(), operation.action(), operation.status().name(),
                 operation.ttlSeconds(), text(operation.requestedAt()), text(operation.appliedAt()),
-                text(operation.restoredAt()), operation.lastError());
+                text(operation.restoredAt()), operation.lastError(), operation.operator(),
+                json(operation.beforeSummaryJson()), json(operation.afterSummaryJson()), false);
     }
 
     private static String text(Instant instant) {

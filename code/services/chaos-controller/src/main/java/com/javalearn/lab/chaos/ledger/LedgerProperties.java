@@ -104,6 +104,15 @@ public class LedgerProperties {
     /** Attempts to allocate a unique {@code run-yyyyMMdd-NNN} id. */
     private int runIdMaxAttempts = 10;
 
+    /** B1-02: executor and synchronous wait budget for the operation contract. */
+    private final Operation operation = new Operation();
+
+    /** B1-02: idempotency replay window. */
+    private final Idempotency idempotency = new Idempotency();
+
+    /** B1-02: single-writer run environment lock. */
+    private final EnvLock envLock = new EnvLock();
+
     /** Startup validation; messages name the property path and env variable. */
     public void validate() {
         boolean router = MODE_ROUTER.equals(mysqlMode);
@@ -147,6 +156,108 @@ public class LedgerProperties {
         range(maxPayloadBytes, 1024, 10_485_760, "lab.ledger.max-payload-bytes",
                 "LAB_LEDGER_MAX_PAYLOAD_BYTES");
         range(runIdMaxAttempts, 1, 100, "lab.ledger.run-id-max-attempts", "LAB_LEDGER_RUN_ID_MAX_ATTEMPTS");
+        requireText(operation.getThreadName(), "lab.ledger.operation.thread-name",
+                "LAB_LEDGER_OPERATION_THREAD_NAME");
+        range(operation.getPoolSize(), 1, 32, "lab.ledger.operation.pool-size",
+                "LAB_LEDGER_OPERATION_POOL_SIZE");
+        range(operation.getSyncWaitMs(), 0, 600_000, "lab.ledger.operation.sync-wait-ms",
+                "LAB_LEDGER_OPERATION_SYNC_WAIT_MS");
+        range(idempotency.getWindowSeconds(), 1, 86_400, "lab.ledger.idempotency.window-seconds",
+                "LAB_LEDGER_IDEMPOTENCY_WINDOW_SECONDS");
+        requireText(envLock.getKey(), "lab.ledger.env-lock.key", "LAB_LEDGER_ENV_LOCK_KEY");
+        range(envLock.getTtlSeconds(), 1, 86_400, "lab.ledger.env-lock.ttl-seconds",
+                "LAB_LEDGER_ENV_LOCK_TTL_SECONDS");
+        range(envLock.getAcquireAttempts(), 1, 100, "lab.ledger.env-lock.acquire-attempts",
+                "LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS");
+    }
+
+    /** Operation executor + synchronous wait budget (B1-02). */
+    public static class Operation {
+
+        /** Thread-name prefix of the dedicated daemon pool (not the chaos TTL scheduler). */
+        private String threadName = "ledger-operation";
+
+        /** Worker threads; raise it when slow fault actions can overlap. */
+        private int poolSize = 2;
+
+        /** Budget before the API answers 202 PENDING_CONFIRMATION and keeps working. */
+        private int syncWaitMs = 3000;
+
+        public String getThreadName() {
+            return threadName;
+        }
+
+        public void setThreadName(String threadName) {
+            this.threadName = threadName;
+        }
+
+        public int getPoolSize() {
+            return poolSize;
+        }
+
+        public void setPoolSize(int poolSize) {
+            this.poolSize = poolSize;
+        }
+
+        public int getSyncWaitMs() {
+            return syncWaitMs;
+        }
+
+        public void setSyncWaitMs(int syncWaitMs) {
+            this.syncWaitMs = syncWaitMs;
+        }
+    }
+
+    /** Idempotency replay window (B1-02). */
+    public static class Idempotency {
+
+        /** Same key + action + target replays the original operation inside this window. */
+        private int windowSeconds = 600;
+
+        public int getWindowSeconds() {
+            return windowSeconds;
+        }
+
+        public void setWindowSeconds(int windowSeconds) {
+            this.windowSeconds = windowSeconds;
+        }
+    }
+
+    /** Single active write-run lock (B1-02). */
+    public static class EnvLock {
+
+        /** Primary key of the {@code lab_env_lock} row. */
+        private String key = "env:write-run";
+
+        /** Takeover escape hatch for a dead holder; also the lease a run holds. */
+        private int ttlSeconds = 1800;
+
+        /** Retries when the lock row keeps changing between insert and read. */
+        private int acquireAttempts = 3;
+
+        public String getKey() {
+            return key;
+        }
+
+        public void setKey(String key) {
+            this.key = key;
+        }
+
+        public int getTtlSeconds() {
+            return ttlSeconds;
+        }
+
+        public void setTtlSeconds(int ttlSeconds) {
+            this.ttlSeconds = ttlSeconds;
+        }
+
+        public int getAcquireAttempts() {
+            return acquireAttempts;
+        }
+
+        public void setAcquireAttempts(int acquireAttempts) {
+            this.acquireAttempts = acquireAttempts;
+        }
     }
 
     private static void requireText(String value, String property, String env) {
@@ -384,5 +495,17 @@ public class LedgerProperties {
 
     public void setRunIdMaxAttempts(int runIdMaxAttempts) {
         this.runIdMaxAttempts = runIdMaxAttempts;
+    }
+
+    public Operation getOperation() {
+        return operation;
+    }
+
+    public Idempotency getIdempotency() {
+        return idempotency;
+    }
+
+    public EnvLock getEnvLock() {
+        return envLock;
     }
 }

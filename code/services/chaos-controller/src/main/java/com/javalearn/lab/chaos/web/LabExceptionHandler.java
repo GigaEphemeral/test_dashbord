@@ -9,6 +9,7 @@ import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
+import com.javalearn.lab.chaos.error.EnvLockConflictException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
@@ -19,6 +20,7 @@ import com.javalearn.lab.chaos.error.LabErrorCode;
 import com.javalearn.lab.chaos.error.LedgerConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.error.OperationNotFoundException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
@@ -224,5 +226,22 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleLedgerConflict(LedgerConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Result.failure(CommonErrorCode.CONFLICT, ex.getMessage()));
+    }
+
+    /**
+     * B1-02: another write run holds the environment lock. 409/40902; the
+     * message always names the holder run and the release path.
+     */
+    @ExceptionHandler(EnvLockConflictException.class)
+    public ResponseEntity<Result<Void>> handleEnvLockConflict(EnvLockConflictException ex) {
+        log.warn("Write-run lock conflict: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.ENV_LOCK_HELD, ex.getMessage()));
+    }
+
+    @ExceptionHandler(OperationNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleOperationNotFound(OperationNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
     }
 }

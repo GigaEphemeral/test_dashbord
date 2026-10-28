@@ -2,8 +2,14 @@ package com.javalearn.lab.chaos.web;
 
 import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
+import com.javalearn.lab.chaos.action.ChaosActionType;
 import com.javalearn.lab.chaos.action.ChaosActionView;
 import com.javalearn.lab.chaos.action.StopAllResult;
+import com.javalearn.lab.chaos.ledger.IdempotencyKeys;
+import com.javalearn.lab.chaos.ledger.OperationExecution;
+import com.javalearn.lab.chaos.ledger.OperationOutcome;
+import com.javalearn.lab.chaos.ledger.OperationRequest;
+import com.javalearn.lab.chaos.ledger.OperationService;
 import com.javalearn.lab.common.Result;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,30 +17,77 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Chaos action API. Token-protected by {@code TokenFilter}; every target is
  * whitelisted by the gateway before any Docker call.
+ *
+ * <p>B1-02 wraps both mutating endpoints in the operation contract: one
+ * {@code lab_operation} row per request, an {@code operationId} in the answer,
+ * optional {@code Idempotency-Key} replay, and a dedicated worker pool with a
+ * configurable sync budget. When the budget elapses the API answers 202 with the
+ * operation view (PENDING_CONFIRMATION) instead of a transport timeout - the
+ * fault action keeps running and the caller polls
+ * {@code GET /lab/operations/{operationId}}. A definite failure inside the
+ * budget keeps the existing mapping (404/403/409/503).</p>
+ *
+ * <p>Idempotent replay (200) returns the stored operation, not the original
+ * action view: after a replay there is no new action and no new {@code id}.
+ * Read-only {@code GET /chaos/actions} is unchanged.</p>
  */
 @RestController
 @RequestMapping("/chaos")
 public class ChaosController {
 
     private final ChaosActionService chaosActionService;
+    private final OperationService operations;
 
-    public ChaosController(ChaosActionService chaosActionService) {
+    public ChaosController(ChaosActionService chaosActionService, OperationService operations) {
         this.chaosActionService = chaosActionService;
+        this.operations = operations;
     }
 
     @PostMapping("/instances/{name}/actions")
-    public ResponseEntity<Result<ChaosActionView>> apply(@PathVariable String name,
-                                                         @RequestBody(required = false) ChaosActionRequest request) {
-        ChaosActionView view = chaosActionService.execute(name, request);
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Result.success(view));
+    public ResponseEntity<Result<?>> apply(
+            @PathVariable String name,
+            @RequestHeader(name = IdempotencyKeys.HEADER, required = false) String idempotencyKey,
+            @RequestBody(required = false) ChaosActionRequest request) {
+        String key = IdempotencyKeys.normalize(idempotencyKey);
+        ChaosActionType type = ChaosActionType.maybeParse(request == null ? null : request.action())
+                .orElse(null);
+        String action = type != null ? type.wireName()
+                : (request == null || request.action() == null ? "unknown" : request.action());
+        Integer ttl = request == null ? null : request.ttlSeconds();
+        Map<String, Object> before = new LinkedHashMap<>();
+        before.put("container", name);
+        before.put("action", action);
+
+        OperationExecution execution = operations.submit(new OperationRequest(null, "container", name,
+                action, ttl, key, before, false), () -> {
+            ChaosActionView view = chaosActionService.execute(name, request);
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("container", view.target());
+            after.put("actionStatus", view.status());
+            after.put("expiresAt", view.expiresAt() == null ? null : view.expiresAt().toString());
+            boolean restored = type == ChaosActionType.START || type == ChaosActionType.RESUME;
+            return restored
+                    ? OperationOutcome.restored(after, view)
+                    : OperationOutcome.applied(after, view);
+        });
+
+        if (execution.settledWithPayload()) {
+            ChaosActionView view = (ChaosActionView) execution.payload();
+            return ResponseEntity.status(HttpStatus.ACCEPTED)
+                    .body(Result.success(view.withOperationId(execution.operation().operationId())));
+        }
+        return operationResponse(execution, HttpStatus.ACCEPTED);
     }
 
     @GetMapping("/actions")
@@ -43,7 +96,30 @@ public class ChaosController {
     }
 
     @PostMapping("/stop-all")
-    public Result<StopAllResult> stopAll() {
-        return Result.success(chaosActionService.stopAll());
+    public ResponseEntity<Result<?>> stopAll(
+            @RequestHeader(name = IdempotencyKeys.HEADER, required = false) String idempotencyKey) {
+        String key = IdempotencyKeys.normalize(idempotencyKey);
+        OperationExecution execution = operations.submitBlocking(new OperationRequest(null, "environment",
+                "lab", "stop-all", null, key, Map.of("scope", "all"), false), () -> {
+            StopAllResult result = chaosActionService.stopAll();
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("reverted", result.reverted());
+            after.put("failed", result.failed());
+            after.put("pending", result.pending());
+            return OperationOutcome.restored(after, result);
+        });
+        if (execution.settledWithPayload()) {
+            StopAllResult result = (StopAllResult) execution.payload();
+            return ResponseEntity.ok(Result.success(
+                    result.withOperationId(execution.operation().operationId())));
+        }
+        return operationResponse(execution, HttpStatus.OK);
+    }
+
+    private ResponseEntity<Result<?>> operationResponse(OperationExecution execution,
+                                                        HttpStatus settledStatus) {
+        HttpStatus status = execution.pending() ? HttpStatus.ACCEPTED
+                : execution.replay() ? HttpStatus.OK : settledStatus;
+        return ResponseEntity.status(status).body(Result.success(operations.view(execution)));
     }
 }

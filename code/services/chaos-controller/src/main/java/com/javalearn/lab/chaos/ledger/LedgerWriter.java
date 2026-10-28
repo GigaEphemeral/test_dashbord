@@ -107,6 +107,96 @@ public class LedgerWriter {
         return lastError.get();
     }
 
+    // ------------------------------------------------------- operations (B1-02)
+
+    /**
+     * Inserts one operation row. Like {@link #persistCreate} a duplicate key is
+     * rethrown (the idempotency race is a business decision the caller resolves)
+     * and any other database failure is stashed instead of failing the action.
+     */
+    public WriteResult persistOperation(OperationRecord operation, String idempotencyKey) {
+        try {
+            repository.insertOperation(operation, idempotencyKey);
+            markWritten();
+            return WriteResult.written(1);
+        } catch (DuplicateKeyException e) {
+            throw e;
+        } catch (DataAccessException e) {
+            boolean stashed = stash.stash("OPERATION", operation.runId(),
+                    operationBody(operation, idempotencyKey), operation.requestedAt());
+            markFailed(e);
+            return WriteResult.stashed(stashed, rootMessage(e));
+        }
+    }
+
+    /**
+     * Settles an operation (only from REQUESTED / PENDING_CONFIRMATION). Returns
+     * the number of updated rows, or a stashed marker when MySQL is down so the
+     * caller can decide whether the lost confirmation matters.
+     */
+    public WriteResult completeOperation(OperationRecord operation, OperationStatus status,
+                                         Instant appliedAt, Instant restoredAt, String lastError,
+                                         String afterSummaryJson) {
+        try {
+            int updated = repository.completeOperation(operation.operationId(), status, appliedAt,
+                    restoredAt, lastError, afterSummaryJson);
+            markWritten();
+            return WriteResult.written(updated);
+        } catch (DataAccessException e) {
+            Map<String, Object> body = operationBody(operation, null);
+            body.put("status", status.name());
+            body.put("appliedAt", appliedAt == null ? null : appliedAt.toString());
+            body.put("restoredAt", restoredAt == null ? null : restoredAt.toString());
+            body.put("lastError", lastError);
+            body.put("afterSummary", afterSummaryJson);
+            boolean stashed = stash.stash("OPERATION", operation.runId(), body, clock.instant());
+            markFailed(e);
+            return WriteResult.stashed(stashed, rootMessage(e));
+        }
+    }
+
+    private Map<String, Object> operationBody(OperationRecord operation, String idempotencyKey) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("operationId", operation.operationId());
+        body.put("runId", operation.runId());
+        body.put("targetKind", operation.targetKind());
+        body.put("targetName", operation.targetName());
+        body.put("action", operation.action());
+        body.put("status", operation.status().name());
+        body.put("ttlSeconds", operation.ttlSeconds());
+        body.put("requestedAt", operation.requestedAt().toString());
+        body.put("appliedAt", operation.appliedAt() == null ? null : operation.appliedAt().toString());
+        body.put("restoredAt", operation.restoredAt() == null ? null : operation.restoredAt().toString());
+        body.put("lastError", operation.lastError());
+        body.put("operator", operation.operator());
+        body.put("beforeSummary", operation.beforeSummaryJson());
+        body.put("afterSummary", operation.afterSummaryJson());
+        body.put("idempotencyKey", idempotencyKey);
+        return body;
+    }
+
+    /**
+     * Outcome of one ledger write.
+     *
+     * @param updated rows the database changed (0 means the row had already
+     *                moved on, e.g. recovery marked it UNKNOWN)
+     * @param stashed true when MySQL was unreachable and the event went to disk
+     */
+    public record WriteResult(int updated, boolean stashed, String error) {
+
+        static WriteResult written(int updated) {
+            return new WriteResult(updated, false, null);
+        }
+
+        static WriteResult stashed(boolean stashed, String error) {
+            return new WriteResult(-1, stashed, error);
+        }
+
+        public boolean alreadySettled() {
+            return !stashed && updated == 0;
+        }
+    }
+
     private void markWritten() {
         lastWriteAt.set(clock.instant());
         lastError.set(null);

@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunCreateRequest;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -127,9 +128,77 @@ class LedgerSchemaIT {
         assertThat(repository.findParams(view.runId())).hasSize(1);
     }
 
+    @Test
+    void v2AddsTheOperationContractColumnsAndAUniqueIdempotencyIndex() {
+        JdbcTemplate jdbc = LedgerTestDatabase.jdbc();
+        List<String> columns = jdbc.queryForList(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'lab_ledger' AND table_name = 'lab_operation' "
+                        + "ORDER BY column_name",
+                String.class);
+
+        assertThat(columns).contains("idempotency_key", "operator", "before_summary", "after_summary");
+        Integer unique = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics "
+                        + "WHERE table_schema = 'lab_ledger' AND table_name = 'lab_operation' "
+                        + "AND index_name = 'uk_lab_operation_idempotency' AND non_unique = 0",
+                Integer.class);
+        assertThat(unique).isEqualTo(4); // one row per indexed column
+        assertThat(jdbc.queryForObject("SELECT version FROM lab_ledger.flyway_schema_history "
+                + "WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1", String.class))
+                .isEqualTo("2");
+    }
+
+    @Test
+    void theIdempotencyKeyIsUniquePerActionAndTargetButNullKeysAreUnconstrained() {
+        Instant now = LedgerTestDatabase.NOW;
+        repository.insertRun(LedgerTestDatabase.run("run-20261028-103", RunStatus.DRAFT, now));
+        repository.insertOperation(operation("op-1", "kill", "jl-app-1", now), "key-1");
+        // NULL (no header) never participates in the unique key.
+        repository.insertOperation(operation("op-2", "kill", "jl-app-1", now), null);
+        repository.insertOperation(operation("op-3", "kill", "jl-app-1", now), null);
+
+        assertThat(repository.findOperationByIdempotencyKey("key-1", "kill", "container", "jl-app-1"))
+                .isPresent();
+
+        // The same key on a different action is a different contract.
+        repository.insertOperation(operation("op-4", "freeze", "jl-app-1", now), "key-1");
+        assertThat(repository.findOperationByIdempotencyKey("key-1", "freeze", "container", "jl-app-1"))
+                .isPresent();
+
+        assertThatThrownBy(() -> repository.insertOperation(
+                operation("op-5", "kill", "jl-app-1", now), "key-1"))
+                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+
+    @Test
+    void operationRowsRoundTripTheAuditFields() {
+        Instant now = LedgerTestDatabase.NOW;
+        repository.insertRun(LedgerTestDatabase.run("run-20261028-104", RunStatus.DRAFT, now));
+        OperationRecord op = new OperationRecord("op-audit", "run-20261028-104", "run",
+                "run-20261028-104", "start", OperationStatus.APPLIED, 1800, now, now, null, null,
+                "local", "{\"runStatus\":\"DRAFT\"}", "{\"runStatus\":\"RUNNING\"}");
+        repository.insertOperation(op, "audit-key");
+
+        OperationRecord loaded = repository.findOperation("op-audit").orElseThrow();
+        assertThat(loaded.operator()).isEqualTo("local");
+        assertThat(loaded.beforeSummaryJson()).contains("DRAFT");
+        assertThat(loaded.afterSummaryJson()).contains("RUNNING");
+        assertThat(loaded.appliedAt()).isEqualTo(now);
+        assertThat(repository.listOperations("run-20261028-104", OperationStatus.APPLIED, 10, 0))
+                .hasSize(1);
+        assertThat(repository.countOperations("run-20261028-104", null)).isEqualTo(1);
+    }
+
+    private static OperationRecord operation(String operationId, String action, String target,
+                                             Instant requestedAt) {
+        return new OperationRecord(operationId, "run-20261028-103", "container", target, action,
+                OperationStatus.REQUESTED, 30, requestedAt, null, null, null, "local",
+                "{\"container\":\"" + target + "\"}", null);
+    }
+
     /** Simulates the race: the sequence read sees an older state than the insert. */
     private static final class StaleFirstSequenceRepository extends RunLedgerRepository {
-
         private boolean first = true;
 
         private StaleFirstSequenceRepository(JdbcTemplate jdbc) {

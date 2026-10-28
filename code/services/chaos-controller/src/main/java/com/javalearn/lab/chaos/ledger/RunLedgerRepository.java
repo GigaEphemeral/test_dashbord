@@ -207,19 +207,68 @@ public class RunLedgerRepository {
     // ------------------------------------------------------------ operations
 
     public void insertOperation(OperationRecord op) {
-        jdbc.update("INSERT INTO lab_operation (operation_id, run_id, target_kind, target_name, action, "
-                        + "status, ttl_seconds, requested_at, applied_at, restored_at, last_error) "
-                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        insertOperation(op, null);
+    }
+
+    /**
+     * Inserts the operation row. {@code idempotencyKey} is null for callers that
+     * did not send the header (MySQL ignores NULL parts of the composite unique
+     * key, so those rows are unconstrained).
+     */
+    public void insertOperation(OperationRecord op, String idempotencyKey) {
+        jdbc.update("INSERT INTO lab_operation (" + OPERATION_COLUMNS + ", idempotency_key) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 op.operationId(), op.runId(), op.targetKind(), op.targetName(), op.action(),
                 op.status().name(), op.ttlSeconds(), timestamp(op.requestedAt()),
-                timestamp(op.appliedAt()), timestamp(op.restoredAt()), op.lastError());
+                timestamp(op.appliedAt()), timestamp(op.restoredAt()), op.lastError(),
+                op.operator(), op.beforeSummaryJson(), op.afterSummaryJson(), idempotencyKey);
+    }
+
+    public Optional<OperationRecord> findOperation(String operationId) {
+        return jdbc.query("SELECT " + OPERATION_COLUMNS + " FROM lab_operation WHERE operation_id = ?",
+                OPERATION_MAPPER, operationId).stream().findFirst();
+    }
+
+    /**
+     * Idempotency lookup. The unique key is (key, action, target_kind,
+     * target_name): the same key used for a different action or target is
+     * simply not found here and becomes a new operation.
+     */
+    public Optional<OperationRecord> findOperationByIdempotencyKey(String idempotencyKey, String action,
+                                                                  String targetKind, String targetName) {
+        return jdbc.query("SELECT " + OPERATION_COLUMNS + " FROM lab_operation "
+                        + "WHERE idempotency_key = ? AND action = ? AND target_kind = ? AND target_name = ?",
+                OPERATION_MAPPER, idempotencyKey, action, targetKind, targetName).stream().findFirst();
+    }
+
+    /** Frees an expired key so the window can restart with a new operation. */
+    public int releaseIdempotencyKey(String operationId, String idempotencyKey) {
+        return jdbc.update("UPDATE lab_operation SET idempotency_key = NULL "
+                + "WHERE operation_id = ? AND idempotency_key = ?", operationId, idempotencyKey);
     }
 
     public List<OperationRecord> findOperations(String runId) {
-        return jdbc.query("SELECT operation_id, run_id, target_kind, target_name, action, status, ttl_seconds, "
-                        + "requested_at, applied_at, restored_at, last_error FROM lab_operation "
+        return jdbc.query("SELECT " + OPERATION_COLUMNS + " FROM lab_operation "
                         + "WHERE run_id = ? ORDER BY requested_at ASC",
                 OPERATION_MAPPER, runId);
+    }
+
+    public List<OperationRecord> listOperations(String runId, OperationStatus status, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("SELECT " + OPERATION_COLUMNS + " FROM lab_operation WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        appendOperationFilters(sql, args, runId, status);
+        sql.append(" ORDER BY requested_at DESC, operation_id DESC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), OPERATION_MAPPER, args.toArray());
+    }
+
+    public long countOperations(String runId, OperationStatus status) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM lab_operation WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        appendOperationFilters(sql, args, runId, status);
+        Long count = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0L : count;
     }
 
     public List<OperationRecord> findOperationsByStatuses(Collection<OperationStatus> statuses) {
@@ -228,10 +277,45 @@ public class RunLedgerRepository {
         }
         List<Object> args = new ArrayList<>();
         String placeholders = placeholders(statuses.size(), args, statuses.stream().map(s -> s.name()).toList());
-        return jdbc.query("SELECT operation_id, run_id, target_kind, target_name, action, status, ttl_seconds, "
-                        + "requested_at, applied_at, restored_at, last_error FROM lab_operation "
+        return jdbc.query("SELECT " + OPERATION_COLUMNS + " FROM lab_operation "
                         + "WHERE status IN (" + placeholders + ") ORDER BY requested_at ASC",
                 OPERATION_MAPPER, args.toArray());
+    }
+
+    /**
+     * Settles an operation. Only REQUESTED / PENDING_CONFIRMATION are updated, so
+     * a slow worker can never overwrite a terminal state (or the UNKNOWN written
+     * by restart recovery). Returns 0 when the row already moved on.
+     */
+    public int completeOperation(String operationId, OperationStatus status, Instant appliedAt,
+                                 Instant restoredAt, String lastError, String afterSummaryJson) {
+        return jdbc.update("UPDATE lab_operation SET status = ?, last_error = ?, "
+                        + "applied_at = COALESCE(?, applied_at), restored_at = COALESCE(?, restored_at), "
+                        + "after_summary = COALESCE(?, after_summary) "
+                        + "WHERE operation_id = ? AND status IN (?,?)",
+                status.name(), truncate(lastError, 1024), timestamp(appliedAt), timestamp(restoredAt),
+                afterSummaryJson, operationId,
+                OperationStatus.REQUESTED.name(), OperationStatus.PENDING_CONFIRMATION.name());
+    }
+
+    /** REQUESTED → PENDING_CONFIRMATION after the synchronous wait expired. */
+    public int markOperationPending(String operationId, String lastError) {
+        return jdbc.update("UPDATE lab_operation SET status = ?, last_error = ? "
+                        + "WHERE operation_id = ? AND status = ?",
+                OperationStatus.PENDING_CONFIRMATION.name(), truncate(lastError, 1024), operationId,
+                OperationStatus.REQUESTED.name());
+    }
+
+    private static void appendOperationFilters(StringBuilder sql, List<Object> args, String runId,
+                                               OperationStatus status) {
+        if (runId != null) {
+            sql.append(" AND run_id = ?");
+            args.add(runId);
+        }
+        if (status != null) {
+            sql.append(" AND status = ?");
+            args.add(status.name());
+        }
     }
 
     /**
@@ -338,7 +422,40 @@ public class RunLedgerRepository {
                 lockKey).stream().findFirst();
     }
 
+    public List<EnvLockRow> listEnvLocks() {
+        return jdbc.query("SELECT lock_key, run_id, holder, acquired_at, expires_at FROM lab_env_lock "
+                        + "ORDER BY acquired_at ASC",
+                (rs, rowNum) -> new EnvLockRow(
+                        rs.getString("lock_key"),
+                        rs.getString("run_id"),
+                        rs.getString("holder"),
+                        instant(rs, "acquired_at"),
+                        instant(rs, "expires_at")));
+    }
+
+    /**
+     * Takes over a lock whose stored expiry has passed. Compare-and-set on the
+     * observed expiry: a concurrent takeover or a renewal makes this return 0,
+     * so two callers can never both believe they hold the lock.
+     */
+    public int takeOverEnvLock(String lockKey, Instant expectedExpiresAt, String runId, String holder,
+                               Instant acquiredAt, Instant expiresAt) {
+        return jdbc.update("UPDATE lab_env_lock SET run_id = ?, holder = ?, acquired_at = ?, expires_at = ? "
+                        + "WHERE lock_key = ? AND expires_at = ?",
+                runId, holder, timestamp(acquiredAt), timestamp(expiresAt), lockKey,
+                timestamp(expectedExpiresAt));
+    }
+
+    /** Release by the holder only; another run's lock is never deleted. */
+    public int releaseEnvLock(String lockKey, String runId) {
+        return jdbc.update("DELETE FROM lab_env_lock WHERE lock_key = ? AND run_id = ?", lockKey, runId);
+    }
+
     // ------------------------------------------------------------------ util
+
+    private static final String OPERATION_COLUMNS = "operation_id, run_id, target_kind, target_name, action, "
+            + "status, ttl_seconds, requested_at, applied_at, restored_at, last_error, `operator`, "
+            + "before_summary, after_summary";
 
     private static final RowMapper<OperationRecord> OPERATION_MAPPER = (rs, rowNum) -> new OperationRecord(
             rs.getString("operation_id"),
@@ -351,7 +468,10 @@ public class RunLedgerRepository {
             instant(rs, "requested_at"),
             instant(rs, "applied_at"),
             instant(rs, "restored_at"),
-            rs.getString("last_error"));
+            rs.getString("last_error"),
+            rs.getString("operator"),
+            rs.getString("before_summary"),
+            rs.getString("after_summary"));
 
     private static String placeholders(int count, List<Object> args, List<String> values) {
         StringBuilder builder = new StringBuilder();
