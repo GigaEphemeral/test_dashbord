@@ -170,7 +170,8 @@ public class LedgerStash {
             return true;
         }
         String kind = text(event, "kind");
-        String runId = text(event, "runId");
+        // Operations outside a run carry a null run id, so this must not throw.
+        String runId = nullableText(event, "runId");
         Instant createdAt;
         try {
             createdAt = Instant.parse(text(event, "createdAt"));
@@ -200,6 +201,7 @@ public class LedgerStash {
         switch (kind) {
             case "RUN_CREATE" -> applyRunCreate(runId, body, createdAt);
             case "RUN_TRANSITION" -> applyRunTransition(runId, body);
+            case "OPERATION" -> applyOperation(runId, body);
             default -> throw new IllegalStateException("unknown stash event kind '" + kind + "'");
         }
     }
@@ -251,6 +253,56 @@ public class LedgerStash {
             repository.insertStep(new RunStepRecord(runId, text(body, "stepKey"), from, to, occurredAt,
                     nullableLong(body, "dwellMs"), nullableText(body, "detail")));
         }
+    }
+
+    /**
+     * Inserts or settles one {@code lab_operation} row. Both create and settle
+     * events share the same shape, so replay is order-independent in the one way
+     * that matters: a missing row is inserted with the event's current status, an
+     * existing row is settled only if it is still unconfirmed. The first verdict
+     * wins (UNKNOWN from recovery is never overwritten).
+     */
+    private void applyOperation(String runId, JsonNode body) {
+        String operationId = text(body, "operationId");
+        OperationStatus status = OperationStatus.valueOf(text(body, "status"));
+        Instant appliedAt = nullableInstant(body, "appliedAt");
+        Instant restoredAt = nullableInstant(body, "restoredAt");
+        String lastError = nullableText(body, "lastError");
+        String afterSummary = nullableText(body, "afterSummary");
+        var existing = repository.findOperation(operationId);
+        if (existing.isEmpty()) {
+            repository.insertOperation(new OperationRecord(
+                    operationId,
+                    runId,
+                    text(body, "targetKind"),
+                    text(body, "targetName"),
+                    text(body, "action"),
+                    status,
+                    nullableInt(body, "ttlSeconds"),
+                    Instant.parse(text(body, "requestedAt")),
+                    appliedAt,
+                    restoredAt,
+                    lastError,
+                    nullableText(body, "operator"),
+                    nullableText(body, "beforeSummary"),
+                    afterSummary), nullableText(body, "idempotencyKey"));
+            return;
+        }
+        OperationStatus current = existing.get().status();
+        if (current == status || current.isTerminal()) {
+            return;
+        }
+        repository.completeOperation(operationId, status, appliedAt, restoredAt, lastError, afterSummary);
+    }
+
+    private static Instant nullableInstant(JsonNode node, String field) {
+        String value = nullableText(node, field);
+        return value == null ? null : Instant.parse(value);
+    }
+
+    private static Integer nullableInt(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asInt();
     }
 
     private void quarantineCorrupt(Path file, Exception cause) {

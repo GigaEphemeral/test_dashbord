@@ -26,6 +26,22 @@ public enum ChaosActionType {
         }
     }
 
+    /**
+     * Non-throwing parse for audit labelling: an unrecognized action still gets
+     * an {@code lab_operation} row (FAILED) before the service rejects it with
+     * 400, so the refusal is auditable.
+     */
+    public static java.util.Optional<ChaosActionType> maybeParse(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return java.util.Optional.of(valueOf(raw.trim().toUpperCase(Locale.ROOT)));
+        } catch (IllegalArgumentException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
     /** True when the action schedules an automatic revert and must be tracked. */
     public boolean reverting() {
         return this == KILL || this == FREEZE;

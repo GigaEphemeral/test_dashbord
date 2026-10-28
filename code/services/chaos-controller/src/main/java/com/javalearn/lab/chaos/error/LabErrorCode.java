@@ -12,6 +12,12 @@ public enum LabErrorCode implements ErrorCode {
      * about permission, and the console offers a different remedy.
      */
     PROBE_TARGET_PROTECTED("40302", "Target is the MySQL cluster probe container"),
+    /**
+     * B1-02: the single-writer environment lock is held by another run. Distinct
+     * from the generic 40901 so the console can show the holder run and the
+     * remedy instead of a bare conflict.
+     */
+    ENV_LOCK_HELD("40902", "Write-run environment lock is held"),
     METHOD_NOT_ALLOWED("40501", "Method not allowed"),
     PAYLOAD_TOO_LARGE("41301", "Payload too large"),
     BAD_GATEWAY("50201", "Bad gateway"),

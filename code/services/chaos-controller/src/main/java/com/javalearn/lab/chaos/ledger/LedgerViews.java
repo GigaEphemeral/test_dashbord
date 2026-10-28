@@ -39,7 +39,12 @@ public final class LedgerViews {
 
     public record OperationView(String operationId, String runId, String targetKind, String targetName,
                                 String action, String status, Integer ttlSeconds, String requestedAt,
-                                String appliedAt, String restoredAt, String lastError) {
+                                String appliedAt, String restoredAt, String lastError,
+                                String operator, JsonNode beforeSummary, JsonNode afterSummary,
+                                boolean idempotentReplay) {
+    }
+
+    public record OperationPageView(List<OperationView> items, long total, int limit, int offset) {
     }
 
     public record RunPageView(List<RunView> items, long total, int limit, int offset) {

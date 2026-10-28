@@ -69,6 +69,27 @@ lab:
     query-max-limit: ${LAB_LEDGER_QUERY_MAX_LIMIT:200}
     max-payload-bytes: ${LAB_LEDGER_MAX_PAYLOAD_BYTES:65536}
     run-id-max-attempts: ${LAB_LEDGER_RUN_ID_MAX_ATTEMPTS:10}
+    # B1-02 operation contract: every environment-changing request writes one
+    # lab_operation row and returns operationId. Work runs on this dedicated
+    # daemon pool, never on the chaos TTL/revert scheduler. sync-wait-ms is the
+    # budget after which the API answers 202 PENDING_CONFIRMATION (not a
+    # failure) while the worker keeps going; keep it below the client timeout.
+    operation:
+      thread-name: ${LAB_LEDGER_OPERATION_THREAD_NAME:ledger-operation}
+      pool-size: ${LAB_LEDGER_OPERATION_POOL_SIZE:2}
+      sync-wait-ms: ${LAB_LEDGER_OPERATION_SYNC_WAIT_MS:3000}
+    # Same Idempotency-Key + action + target inside this window replays the
+    # original operationId without a second side effect; outside it the key is
+    # released and may be reused.
+    idempotency:
+      window-seconds: ${LAB_LEDGER_IDEMPOTENCY_WINDOW_SECONDS:600}
+    # One active write run: start takes this lock, stop releases it. The TTL is
+    # the takeover escape hatch when a holder dies without releasing.
+    env-lock:
+      key: ${LAB_LEDGER_ENV_LOCK_KEY:env:write-run}
+      ttl-seconds: ${LAB_LEDGER_ENV_LOCK_TTL_SECONDS:1800}
+      # Retries when the lock row keeps changing between insert and read.
+      acquire-attempts: ${LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS:3}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.

@@ -86,6 +86,23 @@ public class LedgerConfig {
         });
     }
 
+    /**
+     * B1-02 operation executor: a dedicated daemon pool, deliberately separate
+     * from the chaos TTL/revert scheduler ({@code chaosActionScheduler}) so a
+     * blocking operation can never delay a scheduled revert. Both the thread
+     * name and the pool size are externalized.
+     */
+    @Bean(destroyMethod = "shutdownNow")
+    public ScheduledExecutorService ledgerOperationScheduler(LedgerProperties properties) {
+        AtomicInteger sequence = new AtomicInteger();
+        String prefix = properties.getOperation().getThreadName();
+        return Executors.newScheduledThreadPool(properties.getOperation().getPoolSize(), runnable -> {
+            Thread thread = new Thread(runnable, prefix + "-" + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
     @Bean
     public RunLedgerRepository runLedgerRepository(
             @Qualifier("ledgerJdbcTemplate") JdbcTemplate ledgerJdbcTemplate) {
@@ -131,6 +148,42 @@ public class LedgerConfig {
                                              ObjectMapper objectMapper, Clock ledgerClock) {
         return new RunLedgerService(properties, resolver, bootstrap, repository, writer, stash,
                 objectMapper, ledgerClock);
+    }
+
+    @Bean
+    public OperationService operationService(LedgerProperties properties, LedgerBootstrap bootstrap,
+                                             RunLedgerRepository repository, LedgerWriter writer,
+                                             @Qualifier("ledgerOperationScheduler")
+                                             ScheduledExecutorService ledgerOperationScheduler,
+                                             ObjectMapper objectMapper, Clock ledgerClock) {
+        return new OperationService(properties, bootstrap, repository, writer, ledgerOperationScheduler,
+                objectMapper, ledgerClock);
+    }
+
+    @Bean
+    public EnvLockService envLockService(LedgerProperties properties, RunLedgerRepository repository,
+                                         Clock ledgerClock) {
+        return new EnvLockService(properties, repository, ledgerClock);
+    }
+
+    /**
+     * B1-02 is contract-first: the pre-check (B1-04) and the k6 launch (B2-02)
+     * are still no-ops. A later step replaces this bean, not the state machine.
+     */
+    @Bean
+    public RunLifecycleHook runLifecycleHook() {
+        return RunLifecycleHook.none();
+    }
+
+    @Bean
+    public RunLifecycleService runLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
+                                                   RunLedgerRepository repository, LedgerWriter writer,
+                                                   EnvLockService envLockService,
+                                                   OperationService operationService,
+                                                   RunLifecycleHook runLifecycleHook,
+                                                   Clock ledgerClock) {
+        return new RunLifecycleService(properties, bootstrap, repository, writer, envLockService,
+                operationService, runLifecycleHook, ledgerClock);
     }
 
     private static HikariDataSource pool(String name, String url, LedgerProperties properties) {
