@@ -2,11 +2,14 @@ const API_BASE = '/lab-api'
 const TOKEN_HEADER = 'X-Lab-Token'
 
 export class ApiError extends Error {
-  constructor(message, status, code) {
+  constructor(message, status, code, data = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    // Failure envelopes may still carry evidence (409/40903 keeps the whole
+    // pre-check report in data); callers must not have to re-request it.
+    this.data = data
   }
 }
 
@@ -17,19 +20,25 @@ async function toApiError(response) {
   } catch {
     // Non-JSON body (proxy error page, empty response).
   }
-  return new ApiError(payload?.message || `HTTP ${response.status}`, response.status, payload?.code)
+  return new ApiError(
+    payload?.message || `HTTP ${response.status}`,
+    response.status,
+    payload?.code,
+    payload?.data ?? null
+  )
 }
 
 /** One rendering of an ApiError for every page of the console. */
 export function describeError(err) {
   if (err instanceof ApiError) {
+    const code = err.code ? `（${err.code}）` : ''
     if (err.status === 401) return '401 未授权：X-Lab-Token 不正确，修改令牌后重试。'
-    if (err.status === 403) return `403 禁止访问：${err.message}`
-    if (err.status === 404) return `404 未找到：${err.message}`
-    if (err.status === 409) return `409 状态冲突：${err.message}`
-    if (err.status === 502) return `502 上游异常：${err.message}`
-    if (err.status === 503) return `503 服务不可用：${err.message}`
-    return `${err.status}：${err.message}`
+    if (err.status === 403) return `403 禁止访问${code}：${err.message}`
+    if (err.status === 404) return `404 未找到${code}：${err.message}`
+    if (err.status === 409) return `409 状态冲突${code}：${err.message}`
+    if (err.status === 502) return `502 上游异常${code}：${err.message}`
+    if (err.status === 503) return `503 服务不可用${code}：${err.message}`
+    return `${err.status}${code}：${err.message}`
   }
   return err?.message || '请求失败，请检查网络或控制器状态。'
 }
@@ -50,13 +59,47 @@ async function getJson(path, token) {
   return readJson(await fetch(`${API_BASE}${path}`, { headers: authHeaders(token) }))
 }
 
-async function postJson(path, token, body) {
+async function postJson(path, token, body, extraHeaders = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { ...authHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: {
+      ...authHeaders(token),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders
+    },
     body: body ? JSON.stringify(body) : undefined
   })
   return readJson(response)
+}
+
+/** Same as postJson but keeps the HTTP status (202 = pending confirmation). */
+async function postJsonDetailed(path, token, body, extraHeaders = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(token),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders
+    },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const data = await readJson(response)
+  return { status: response.status, data }
+}
+
+/** Omit empty filters so the controller applies its own defaults. */
+function withQuery(path, params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    query.set(key, String(value))
+  }
+  const text = query.toString()
+  return text ? `${path}?${text}` : path
+}
+
+function idempotencyHeaders(key) {
+  return key ? { 'Idempotency-Key': key } : {}
 }
 
 export async function fetchContainers(token) {
@@ -131,6 +174,88 @@ export function stopAllFaults(token) {
 /** Network-fault layer ({ enabled, allowedProxies, proxies:[{name,present,enabled,toxics}] }). */
 export function fetchToxiproxyState(token) {
   return getJson('/chaos/toxiproxy/state', token)
+}
+
+/** One tracked container action; the reply is an operation or a chaos action view. */
+export function applyChaosAction(token, instance, action, ttlSeconds, idempotencyKey) {
+  return postJsonDetailed(
+    `/chaos/instances/${encodeURIComponent(instance)}/actions`,
+    token,
+    { action, ttlSeconds },
+    idempotencyHeaders(idempotencyKey)
+  )
+}
+
+// ---------------------------------------------------------------- run ledger
+// Result-wrapped payloads: runs, operations, pre-check reports and metric
+// windows. Read helpers only name catalog keys; PromQL never leaves the server.
+
+export function fetchRuns(token, { scenario, status, limit, offset } = {}) {
+  return getJson(withQuery('/lab/runs', { scenario, status, limit, offset }), token)
+}
+
+/** Creates a DRAFT run; params is a JSON object (credentials are rejected server-side). */
+export function createRun(token, { scenario, params }) {
+  return postJson('/lab/runs', token, { scenario, params })
+}
+
+export function fetchRun(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}`, token)
+}
+
+/** Same report the start gate uses; a BLOCKED verdict is still HTTP 200. */
+export function fetchRunPrecheck(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}/precheck`, token)
+}
+
+/** Window defaults to [run start - grace, run end + grace] on the controller. */
+export function fetchRunMetrics(token, runId, { keys, phase } = {}) {
+  return getJson(
+    withQuery(`/lab/runs/${encodeURIComponent(runId)}/metrics`, { keys, phase }),
+    token
+  )
+}
+
+/** Realtime aggregation; from/to are required ISO-8601 or epoch values. */
+export function fetchWindowMetrics(token, { from, to, keys, phase } = {}) {
+  return getJson(withQuery('/lab/metrics/window', { from, to, keys, phase }), token)
+}
+
+export function fetchOperations(token, { runId, status, limit, offset } = {}) {
+  return getJson(withQuery('/lab/operations', { runId, status, limit, offset }), token)
+}
+
+export function fetchOperation(token, operationId) {
+  return getJson(`/lab/operations/${encodeURIComponent(operationId)}`, token)
+}
+
+/** 200 = settled inside the sync budget, 202 = PENDING_CONFIRMATION. */
+export function startRun(token, runId, idempotencyKey) {
+  return postJsonDetailed(
+    `/lab/runs/${encodeURIComponent(runId)}/start`,
+    token,
+    undefined,
+    idempotencyHeaders(idempotencyKey)
+  )
+}
+
+export function stopRun(token, runId, idempotencyKey) {
+  return postJsonDetailed(
+    `/lab/runs/${encodeURIComponent(runId)}/stop`,
+    token,
+    undefined,
+    idempotencyHeaders(idempotencyKey)
+  )
+}
+
+/** Always answerable (also while DEGRADED): the diagnosis surface for 503/50302. */
+export function fetchLedgerStatus(token) {
+  return getJson('/lab/ledger/status', token)
+}
+
+/** UNKNOWN runs and unconfirmed operations after a controller restart. */
+export function fetchLedgerRecovery(token) {
+  return getJson('/lab/ledger/recovery', token)
 }
 
 // ---------------------------------------------------------------- prometheus
