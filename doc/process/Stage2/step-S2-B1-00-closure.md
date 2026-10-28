@@ -67,6 +67,7 @@ B1 五个步骤全部合并并完成真机验证，批次闸门如下（2026-10-
 | 台账 DEGRADED 的 UI 分支 | 代码有 503/50302 展示，但 console-smoke 未自动化该分支 | B5 或专项 |
 | Tempo 深链 | Tempo 3200 未发布宿主端口，链接需先发布 | B5-01 |
 | `executor.rejected` 永远是 NO_DATA | 无导出名，等 B4-01 接拒绝计数器 | B4-01 |
+| UNKNOWN 操作无关闭路径 | 重启恢复把未确认操作标 UNKNOWN 后，预检查 `operations.settled` 会持续阻断新 run 启动；B1 无"人工核验后记为 RESTORED/FAILED"的 API（台账演练数据可人工 UPDATE）。B2-04 统一故障闭环时补关闭/确认端点 | B2-04 |
 | 启动参数/实例配置 | start 只推进状态，没有真实 k6 与配置应用 | B2-02/B4-02 |
 | 阶段计划文档行尾 | 一次文本模式重写把 `stage2-开发测试与验收计划.md` 刷成 CRLF，已用 `fda2af9` 恢复 LF；后续一律字节级编辑 | 纪律 |
 | 台账演练数据 | `lab_ledger` 留有 a21/a19/a29/a26/console-smoke 样本；保留策略会轮换 | 无需处理 |
