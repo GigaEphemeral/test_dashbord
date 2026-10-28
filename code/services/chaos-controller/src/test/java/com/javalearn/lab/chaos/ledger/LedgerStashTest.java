@@ -119,6 +119,43 @@ class LedgerStashTest {
         assertThat(LedgerTestDatabase.repository().findRun("run-20261028-004")).isEmpty();
     }
 
+    @Test
+    void stashedOperationIsInsertedAndSettledOnReplay() {
+        Instant now = LedgerTestDatabase.NOW;
+        OperationRecord operation = new OperationRecord("op-stash-1", null, "container", "jl-app-1",
+                "kill", OperationStatus.REQUESTED, 30, now, null, null, null, "local",
+                "{\"container\":\"jl-app-1\"}", null);
+
+        LedgerStash stashing = new LedgerStash(properties, brokenRepository(), objectMapper,
+                LedgerTestDatabase.clock());
+        LedgerWriter broken = new LedgerWriter(brokenRepository(), stashing, objectMapper,
+                LedgerTestDatabase.clock());
+        assertThat(broken.persistOperation(operation, "key-1").stashed()).isTrue();
+        assertThat(stashing.pendingCount()).isEqualTo(1);
+
+        LedgerStash replaying = new LedgerStash(properties, LedgerTestDatabase.repository(), objectMapper,
+                LedgerTestDatabase.clock());
+        assertThat(replaying.replay()).isEqualTo(1);
+
+        RunLedgerRepository real = LedgerTestDatabase.repository();
+        OperationRecord inserted = real.findOperation("op-stash-1").orElseThrow();
+        assertThat(inserted.status()).isEqualTo(OperationStatus.REQUESTED);
+        assertThat(inserted.operator()).isEqualTo("local");
+        assertThat(real.findOperationByIdempotencyKey("key-1", "kill", "container", "jl-app-1")).isPresent();
+
+        // A settle event written while the database is down replays into APPLIED.
+        assertThat(broken.completeOperation(inserted, OperationStatus.APPLIED, now, null, null, null)
+                .stashed()).isTrue();
+        assertThat(replaying.replay()).isEqualTo(1);
+        assertThat(real.findOperation("op-stash-1").orElseThrow().status())
+                .isEqualTo(OperationStatus.APPLIED);
+        assertThat(real.findStashAudits()).extracting(RunLedgerRepository.StashAuditRow::kind)
+                .containsExactly("OPERATION", "OPERATION");
+
+        // Replaying an already settled operation is a no-op (first verdict wins).
+        assertThat(replaying.replay()).isZero();
+    }
+
     private RunLedgerRepository brokenRepository() {
         return new RunLedgerRepository(new JdbcTemplate(brokenDataSource()));
     }

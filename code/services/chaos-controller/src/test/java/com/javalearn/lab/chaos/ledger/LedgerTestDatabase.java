@@ -8,6 +8,7 @@ import org.testcontainers.containers.MySQLContainer;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 
 /**
@@ -63,6 +64,43 @@ final class LedgerTestDatabase {
         return Clock.fixed(NOW, ZoneOffset.UTC);
     }
 
+    /** B1-02 idempotency-window and lock-TTL tests need to move time. */
+    static MutableClock mutableClock() {
+        return new MutableClock(NOW);
+    }
+
+    static final class MutableClock extends Clock {
+
+        private Instant now;
+
+        private MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        void advanceSeconds(long seconds) {
+            now = now.plusSeconds(seconds);
+        }
+
+        void set(Instant instant) {
+            now = instant;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+    }
+
     static LedgerProperties properties(Path stashDir) {
         LedgerProperties properties = new LedgerProperties();
         properties.setMysqlMode("standalone");
@@ -80,6 +118,9 @@ final class LedgerTestDatabase {
 
     static void clean() {
         JdbcTemplate jdbc = jdbc();
+        // Operations outside a run have a NULL run_id and do not cascade, so
+        // they are deleted explicitly.
+        jdbc.update("DELETE FROM lab_operation");
         jdbc.update("DELETE FROM lab_run");
         jdbc.update("DELETE FROM lab_ledger_stash");
         jdbc.update("DELETE FROM lab_env_lock");

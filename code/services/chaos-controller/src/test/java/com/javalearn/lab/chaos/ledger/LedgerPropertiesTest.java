@@ -47,6 +47,14 @@ class LedgerPropertiesTest {
         assertThat(properties.getStashReplayIntervalSeconds()).isEqualTo(20);
         assertThat(properties.getQueryMaxLimit()).isEqualTo(200);
         assertThat(properties.getRunIdMaxAttempts()).isEqualTo(10);
+        // B1-02 operation contract defaults.
+        assertThat(properties.getOperation().getThreadName()).isEqualTo("ledger-operation");
+        assertThat(properties.getOperation().getPoolSize()).isEqualTo(2);
+        assertThat(properties.getOperation().getSyncWaitMs()).isEqualTo(3000);
+        assertThat(properties.getIdempotency().getWindowSeconds()).isEqualTo(600);
+        assertThat(properties.getEnvLock().getKey()).isEqualTo("env:write-run");
+        assertThat(properties.getEnvLock().getTtlSeconds()).isEqualTo(1800);
+        assertThat(properties.getEnvLock().getAcquireAttempts()).isEqualTo(3);
     }
 
     @Test
@@ -65,7 +73,56 @@ class LedgerPropertiesTest {
                 "LAB_LEDGER_STASH_REPLAY_INTERVAL_SECONDS", "LAB_LEDGER_RETENTION_RUNS",
                 "LAB_LEDGER_RETENTION_INTERVAL_MINUTES", "LAB_LEDGER_RECOVERY_ENABLED",
                 "LAB_LEDGER_QUERY_DEFAULT_LIMIT", "LAB_LEDGER_QUERY_MAX_LIMIT",
-                "LAB_LEDGER_MAX_PAYLOAD_BYTES", "LAB_LEDGER_RUN_ID_MAX_ATTEMPTS");
+                "LAB_LEDGER_MAX_PAYLOAD_BYTES", "LAB_LEDGER_RUN_ID_MAX_ATTEMPTS",
+                // B1-02: operation executor, idempotency window, environment lock.
+                "LAB_LEDGER_OPERATION_THREAD_NAME", "LAB_LEDGER_OPERATION_POOL_SIZE",
+                "LAB_LEDGER_OPERATION_SYNC_WAIT_MS", "LAB_LEDGER_IDEMPOTENCY_WINDOW_SECONDS",
+                "LAB_LEDGER_ENV_LOCK_KEY", "LAB_LEDGER_ENV_LOCK_TTL_SECONDS",
+                "LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS");
+    }
+
+    @Test
+    void operationContractKeysOverrideFromTheEnvironment() throws IOException {
+        LedgerProperties properties = bind(Map.of(
+                "lab.ledger.operation.pool-size", "5",
+                "lab.ledger.operation.sync-wait-ms", "250",
+                "lab.ledger.idempotency.window-seconds", "30",
+                "lab.ledger.env-lock.ttl-seconds", "45"));
+
+        assertThat(properties.getOperation().getPoolSize()).isEqualTo(5);
+        assertThat(properties.getOperation().getSyncWaitMs()).isEqualTo(250);
+        assertThat(properties.getIdempotency().getWindowSeconds()).isEqualTo(30);
+        assertThat(properties.getEnvLock().getTtlSeconds()).isEqualTo(45);
+        properties.validate();
+    }
+
+    @Test
+    void operationContractBoundsAreEnforced() {
+        LedgerProperties zeroPool = valid();
+        zeroPool.getOperation().setPoolSize(0);
+        assertThatThrownBy(zeroPool::validate)
+                .hasMessageContaining("lab.ledger.operation.pool-size")
+                .hasMessageContaining("LAB_LEDGER_OPERATION_POOL_SIZE");
+
+        LedgerProperties negativeWait = valid();
+        negativeWait.getOperation().setSyncWaitMs(-1);
+        assertThatThrownBy(negativeWait::validate)
+                .hasMessageContaining("lab.ledger.operation.sync-wait-ms");
+
+        LedgerProperties zeroWindow = valid();
+        zeroWindow.getIdempotency().setWindowSeconds(0);
+        assertThatThrownBy(zeroWindow::validate)
+                .hasMessageContaining("lab.ledger.idempotency.window-seconds");
+
+        LedgerProperties zeroTtl = valid();
+        zeroTtl.getEnvLock().setTtlSeconds(0);
+        assertThatThrownBy(zeroTtl::validate)
+                .hasMessageContaining("lab.ledger.env-lock.ttl-seconds");
+
+        LedgerProperties zeroAttempts = valid();
+        zeroAttempts.getEnvLock().setAcquireAttempts(0);
+        assertThatThrownBy(zeroAttempts::validate)
+                .hasMessageContaining("lab.ledger.env-lock.acquire-attempts");
     }
 
     @Test

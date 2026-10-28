@@ -10,13 +10,22 @@ import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
+import com.javalearn.lab.chaos.ledger.LedgerViews;
+import com.javalearn.lab.chaos.ledger.OperationExecution;
+import com.javalearn.lab.chaos.ledger.OperationOutcome;
+import com.javalearn.lab.chaos.ledger.OperationRecord;
+import com.javalearn.lab.chaos.ledger.OperationService;
+import com.javalearn.lab.chaos.ledger.OperationStatus;
+import com.javalearn.lab.chaos.ledger.OperationWork;
 import com.javalearn.lab.chaos.web.ChaosController;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.mockito.stubbing.Answer;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
@@ -24,6 +33,8 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +44,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Chaos action API. B1-02 wraps the two mutating endpoints in the operation
+ * contract, so the tests stub {@link OperationService#submit} to run the work
+ * inline and return a settled execution - exactly what the real service does
+ * when the work fits inside the sync budget. Exceptions still travel through the
+ * work, which proves the existing 400/403/404/409 mapping is unchanged.
+ */
 @WebMvcTest(controllers = ChaosController.class, properties = "lab.token=test-token")
 @AutoConfigureMockMvc(addFilters = false)
 class ChaosControllerTest {
@@ -43,8 +61,25 @@ class ChaosControllerTest {
     @MockitoBean
     private ChaosActionService chaosActionService;
 
+    @MockitoBean
+    private OperationService operations;
+
+    @BeforeEach
+    void setUp() {
+        // doAnswer/doReturn never invoke the stubbed method while recording, so
+        // a later override cannot accidentally run a null work.
+        Answer<OperationExecution> settle = invocation -> {
+            OperationWork work = invocation.getArgument(1);
+            OperationOutcome outcome = work.run();
+            return new OperationExecution(operation(OperationStatus.APPLIED), false, false,
+                    outcome.payload());
+        };
+        doAnswer(settle).when(operations).submit(any(), any());
+        doAnswer(settle).when(operations).submitBlocking(any(), any());
+    }
+
     @Test
-    void validActionReturns202WithView() throws Exception {
+    void validActionReturns202WithViewAndOperationId() throws Exception {
         when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
                 .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
                         Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
@@ -60,7 +95,8 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.data.action").value("kill"))
                 .andExpect(jsonPath("$.data.ttlSeconds").value(30))
                 .andExpect(jsonPath("$.data.revertAction").value("start"))
-                .andExpect(jsonPath("$.data.status").value("active"));
+                .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"));
 
         verify(chaosActionService).execute(eq("jl-app-3"), any(ChaosActionRequest.class));
     }
@@ -75,7 +111,8 @@ class ChaosControllerTest {
                         .content("{\"action\":\"restart\"}"))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.action").value("restart"))
-                .andExpect(jsonPath("$.data.status").value("completed"));
+                .andExpect(jsonPath("$.data.status").value("completed"))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"));
     }
 
     @Test
@@ -128,8 +165,6 @@ class ChaosControllerTest {
 
     @Test
     void probeTargetActionIsRefusedWith403AndProbeIsolationCode() throws Exception {
-        // B0-08 slice B: the fault target is the MySQL cluster probe container, so
-        // the refusal has its own code (40302) and states the remedy.
         when(chaosActionService.execute(eq("jl-mysql-3"), any()))
                 .thenThrow(new ProbeTargetProtectedException(
                         "target \"jl-mysql-3\" is the MySQL cluster probe container "
@@ -159,6 +194,51 @@ class ChaosControllerTest {
     }
 
     @Test
+    void aSlowActionAnswers202PendingConfirmationWithTheOperationView() throws Exception {
+        OperationExecution pending = new OperationExecution(
+                operation(OperationStatus.PENDING_CONFIRMATION), false, true, null);
+        doReturn(pending).when(operations).submit(any(), any());
+        when(operations.view(pending)).thenReturn(operationView(OperationStatus.PENDING_CONFIRMATION, false));
+
+        mockMvc.perform(post("/chaos/instances/jl-mysql-2/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.status").value("PENDING_CONFIRMATION"));
+    }
+
+    @Test
+    void anIdempotentReplayReturns200WithTheStoredOperation() throws Exception {
+        OperationExecution replay = new OperationExecution(operation(OperationStatus.APPLIED),
+                true, false, null);
+        doReturn(replay).when(operations).submit(any(), any());
+        when(operations.view(replay)).thenReturn(operationView(OperationStatus.APPLIED, true));
+
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .header("Idempotency-Key", "kill-key-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.idempotentReplay").value(true));
+
+        verify(chaosActionService, never()).execute(any(), any());
+    }
+
+    @Test
+    void anInvalidIdempotencyKeyIsRejectedBeforeTheActionRuns() throws Exception {
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .header("Idempotency-Key", "has\tcontrol")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("40001"));
+
+        verify(chaosActionService, never()).execute(any(), any());
+    }
+
+    @Test
     void listReturnsActiveActions() throws Exception {
         when(chaosActionService.activeActions()).thenReturn(List.of(
                 new ChaosActionView("id-1", "jl-app-3", "kill", 30,
@@ -174,7 +254,7 @@ class ChaosControllerTest {
     }
 
     @Test
-    void stopAllReturnsRevertedCount() throws Exception {
+    void stopAllReturnsRevertedCountAndTheOperationId() throws Exception {
         when(chaosActionService.stopAll()).thenReturn(new StopAllResult(2, 0, 1));
 
         mockMvc.perform(post("/chaos/stop-all"))
@@ -182,7 +262,8 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.reverted").value(2))
                 .andExpect(jsonPath("$.data.failed").value(0))
-                .andExpect(jsonPath("$.data.pending").value(1));
+                .andExpect(jsonPath("$.data.pending").value(1))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"));
     }
 
     @Test
@@ -196,5 +277,17 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.data.toxiproxy.proxiesReset").value(2))
                 .andExpect(jsonPath("$.data.toxiproxy.proxiesTotal").value(2))
                 .andExpect(jsonPath("$.data.toxiproxy.errors.length()").value(0));
+    }
+
+    private static OperationRecord operation(OperationStatus status) {
+        return new OperationRecord("op-1", null, "container", "jl-app-3", "kill", status, 30,
+                Instant.parse("2026-10-26T10:00:00Z"), Instant.parse("2026-10-26T10:00:01Z"), null,
+                null, "local", null, null);
+    }
+
+    private static LedgerViews.OperationView operationView(OperationStatus status, boolean replay) {
+        return new LedgerViews.OperationView("op-1", null, "container", "jl-app-3", "kill",
+                status.name(), 30, "2026-10-26T10:00:00Z", null, null, null, "local", null, null,
+                replay);
     }
 }
