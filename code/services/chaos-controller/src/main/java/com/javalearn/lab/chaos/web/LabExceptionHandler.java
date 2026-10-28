@@ -5,6 +5,7 @@ import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.AppProxyResponseTooLargeException;
 import com.javalearn.lab.chaos.error.AppResponseNotJsonException;
 import com.javalearn.lab.chaos.error.AppUnreachableException;
+import com.javalearn.lab.chaos.error.BenchUnavailableException;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
@@ -211,6 +212,19 @@ public class LabExceptionHandler {
         log.warn("Ledger unavailable: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Result.failure(LabErrorCode.LEDGER_UNAVAILABLE, ex.getMessage()));
+    }
+
+    /**
+     * B2-01b: the manifest is missing, unreadable or inconsistent. 503 with its
+     * own code (50303) so the console renders "场景目录不可用" instead of an
+     * empty-but-OK catalog. The message names the location and the first broken
+     * invariant.
+     */
+    @ExceptionHandler(BenchUnavailableException.class)
+    public ResponseEntity<Result<Void>> handleBenchUnavailable(BenchUnavailableException ex) {
+        log.warn("Bench scenario catalog unavailable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Result.failure(LabErrorCode.BENCH_UNAVAILABLE, ex.getMessage()));
     }
 
     @ExceptionHandler(LedgerRunNotFoundException.class)

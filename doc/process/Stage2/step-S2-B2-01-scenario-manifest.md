@@ -174,3 +174,72 @@ Layout 增补 manifest/reader/test，环境变量表增补 `LAB_SCENARIOS_MANIFE
    `forwarding.service`，不进 `run.sh` 的 common 数组。
 6. **参数默认值的唯一权威仍是 `lib/config.js`/场景模块**：manifest 是镜像，测试逐键钉死；调整默认值
    时必须同时改两处并跑测试，否则 `manifest params equal ...` 会失败。
+
+---
+
+# 补充：B2-01b（后端只读场景目录 + 控制台场景卡）
+
+## API 契约
+
+`GET /lab/bench/scenarios`（`/lab/**` 已有 `TokenFilter`，无新鉴权）返回常规 `Result` 信封，`data` 形状：
+
+```json
+{
+  "status": "OK",
+  "version": 1,
+  "views": { "run": ["...9"], "bench": ["...5"], "ui": ["smoke", "load", "spike"] },
+  "scenarios": {
+    "smoke": {
+      "script": "scenarios/smoke.js",
+      "serviceOnly": false,
+      "requires": { "chaos": false, "cache": false, "profile": "dev" },
+      "writesData": true,
+      "thresholdsExpected": true,
+      "env": ["SMOKE_VUS", "..."],
+      "params": { "SMOKE_VUS": 1, "SMOKE_DURATION": "30s", "...": "..." },
+      "scriptExists": true
+    }
+  }
+}
+```
+
+- `scenarios` 含 manifest 的全部条目（当前 10 条，含 `serviceOnly` 的 `traffic`）；除 `scriptExists` 外字段原样透传。
+- 解析顺序与失败点：读取资源 → JSON 结构（version/views/scenarios/forwarding/runtimeEnv 与字段类型）→ 视图包含关系（名字存在、`bench ⊆ run`、`ui ⊆ bench`、`serviceOnly` 不进任何视图）→ `params` 键 ⊆ 场景 `env` → `env` ⊆ `forwarding`/`runtimeEnv` → 每个 forwarded 名至少被一个场景或 `runtimeEnv` 消费。与 node 读取器
+  `code/lab/k6/lib/scenario-manifest.mjs` 保持同一组不变量；任一失败即 503/`50303`，message 带 manifest 位置与第一条不变量。
+- `scriptExists`：以 `<k6root>/scenarios/manifest.json` 的上一级为 k6 根，stat `script` 字段；`classpath:` manifest 或脚本未挂载时返回 `false`，**不**让整个目录失败，UI 在行内提示"脚本未挂载"。
+
+## 503 / 50303 语义
+
+`LabErrorCode.BENCH_UNAVAILABLE("50303", "Bench scenario catalog unavailable")` + `BenchUnavailableException`，由 `LabExceptionHandler` 映射为 HTTP 503、`code=50303`。manifest 缺失/不可读/JSON 非法/校验失败一律走该分支；端点绝不返回空数组或 0 填充冒充 OK。
+
+## 挂载与配置
+
+- `compose.base.yml` 的 `chaos-controller.volumes` 新增 `../k6:/app/k6:ro`（相对 compose 文件，即 `code/lab/k6`）；Dockerfile 未改，manifest 未复制进 resources。
+- 新配置键 `LAB_BENCH_SCENARIOS_LOCATION`，三处默认值一致，均为 `file:/app/k6/scenarios/manifest.json`：`application.yml`（`lab.bench.scenarios-location`）、`compose.base.yml`（controller environment）、`.env.example`（CRLF 文件，Python 字节级插入）。
+- `code/lab/scripts/test-chaos-env-wiring.sh` 的自动发现已扩展 `LAB_BENCH_*`，与新键一起校验 yml 占位符 / compose 转发 / .env.example 条目。
+
+## UI 口径
+
+- `api.js` 新增 `fetchBenchScenarios(token)`，返回 `data`。
+- `BenchmarkPanel.vue` 采用与 `InstancesPanel`/`ObservePanel` 相同的 `token` + `active` + `syncTick` 自取模式（watch + inFlight/queued），`App.vue` 传入三者。
+- 场景卡只渲染后端返回的 `views.ui`（当前 smoke/load/spike），stress/soak 因不在 `views.ui` 而不可能出现。每行显示名称、profile、chaos/cache、writesData、`thresholdsExpected` 徽标、关键 params（`VUS|DURATION|STAGES|P95_MS|P99_MS|ERROR_RATE|CHECKS_RATE`，最多 6 项）以及 `script`/`scriptExists` 提示。
+- 状态呈现：`LOADING` / `OK` / `ERROR`（其它错误）/ `DEGRADED`（HTTP 503 或 code 50303）。DEGRADED 明确显示"场景目录不可用：..."，并清空旧行，避免用空列表或陈旧数据冒充 OK。
+- data-testid：卡片 `bench-scenarios`、状态 `bench-scenarios-state`、每行 `bench-scenario-<name>`、提示 `bench-scenarios-hint`。
+
+## 测试数字（本步实测）
+
+- `mvn -f code/pom.xml -pl services/chaos-controller -am test`：**491 tests, 0 failures, 0 errors, 0 skipped；BUILD SUCCESS**（基线 474，新增 17：`BenchScenarioCatalogTest` 11 + `BenchControllerTest` 6）。
+- `bash code/lab/scripts/test-chaos-env-wiring.sh`：**68 PASS / 0 FAIL**，其中 `LAB_BENCH_SCENARIOS_LOCATION: yml placeholder + compose forwarding + .env.example entry`，汇总行 `CHAOS ENV WIRING PASSED (8 chaos keys + 60 ledger/metrics/precheck/bench keys)`。
+- `cd code/lab/dashboard && npm ci && npm run build`：成功（28 modules transformed；`dist/` 为 gitignored，未提交）。
+- `console-smoke.mjs`：bench 分区新增 4 条断言（卡片可见、状态 `OK`、恰好 3 行 smoke/load/spike、stress/soak 行不存在），节点基线 63 → 67；**本环境未真机执行**。
+
+## 未验证项（合并后由主会话真机跑）
+
+1. 真机 `GET /lab/bench/scenarios`（容器内 `../k6:/app/k6:ro` 挂载 + token）。
+2. `console-smoke.sh` 真机（Playwright + 已构建 dashboard）。
+3. controller 镜像重建、`docker compose` 生命周期（本步明确禁止，未 build/up/down）。
+4. 容器内 `scriptExists=true` 依赖 compose 相对挂载路径，本机未起栈验证。
+
+## 最新 commit
+
+`19cde4d`（API + compose/env 接线 + 后端测试）、`e0c9336`（控制台场景卡 + console-smoke 断言）；本补充节随 docs 提交落盘。

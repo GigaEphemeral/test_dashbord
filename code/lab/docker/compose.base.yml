@@ -584,6 +584,11 @@ services:
       LAB_PRECHECK_EXPECTED_APP_IMAGE_ID: ${LAB_PRECHECK_EXPECTED_APP_IMAGE_ID:-}
       LAB_PRECHECK_MAX_LISTED_ITEMS: ${LAB_PRECHECK_MAX_LISTED_ITEMS:-10}
       LAB_PRECHECK_CHECK_TIMEOUT_SECONDS: ${LAB_PRECHECK_CHECK_TIMEOUT_SECONDS:-30}
+      # Stage2 B2-01b: GET /lab/bench/scenarios reads the same manifest the
+      # shell runners use. The controller image does not contain code/lab, so
+      # the k6 directory is mounted read-only below and the default is a file:
+      # location. An invalid manifest answers 503/50303, never an empty catalog.
+      LAB_BENCH_SCENARIOS_LOCATION: ${LAB_BENCH_SCENARIOS_LOCATION:-file:/app/k6/scenarios/manifest.json}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
@@ -591,6 +596,11 @@ services:
       # Shared schema-v1 scenarios (read-only). Paths inside them are validated
       # before any Docker call.
       - ../scenarios:/app/scenarios:ro
+      # Stage2 B2-01b: the k6 scenario manifest + scripts, read-only. The
+      # controller image does not COPY code/lab/**; this mount is what
+      # LAB_BENCH_SCENARIOS_LOCATION (default file:/app/k6/scenarios/manifest.json)
+      # reads. `../k6` is code/lab/k6 relative to this compose file.
+      - ../k6:/app/k6:ro
       # Write-behind ledger stash (B1-01): events that could not be written
       # while MySQL was down survive a controller restart and replay in order.
       - jl-ledger-stash-data:/app/ledger-stash

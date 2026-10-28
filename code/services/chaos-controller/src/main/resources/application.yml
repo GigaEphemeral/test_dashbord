@@ -155,6 +155,14 @@ lab:
     # reported BLOCK (fail closed).
     check-timeout-seconds: ${LAB_PRECHECK_CHECK_TIMEOUT_SECONDS:30}
 
+  # Stage2 B2-01b: read-only bench scenario catalog (GET /lab/bench/scenarios).
+  # The controller image does not COPY code/lab/**, so compose mounts
+  # code/lab/k6 at /app/k6 read-only and this default is a file: location; a
+  # classpath: copy is also accepted. A missing/unreadable/inconsistent manifest
+  # answers 503/50303 - never an empty catalog that pretends to be OK.
+  bench:
+    scenarios-location: ${LAB_BENCH_SCENARIOS_LOCATION:file:/app/k6/scenarios/manifest.json}
+
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.
 chaos:

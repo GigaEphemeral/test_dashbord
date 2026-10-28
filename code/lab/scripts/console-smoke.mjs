@@ -387,6 +387,34 @@ async function main() {
       await page.getByTestId('stop-all').isEnabled(),
     );
 
+    // B2-01b: the scenario catalog renders the manifest's views.ui only. The
+    // card polls its own 5s sync tick through the same token/active props as
+    // the other panels, so the first assertion waits for the settled state.
+    const scenarioCard = page.getByTestId('bench-scenarios');
+    await expectCondition('bench: scenario catalog card is visible', async () => ({
+      ok: (await scenarioCard.count()) > 0,
+    }));
+    await expectText(
+      page.getByTestId('bench-scenarios-state'),
+      'OK',
+      'bench: scenario catalog state is OK',
+    );
+    await expectCondition('bench: scenario catalog lists exactly smoke/load/spike', async () => {
+      const ids = await page
+        .locator('[data-testid^="bench-scenario-"]')
+        .evaluateAll((nodes) => nodes.map((node) => node.dataset.testid));
+      const expected = ['bench-scenario-smoke', 'bench-scenario-load', 'bench-scenario-spike'];
+      return {
+        ok: ids.length === expected.length && expected.every((id) => ids.includes(id)),
+        detail: ids.join(','),
+      };
+    });
+    check(
+      'bench: stress/soak are absent from the scenario catalog',
+      (await page.getByTestId('bench-scenario-stress').count()) === 0
+        && (await page.getByTestId('bench-scenario-soak').count()) === 0,
+    );
+
     // ------------------------------------------------------------ instances
     await gotoSection(page, 'instances');
     let cards = await waitForCondition(async () => {

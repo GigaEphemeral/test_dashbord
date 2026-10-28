@@ -445,6 +445,9 @@ onBeforeUnmount(stopPolling)
 
         <BenchmarkPanel
           v-else-if="section === 'bench'"
+          :token="token.trim()"
+          :active="section === 'bench'"
+          :sync-tick="syncTick"
           :containers="containers"
           :selected="selected"
           :tail="tail"
