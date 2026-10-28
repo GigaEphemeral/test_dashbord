@@ -173,576 +173,634 @@
   .range::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid #0b0f14;box-shadow:0 0 0 3px rgba(56,211,159,.15)}
   @media (max-width:1100px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(2,minmax(0,1fr))}.exp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media (max-width:820px){.shell{grid-template-columns:1fr}.sidebar{position:static;height:auto}.g2,.g3,.g4{grid-template-columns:1fr}.mode-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  .node.off{opacity:.38;filter:grayscale(1);border-color:#26364a;color:var(--muted-2)}
+  .node .dot2{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;background:var(--accent)}
+  .node.off .dot2{background:#5f7288}
+  .check{display:flex;align-items:center;gap:7px;padding:5px 0;font-size:12.5px;color:#c6d2df;cursor:pointer}
+  .check input{accent-color:var(--accent)}
+  .tabs{display:flex;gap:5px;flex-wrap:wrap}
+  .tab{border:1px solid var(--border);background:#0d151f;color:var(--muted);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px}
+  .tab.active{border-color:rgba(56,211,159,.45);background:rgba(56,211,159,.08);color:var(--text)}
+  .tab-panel{display:none;margin-top:10px}
+  .tab-panel.active{display:block}
+  .chart{border:1px solid #223042;border-radius:10px;background:#0a1119;padding:8px 10px 4px}
+  .chart svg{display:block;width:100%;height:170px}
+  .chart .legend2{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);padding:4px 2px 2px}
+  .progress{height:9px;border-radius:999px;background:#1c2a3a;overflow:hidden}
+  .progress i{display:block;height:100%;background:linear-gradient(90deg,var(--accent-2),var(--accent));border-radius:999px}
+  .modal-back{position:fixed;inset:0;z-index:90;background:rgba(3,7,12,.68);display:none;align-items:center;justify-content:center;padding:20px}
+  .modal-back.show{display:flex}
+  .modal{width:min(520px,100%);background:#0d151f;border:1px solid #2b4058;border-radius:14px;padding:16px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .modal h3{margin:0 0 8px;font-size:15px}
+  .sidecars{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding:8px;border:1px dashed #2a3d52;border-radius:10px}
+  .sidecars .node{min-width:auto;padding:5px 8px;font-size:11px}
+  .k6prog{display:flex;flex-direction:column;gap:8px}
+  .timeaxis{display:flex;justify-content:space-between;color:var(--muted-2);font-size:10px;padding:0 2px;gap:8px;flex-wrap:wrap}
+  .diff{color:#f7dfae;font-family:var(--mono);font-size:11px}
+  .goal-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .goal-card{text-align:left;border:1px solid var(--border);border-radius:10px;background:#0d151f;padding:9px;cursor:pointer}
+  .goal-card.selected{border-color:rgba(56,211,159,.5);background:rgba(56,211,159,.07)}
+  .goal-card.disabled{opacity:.42;cursor:not-allowed}
+  .goal-card h4{margin:0 0 3px;font-size:12.5px}
+  .goal-card p{margin:0;color:var(--muted-2);font-size:10.5px}
+  .goal-card .lock{display:none;color:#f5b544;font-size:10px;margin-top:4px}
+  .goal-card.disabled .lock{display:block}
+  .fault-table input,.fault-table select{padding:6px 7px;font-size:12px}
+  .fault-table td{padding:6px}
+  .off{opacity:.42;filter:grayscale(.8);pointer-events:none}
+  .topo-grid{display:grid;grid-template-columns:1fr 1.05fr 1.9fr 1.15fr .9fr;gap:10px;align-items:start;padding:10px;border:1px dashed #2a3d52;border-radius:12px;background:#0a1119}
+  .topo-col{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .topo-label{font-size:10.5px;color:var(--muted-2);letter-spacing:.06em}
+  .topo-sub{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .topo-grid .node{min-width:0;padding:8px 6px;font-size:11px;white-space:nowrap}
+  .topo-grid .node small{font-size:9px;line-height:1.35;white-space:nowrap}
+  @media (max-width:1100px){.goal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
-
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-mark"></div>
-      <div><h1>Java 演练台</h1><small>STAGE 2 · 交互设计稿</small></div>
-    </div>
+    <div class="brand"><div class="brand-mark"></div><div><h1>Java 演练台</h1><small>STAGE 2 · 交互稿 v3</small></div></div>
     <nav id="nav">
       <button class="nav-btn active" data-page="overview"><span class="idx">01</span>总览</button>
       <button class="nav-btn" data-page="wizard"><span class="idx">02</span>场景向导</button>
       <button class="nav-btn" data-page="instances"><span class="idx">03</span>实例与 JVM</button>
       <button class="nav-btn" data-page="bench"><span class="idx">04</span>Benchmark</button>
-      <button class="nav-btn" data-page="observe"><span class="idx">05</span>实时监控</button>
-      <button class="nav-btn" data-page="faults"><span class="idx">06</span>故障与缓存实验</button>
-      <button class="nav-btn" data-page="runs"><span class="idx">07</span>实验记录</button>
+      <button class="nav-btn" data-page="observe"><span class="idx">05</span>实时监控与操作</button>
+      <button class="nav-btn" data-page="runs"><span class="idx">06</span>实验记录</button>
     </nav>
-    <div class="sidebar-foot">
-      设计稿 v2 · 依据需求 v1/改造方案 v1.4/B0–B2 收口<br>
-      状态徽标悬停可看中文解释
-    </div>
+    <div class="sidebar-foot">A–F 已采纳 · 前置基础配置 + 7 步向导<br>状态徽标悬停看中文解释</div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <div>
-        <h2 id="pageTitle">总览</h2>
-        <p id="pageDesc">环境健康、基础拓扑与当前可用实验</p>
-      </div>
+      <div><h2 id="pageTitle">总览</h2><p id="pageDesc">环境、节点拓扑与当前可用实验</p></div>
       <div class="top-actions">
         <span class="chip ok" data-tip="控制器 /health 返回 UP；只代表控制器存活。">环境 UP</span>
-        <span class="chip info" data-tip="当前分支的演示环境；不是生产。">DEV</span>
-        <label class="token">
-          <span class="tiny muted">令牌</span>
-          <input id="token" value="lab-token" aria-label="实验令牌">
-        </label>
-        <label class="switch" title="每 5 秒刷新面板">
-          <input type="checkbox" id="autoSync" checked><span class="track"></span><span class="tiny muted">自动同步</span>
-        </label>
+        <span class="chip info" data-tip="当前演示环境。">DEV</span>
+        <label class="token"><span class="tiny muted">令牌</span><input id="token" value="lab-token" aria-label="实验令牌"></label>
+        <label class="switch" title="每 5 秒刷新面板"><input type="checkbox" id="autoSync" checked><span class="track"></span><span class="tiny muted">自动同步</span></label>
         <button class="icon-btn" id="refreshBtn">刷新</button>
       </div>
     </header>
 
-    <!-- ============================== 总览 ============================== -->
+    <!-- 总览 -->
     <section class="page active" data-page="overview">
       <div class="grid g4">
-        <div class="card tight"><div class="muted tiny">环境健康</div><div class="strong" style="font-size:18px">UP</div><div class="hint">控制器存活 · 32/35 常驻运行</div></div>
-        <div class="card tight"><div class="muted tiny">当前实验</div><div class="strong" style="font-size:18px">run-20261028-010</div><div class="hint"><span class="chip ok" data-tip="k6 已启动，持有写锁。">RUNNING</span> · load · 02:31</div></div>
+        <div class="card tight"><div class="muted tiny">环境健康</div><div class="strong" style="font-size:18px">UP</div><div class="hint">控制器存活 · 常驻容器 32/35</div></div>
+        <div class="card tight"><div class="muted tiny">当前实验</div><div class="strong" style="font-size:16px">缓存穿透基线</div><div class="hint"><span class="chip ok" data-tip="RUNNING：k6 已启动并持有写锁。">RUNNING</span> · load · 02:31</div></div>
         <div class="card tight"><div class="muted tiny">活动故障</div><div class="strong" style="font-size:18px">1</div><div class="hint">1 个 TTL 动作 · 0 个手动保持</div></div>
         <div class="card tight"><div class="muted tiny">最近事件</div><div class="strong" style="font-size:14px">app-2 freeze</div><div class="hint">14:23:01 注入 · 14:25:01 自动恢复</div></div>
       </div>
 
-      <div class="grid g2">
+      <div class="grid g2" style="align-items:start">
         <div class="card">
-          <div class="card-head"><h3>基础拓扑配置</h3><span class="chip warn" data-tip="基础配置决定哪些实验可被选择；关闭多节点时相关实验会置灰并给出原因。">门禁</span></div>
-          <p class="hint" style="margin-top:0">先声明当前环境形态；后续实验类型、流量模式、故障目标会按这里动态启用/禁用。</p>
-          <div class="rowline">
-            <div><div class="strong">多节点 Java</div><div class="hint">开启：app-1/2/3 三个实例，可做定向实例、分流对照、实例故障。</div></div>
-            <label class="switch"><input type="checkbox" id="multiJava" checked><span class="track"></span></label>
+          <div class="card-head"><h3>基础配置 · 节点与拓扑</h3><span class="chip warn" data-tip="基础配置决定哪些实验可被选择；未启用节点在拓扑中置灰。">门禁</span></div>
+          <div class="grid g2">
+            <div>
+              <div class="tiny muted">Java 节点（可 1/2/3 个）</div>
+              <label class="check"><input type="checkbox" class="java-node" value="app-1" checked> app-1 <span class="chip gray">实验组 A</span></label>
+              <label class="check"><input type="checkbox" class="java-node" value="app-2" checked> app-2 <span class="chip gray">实验组 B</span></label>
+              <label class="check"><input type="checkbox" class="java-node" value="app-3" checked> app-3 <span class="chip gray">实验组 C</span></label>
+              <div class="hint">只选 1 个：定向可用，但分流/实例故障禁用；选 2–3 个：可做实例级对照。</div>
+            </div>
+            <div>
+              <div class="tiny muted">MySQL 形态</div>
+              <label class="check"><input type="radio" class="mysql-mode" name="mysqlMode" value="single"> 单机</label>
+              <label class="check"><input type="radio" class="mysql-mode" name="mysqlMode" value="cluster" checked> Router + 3 节点</label>
+              <div class="hint">只有集群形态可做 Router 切换/主节点故障。</div>
+              <div class="tiny muted" style="margin-top:8px">其他依赖</div>
+              <label class="check"><input type="checkbox" id="redisHa" checked> Redis 高可用（Sentinel）</label>
+              <label class="check"><input type="checkbox" id="chaosProxy"> 网络故障层（chaos-proxy）</label>
+              <label class="check"><input type="checkbox" id="showSidecars"> 拓扑显示 exporter/sidecar</label>
+            </div>
           </div>
-          <div class="rowline">
-            <div><div class="strong">多节点 MySQL</div><div class="hint">开启：MySQL Router/3 节点，可做主节点故障、Router 切换、数据库对账。</div></div>
-            <label class="switch"><input type="checkbox" id="multiMysql" checked><span class="track"></span></label>
-          </div>
-          <div class="rowline">
-            <div><div class="strong">Redis 高可用</div><div class="hint">开启：Sentinel/多节点，可做 Redis 切换；关闭时只保留单机缓存实验。</div></div>
-            <label class="switch"><input type="checkbox" id="redisHa" checked><span class="track"></span></label>
-          </div>
-          <div class="notice info" id="gateNotice">当前：多节点 Java / MySQL / Redis 全开，全部实验可选。</div>
+          <div class="notice info" id="gateNotice" style="margin-top:10px">当前：3 个 Java 节点、MySQL 集群、Redis 高可用。</div>
         </div>
 
         <div class="card">
-          <div class="card-head"><h3>当前拓扑</h3><span class="tiny muted">由基础配置生成</span></div>
-          <div class="topo">
-            <div class="node">k6 Runner<small>受控容器</small></div>
-            <span class="arrow">→</span>
-            <div class="node">Nginx<small>round-robin</small></div>
-            <span class="arrow">→</span>
-            <div class="stack" id="appNodes">
-              <div class="node app">app-1<small>JDK21 · 健康</small></div>
-              <div class="node app warn">app-2<small>JDK21 · 冻结中</small></div>
-              <div class="node app">app-3<small>JDK21 · 健康</small></div>
+          <div class="card-head"><h3>完整拓扑</h3><span class="tiny muted">未启用节点置灰，结构保持稳定</span></div>
+          <div class="topo-grid">
+            <div class="topo-col"><div class="topo-label">入口</div><div class="node">k6 Runner<small>受控容器</small></div><div class="node">Nginx<small>round-robin</small></div></div>
+            <div class="topo-col"><div class="topo-label">Java 节点</div>
+              <div class="node app" data-node="app-1">app-1<small><i class="dot2"></i>健康</small></div>
+              <div class="node app warn" data-node="app-2">app-2<small><i class="dot2"></i>警告</small></div>
+              <div class="node app" data-node="app-3">app-3<small><i class="dot2"></i>健康</small></div>
             </div>
-            <span class="arrow">→</span>
-            <div class="stack">
-              <div class="node">Redis<small id="redisLabel">Sentinel 3 节点</small></div>
-              <div class="node" id="mysqlNode">MySQL Router<small>3 节点集群</small></div>
+            <div class="topo-col"><div class="topo-label">Redis / Sentinel</div>
+              <div class="topo-sub">
+                <div class="topo-col"><div class="node" data-node="redis-1">redis-1<small>主 · 健康</small></div><div class="node" data-node="redis-2">redis-2<small>从 · 健康</small></div><div class="node" data-node="redis-3">redis-3<small>从 · 健康</small></div></div>
+                <div class="topo-col"><div class="node" data-node="sentinel-1">sentinel-1<small>哨兵 · 健康</small></div><div class="node" data-node="sentinel-2">sentinel-2<small>哨兵 · 健康</small></div><div class="node" data-node="sentinel-3">sentinel-3<small>哨兵 · 健康</small></div></div>
+              </div>
+            </div>
+            <div class="topo-col"><div class="topo-label">MySQL / Router</div>
+              <div class="node" data-node="mysql-1">mysql-1<small>主 · 健康</small></div>
+              <div class="node" data-node="mysql-2">mysql-2<small>从 · 健康</small></div>
+              <div class="node" data-node="mysql-3">mysql-3<small>从 · 健康</small></div>
+              <div class="node" data-node="mysql-router">mysql-router<small>6446 · 健康</small></div>
+            </div>
+            <div class="topo-col"><div class="topo-label">其他</div>
+              <div class="node" data-node="rabbitmq">RabbitMQ<small>队列</small></div>
+              <div class="node" data-node="toxiproxy">Toxiproxy<small>网络故障层</small></div>
             </div>
           </div>
-          <div class="legend" style="margin-top:10px">
-            <span><i class="dot" style="background:var(--accent)"></i>健康</span>
-            <span><i class="dot" style="background:var(--amber)"></i>警告/冻结</span>
-            <span><i class="dot" style="background:var(--red)"></i>异常</span>
-            <span><i class="dot" style="background:#5f7288"></i>无数据</span>
+          <div class="sidecars" id="sidecars" style="display:none">
+            <div class="node">prometheus</div><div class="node">grafana</div><div class="node">tempo</div>
+            <div class="node">otel-collector</div><div class="node">cadvisor</div><div class="node">exporters</div>
           </div>
+          <div class="legend" style="margin-top:9px"><span><i class="dot" style="background:var(--accent)"></i>健康</span><span><i class="dot" style="background:var(--amber)"></i>警告</span><span><i class="dot" style="background:var(--red)"></i>异常</span><span><i class="dot" style="background:#5f7288"></i>未启用/无数据</span></div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>当前可用实验</h3><span class="tiny muted">受基础拓扑配置门禁</span></div>
-        <div class="exp-grid">
-          <div class="exp-card" data-requires="none"><h4>基准压测</h4><p>smoke / load / spike；经 Nginx 或定向实例。</p></div>
-          <div class="exp-card" data-requires="none"><h4>缓存穿透 / 击穿 / 雪崩</h4><p>商品 ID 范围与热度分布可控。</p></div>
-          <div class="exp-card" data-requires="none"><h4>线程故障</h4><p>死锁 / 卡死 / CPU / 泄漏 / 饥饿。</p></div>
-          <div class="exp-card" data-requires="java-multi"><h4>实例分流对照</h4><p>定向 app-N，核对其余实例≈0。</p><div class="lock">需开启多节点 Java</div></div>
-          <div class="exp-card" data-requires="java-multi"><h4>实例故障 / 摘除</h4><p>kill/freeze 一个实例，观察摘除与恢复。</p><div class="lock">需开启多节点 Java</div></div>
-          <div class="exp-card" data-requires="mysql-multi"><h4>MySQL 主节点故障</h4><p>Router 切换、错误窗口与恢复时间。</p><div class="lock">需开启多节点 MySQL</div></div>
-          <div class="exp-card" data-requires="redis-ha"><h4>Redis 切换</h4><p>Sentinel 晋升与缓存降级。</p><div class="lock">需开启 Redis 高可用</div></div>
+        <div class="card-head"><h3>当前可用实验</h3><span class="tiny muted">受节点/MySQL/Redis/网络门禁</span></div>
+        <div class="goal-grid">
+          <button class="goal-card" data-goal="throughput" data-requires="none"><h4>吞吐基线</h4><p>smoke/load/spike 的基线吞吐与延迟。</p></button>
+          <button class="goal-card" data-goal="penetration" data-requires="none"><h4>缓存穿透</h4><p>商品 ID 越界 + 平均/正态分布。</p></button>
+          <button class="goal-card" data-goal="cacheab" data-requires="none"><h4>缓存 A/B 对照</h4><p>L1+L2 vs 仅 L2。</p></button>
+          <button class="goal-card" data-goal="thread" data-requires="none"><h4>线程故障</h4><p>死锁/卡死/CPU/泄漏/饥饿。</p></button>
+          <button class="goal-card" data-goal="instance" data-requires="java-multi"><h4>实例分流/故障</h4><p>定向 app-N 与摘除恢复。</p><div class="lock">需启用 ≥2 个 Java 节点</div></button>
+          <button class="goal-card" data-goal="database" data-requires="mysql-cluster"><h4>数据库故障</h4><p>主节点故障、Router 切换。</p><div class="lock">需 MySQL 集群形态</div></button>
+          <button class="goal-card" data-goal="redis" data-requires="redis-ha"><h4>Redis 切换</h4><p>Sentinel 晋升与缓存降级。</p><div class="lock">需 Redis 高可用</div></button>
+          <button class="goal-card disabled" data-goal="jvm" data-requires="b4"><h4>JVM/GC 对照</h4><p>不同 JDK/GC/堆参数。</p><div class="lock">B4 规划中</div></button>
         </div>
       </div>
     </section>
 
-    <!-- ============================== 向导 ============================== -->
+    <!-- 向导 -->
     <section class="page" data-page="wizard">
       <div class="card">
         <div class="card-head"><h3>前置基础配置</h3><span class="tiny muted">先于 7 步向导</span></div>
-        <div class="grid g3">
-          <label class="switch"><input type="checkbox" class="wiz-base" data-base="java" checked><span class="track"></span><span>多节点 Java</span></label>
-          <label class="switch"><input type="checkbox" class="wiz-base" data-base="mysql" checked><span class="track"></span><span>多节点 MySQL</span></label>
-          <label class="switch"><input type="checkbox" class="wiz-base" data-base="redis" checked><span class="track"></span><span>Redis 高可用</span></label>
+        <div class="grid g2">
+          <div>
+            <div class="tiny muted">Java 节点</div>
+            <label class="check"><input type="checkbox" class="wiz-node" value="app-1" checked> app-1</label>
+            <label class="check"><input type="checkbox" class="wiz-node" value="app-2" checked> app-2</label>
+            <label class="check"><input type="checkbox" class="wiz-node" value="app-3" checked> app-3</label>
+          </div>
+          <div>
+            <div class="tiny muted">MySQL 形态</div>
+            <label class="check"><input type="radio" class="wiz-mysql" name="wizMysql" value="single"> 单机</label>
+            <label class="check"><input type="radio" class="wiz-mysql" name="wizMysql" value="cluster" checked> Router + 3 节点</label>
+            <label class="check"><input type="checkbox" id="wizRedis" checked> Redis 高可用</label>
+            <label class="check"><input type="checkbox" id="wizChaos"> 网络故障层（chaos-proxy）</label>
+          </div>
         </div>
-        <p class="hint">关闭后，相关实验类型、目标实例与故障目标会在后续步骤中置灰，并显示原因。</p>
+        <p class="hint">关闭后，相关实验目标、目标实例与故障目标会在后续步骤置灰，并显示原因。</p>
       </div>
 
       <div class="stepper" id="stepper">
         <button class="step active" data-step="0"><div class="n">前置</div><div class="t">基础配置</div></button>
-        <button class="step" data-step="1"><div class="n">01</div><div class="t">实验类型</div></button>
+        <button class="step" data-step="1"><div class="n">01</div><div class="t">实验目标</div></button>
         <button class="step" data-step="2"><div class="n">02</div><div class="t">目标与流量</div></button>
-        <button class="step" data-step="3"><div class="n">03</div><div class="t">变量</div></button>
-        <button class="step" data-step="4"><div class="n">04</div><div class="t">故障</div></button>
-        <button class="step" data-step="5"><div class="n">05</div><div class="t">预检查</div></button>
-        <button class="step" data-step="6"><div class="n">06</div><div class="t">执行</div></button>
-        <button class="step" data-step="7"><div class="n">07</div><div class="t">报告</div></button>
+        <button class="step" data-step="3"><div class="n">03</div><div class="t">变量与配置组</div></button>
+        <button class="step" data-step="4"><div class="n">04</div><div class="t">流量与执行配置</div></button>
+        <button class="step" data-step="5"><div class="n">05</div><div class="t">故障时间线</div></button>
+        <button class="step" data-step="6"><div class="n">06</div><div class="t">预检查与执行</div></button>
+        <button class="step" data-step="7"><div class="n">07</div><div class="t">报告与对比</div></button>
       </div>
 
       <div class="card wizard-panel active" data-wpanel="0">
         <h3 style="margin-top:0">基础配置</h3>
-        <p class="hint">与总览页共用同一组开关：这里只确认环境形态，不改变容器。关闭多节点后，后续不提供依赖多节点的实验。</p>
-        <div class="notice info">当前：多节点 Java / MySQL / Redis 全开。</div>
+        <p class="hint">与总览页共用同一组开关；这里只确认环境形态，不改变容器。节点未启用时，拓扑保持完整但置灰。</p>
+        <div class="notice info" id="wizGateNotice">当前：3 个 Java 节点、MySQL 集群、Redis 高可用。</div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="1">
-        <div class="card-head"><h3>选择实验类型</h3><span class="tiny muted">只开放后端已验证场景</span></div>
-        <div class="exp-grid" id="wizExp">
-          <button class="exp-card selected" data-exp="bench" data-requires="none"><h4>基准压测</h4><p>smoke / load / spike，阈值与阶段可配。</p></button>
-          <button class="exp-card" data-exp="penetration" data-requires="none"><h4>缓存穿透</h4><p>商品 ID 越界 + 平均/正态分布。</p></button>
-          <button class="exp-card" data-exp="cacheab" data-requires="none"><h4>缓存 A/B 对照</h4><p>L1+L2 vs 仅 L2，同数据集。</p></button>
-          <button class="exp-card disabled" data-exp="jvm" data-requires="b4"><h4>JVM / GC 对照</h4><p>不同 JDK、GC、堆参数。</p><div class="lock">B4 规划中</div></button>
-          <button class="exp-card" data-exp="instance" data-requires="java-multi"><h4>实例故障 / 分流</h4><p>定向 app-N 与摘除恢复。</p><div class="lock">需开启多节点 Java</div></button>
-          <button class="exp-card" data-exp="database" data-requires="mysql-multi"><h4>数据库故障</h4><p>主节点故障、Router 切换。</p><div class="lock">需开启多节点 MySQL</div></button>
+        <div class="card-head"><h3>实验目标</h3><span class="tiny muted">可多选；k6 流量在下一步统一配置</span></div>
+        <div class="goal-grid" id="wizGoals">
+          <button class="goal-card selected" data-goal="throughput" data-requires="none"><h4>吞吐基线</h4><p>基线 RPS/延迟/错误率。</p></button>
+          <button class="goal-card" data-goal="penetration" data-requires="none"><h4>缓存穿透</h4><p>ID 越界 + 平均/正态分布。</p></button>
+          <button class="goal-card" data-goal="cacheab" data-requires="none"><h4>缓存 A/B</h4><p>L1+L2 vs 仅 L2。</p></button>
+          <button class="goal-card" data-goal="thread" data-requires="none"><h4>线程故障</h4><p>7 种模式。</p></button>
+          <button class="goal-card" data-goal="instance" data-requires="java-multi"><h4>实例分流/故障</h4><p>定向 app-N 与摘除。</p><div class="lock">需 ≥2 个 Java 节点</div></button>
+          <button class="goal-card" data-goal="database" data-requires="mysql-cluster"><h4>数据库故障</h4><p>Router/主节点切换。</p><div class="lock">需 MySQL 集群</div></button>
+          <button class="goal-card" data-goal="redis" data-requires="redis-ha"><h4>Redis 切换</h4><p>Sentinel 晋升。</p><div class="lock">需 Redis 高可用</div></button>
+          <button class="goal-card disabled" data-goal="jvm" data-requires="b4"><h4>JVM/GC 对照</h4><p>JDK/GC/堆。</p><div class="lock">B4 规划中</div></button>
         </div>
+        <p class="hint">已选目标：<span id="goalSummary">吞吐基线</span>。目标决定后续变量/故障时间线的默认项，但 k6 流量配置始终存在。</p>
       </div>
 
       <div class="card wizard-panel" data-wpanel="2">
         <h3 style="margin-top:0">目标与流量路径</h3>
         <div class="grid g2">
-          <div class="field">
-            <label>流量模式 <span class="key">TRAFFIC_MODE</span></label>
-            <select id="wizMode">
-              <option value="via-nginx">经 Nginx（由 upstream 分流）</option>
-              <option value="target-instance">定向实例（绕过 Nginx）</option>
-            </select>
-            <div class="help">经 Nginx 用于整体演示与分流观察；定向实例用于实例级对照。</div>
-          </div>
-          <div class="field">
-            <label>目标实例 <span class="key">TARGET_INSTANCE</span></label>
-            <select id="wizTarget">
-              <option value="">全部（经 Nginx）</option>
-              <option>app-1</option><option>app-2</option><option>app-3</option>
-            </select>
-            <div class="help">仅在定向模式下使用；只允许固定 app 表。</div>
-          </div>
+          <div class="field"><label>流量模式 <span class="key">TRAFFIC_MODE</span></label><select id="wizMode"><option value="via-nginx">经 Nginx（upstream 分流）</option><option value="target-instance">定向实例（绕过 Nginx）</option></select><div class="help">经 Nginx 用于整体演示与分流观察；定向用于实例级对照。</div></div>
+          <div class="field"><label>目标实例 <span class="key">TARGET_INSTANCE</span></label><select id="wizTarget"><option value="">全部（经 Nginx）</option></select><div class="help">只列出已启用的 Java 节点；定向模式必须选一个。</div></div>
         </div>
-        <div class="notice info" id="wizModeNotice">当前多节点 Java 开启：定向模式可用。</div>
+        <div class="notice info" style="margin-top:10px">upstream 权重：<span id="weights">app-1=1 · app-2=1 · app-3=1（等权）</span>。定向模式绕过 Nginx，权重不参与。</div>
+        <div class="notice warn" id="wizModeNotice" style="margin-top:8px;display:none">当前少于 2 个 Java 节点：实例分流/实例故障不可用；定向仍可用。</div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="3">
-        <h3 style="margin-top:0">配置实验变量</h3>
-        <div class="param-group active" data-exp-panel="bench">
-          <div class="grid g3">
-            <div class="field"><label>场景 <span class="key">scenario</span></label><select id="wizScenario"><option>smoke</option><option selected>load</option><option>spike</option></select><div class="help">仅 UI 白名单：smoke/load/spike。</div></div>
-            <div class="field"><label>峰值 VU <span class="key">LOAD_VUS</span></label><input class="input" value="200"><div class="help">保持阶段并发；上限 1000。</div></div>
-            <div class="field"><label>总时长 <span class="key">LOAD_DURATION</span></label><input class="input" value="10m"><div class="help">k6 duration；上限 3600s。</div></div>
-          </div>
-          <p class="hint">完整字段见 Benchmark 页的结构化表单；向导只展示本次要改的变量。</p>
-        </div>
-        <div class="param-group" data-exp-panel="penetration">
-          <div class="notice info">缓存穿透：k6 采样的商品 ID 允许超出数据库范围；越界 ID 会触发 DB 不存在路径，用于验证空值缓存/布隆过滤。</div>
-          <p class="hint">商品 ID 范围与分布控件在 Benchmark 页可完整演示。</p>
-        </div>
-        <div class="param-group" data-exp-panel="cacheab">
-          <p class="hint">A 组 L1+L2，B 组仅 L2；同数据集、VU、时长。C/D 组需 chaos-proxy 模拟 Redis 不可用。</p>
-        </div>
+        <h3 style="margin-top:0">变量与配置组</h3>
+        <p class="hint">只展示“本次改变”的变量；基线组与实验组必须同数据集、同流量模型，差异清单用于公平对照。JVM/GC 配置组由 B4 提供，应用/重建必须在预检查前完成。</p>
+        <table class="table">
+          <thead><tr><th>实例</th><th>基线组</th><th>实验组</th><th>差异</th></tr></thead>
+          <tbody>
+            <tr><td>app-1</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">-Xmx 512→256m · ParallelGC</span></td></tr>
+            <tr><td>app-2</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">L1 关闭 · 队列 500→200</span></td></tr>
+            <tr><td>app-3</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">无差异（对照组）</span></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row" style="margin-top:9px"><button class="btn ghost" onclick="showPage('instances')">编辑配置组（实例页）</button><span class="chip gray" data-tip="配置组应用/重建/健康确认属 B4；run 中禁止修改启动参数。">B4 应用</span></div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="4">
-        <h3 style="margin-top:0">故障（可选）</h3>
-        <div class="grid g3">
-          <div class="field"><label>故障目标</label><select><option>不注入</option><option>jl-app-2</option><option>jl-redis-1</option></select></div>
-          <div class="field"><label>动作</label><select><option>freeze</option><option>kill</option><option>restart</option></select></div>
-          <div class="field"><label>自动恢复 TTL</label><input class="input" value="120"><div class="help">秒；最大 600。留空=手动保持。</div></div>
+        <h3 style="margin-top:0">流量与执行配置</h3>
+        <div class="notice info">k6 是本次实验的统一流量触发层；以下配置对所有已选实验目标生效。</div>
+        <div class="grid g3" style="margin-top:9px">
+          <div class="field"><label>场景 <span class="key">scenario</span></label><select id="wizScenario"><option>smoke</option><option selected>load</option><option>spike</option></select><div class="help" data-tip="smoke=最小完整流程；load=爬坡+保持；spike=短时尖峰；stress/soak 仅 CLI。">只开放 smoke/load/spike；stress/soak 仅 CLI。</div></div>
+          <div class="field load-only"><label>峰值 VU <span class="key">LOAD_VUS</span></label><input class="input" data-key="LOAD_VUS" value="200"><div class="help" data-tip="VU=虚拟并发用户数，不是服务端线程数；每个 VU 按脚本反复执行。">保持阶段并发；上限 1000。</div></div>
+          <div class="field load-only"><label>总时长 <span class="key">LOAD_DURATION</span></label><input class="input" data-key="LOAD_DURATION" value="10m"><div class="help">k6 duration；上限 3600s。</div></div>
         </div>
-        <p class="hint">手动保持会明确标注“不会自动恢复”，结束时需确认清理。</p>
+        <div class="param-group active" data-wizbench="load" style="margin-top:8px">
+          <div class="grid g3">
+            <div class="field"><label>起始 VU <span class="key">LOAD_START_VUS</span></label><input class="input" data-key="LOAD_START_VUS" value="50"><div class="help">爬升起点并发。</div></div>
+            <div class="field"><label>爬升占比 <span class="key">LOAD_RAMP_UP_FRACTION</span></label><input class="input" data-key="LOAD_RAMP_UP_FRACTION" value="0.2"><div class="help">总时长中爬升比例。</div></div>
+            <div class="field"><label>峰值爬升占比 <span class="key">LOAD_RAMP_PEAK_FRACTION</span></label><input class="input" data-key="LOAD_RAMP_PEAK_FRACTION" value="0.2"><div class="help">继续升到峰值的比例。</div></div>
+          </div>
+        </div>
+        <div class="param-group" data-wizbench="smoke" style="margin-top:8px">
+          <div class="grid g3">
+            <div class="field"><label>冒烟 VU <span class="key">SMOKE_VUS</span></label><input class="input" data-key="SMOKE_VUS" value="1"><div class="help">并发虚拟用户数。</div></div>
+            <div class="field"><label>迭代次数 <span class="key">SMOKE_ITERATIONS</span></label><input class="input" data-key="SMOKE_ITERATIONS" value="1"><div class="help">每 VU 完整流程次数。</div></div>
+            <div class="field"><label>最长时长 <span class="key">SMOKE_DURATION</span></label><input class="input" data-key="SMOKE_DURATION" value="30s"><div class="help">k6 duration。</div></div>
+          </div>
+        </div>
+        <div class="param-group" data-wizbench="spike" style="margin-top:8px">
+          <div class="grid g3">
+            <div class="field"><label>基线 VU <span class="key">SPIKE_BASELINE_VUS</span></label><input class="input" data-key="SPIKE_BASELINE_VUS" value="50"></div>
+            <div class="field"><label>基线时长 <span class="key">SPIKE_BASELINE_DURATION</span></label><input class="input" data-key="SPIKE_BASELINE_DURATION" value="30s"></div>
+            <div class="field"><label>爬升时长 <span class="key">SPIKE_RAMP_UP</span></label><input class="input" data-key="SPIKE_RAMP_UP" value="10s"></div>
+            <div class="field"><label>峰值 VU <span class="key">SPIKE_VUS</span></label><input class="input" data-key="SPIKE_VUS" value="800"></div>
+            <div class="field"><label>峰值时长 <span class="key">SPIKE_DURATION</span></label><input class="input" data-key="SPIKE_DURATION" value="60s"></div>
+            <div class="field"><label>回落时长 <span class="key">SPIKE_RAMP_DOWN</span></label><input class="input" data-key="SPIKE_RAMP_DOWN" value="10s"></div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="card-head"><h4 style="margin:0;font-size:13px">商品 ID 范围与热度分布</h4><span class="new-tag" data-tip="k6 采样范围可大于数据库范围，用于缓存穿透；正态分布让中间 ID 更热。">新需求</span></div>
+        <div class="grid g4">
+          <div class="field"><label>采样范围 <span class="key">preset</span></label><select id="wizPreset"><option value="penetration" selected>含越界（5000–20000）</option><option value="hot">库内热点（1–10000）</option><option value="custom">自定义</option></select><div class="help">含越界用于穿透；库内热点用于正态热度对照。</div></div>
+          <div class="field"><label>采样起始 ID <span class="key">PRODUCT_ID_MIN</span></label><input class="input" id="wizIdMin" value="5000"></div>
+          <div class="field"><label>采样结束 ID <span class="key">PRODUCT_ID_MAX</span></label><input class="input" id="wizIdMax" value="20000"></div>
+          <div class="field"><label>数据库范围</label><input class="input" value="1 – 10000" disabled><div class="help">固定 seed 10,000 商品。</div></div>
+        </div>
+        <div class="grid g2" style="margin-top:8px">
+          <div class="field"><label>分布 <span class="key">PRODUCT_ID_DISTRIBUTION</span></label><select id="wizDist"><option value="uniform">平均分布（每个 ID 等概率）</option><option value="normal">正态分布（中间最多）</option></select></div>
+          <div class="field"><label>热度集中度 <span class="key">PRODUCT_ID_CONCENTRATION</span></label><input type="range" class="range" id="wizConc" min="0" max="100" value="55"></div>
+        </div>
+        <div class="dist-preview" id="wizBars" style="margin-top:8px"></div>
+        <div class="bar" style="margin-top:8px"><span class="in" id="wizIn" style="width:33%"></span><span class="out" id="wizOut" style="width:67%"></span></div>
+        <div class="hint" id="wizDistText"></div>
+
+        <div class="divider"></div>
+        <div class="grid g4">
+          <div class="field"><label>P95 阈值 <span class="key">P95_MS</span></label><input class="input" data-key="P95_MS" value="300"></div>
+          <div class="field"><label>P99 阈值 <span class="key">P99_MS</span></label><input class="input" data-key="P99_MS" value="800"></div>
+          <div class="field"><label>错误率阈值 <span class="key">ERROR_RATE</span></label><input class="input" data-key="ERROR_RATE" value="0.01"></div>
+          <div class="field"><label>校验通过率 <span class="key">CHECKS_RATE</span></label><input class="input" data-key="CHECKS_RATE" value="0.99"></div>
+        </div>
+        <div class="grid g2" style="margin-top:8px">
+          <label class="check"><input type="checkbox" checked> 压测前复位数据（B3）</label>
+          <label class="check"><input type="checkbox" checked> 结束后业务对账（B3-04）</label>
+        </div>
+        <div class="field" style="margin-top:8px"><label>等效 JSON 预览</label><textarea class="input" id="wizJson" rows="3" readonly></textarea><div class="help">高级用户核对；服务端仍按白名单校验。</div></div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="5">
-        <h3 style="margin-top:0">预检查</h3>
-        <div class="rowline"><span>背景流量已停止</span><span class="chip ok" data-tip="traffic.stopped：正式 run 前必须停背景流量。">PASS</span></div>
-        <div class="rowline"><span>无残留容器故障</span><span class="chip ok" data-tip="chaos.clean：没有 ACTIVE/FAILED 的容器动作。">PASS</span></div>
-        <div class="rowline"><span>无残留网络故障</span><span class="chip warn" data-tip="toxiproxy.clean：dev 栈未启用 chaos-proxy 时是 WARN，不阻断。">WARN</span></div>
-        <div class="rowline"><span>无未结操作</span><span class="chip ok" data-tip="operations.settled：没有 REQUESTED/PENDING/UNKNOWN 操作。">PASS</span></div>
-        <div class="rowline"><span>监控关键序列可用</span><span class="chip ok" data-tip="monitoring.ready：关键 PromQL 有序列。">PASS</span></div>
-        <div class="rowline"><span>资源预算</span><span class="chip ok" data-tip="resources.budget：三实例内存预算满足。">PASS</span></div>
-        <div class="rowline"><span>镜像一致</span><span class="chip ok" data-tip="images.consistent：三实例运行镜像 id 一致。">PASS</span></div>
-        <div class="notice warn" style="margin-top:10px">WARN 可继续；BLOCKED 不可强制跳过，run 保持 DRAFT，修好环境后换幂等键重试。</div>
+        <h3 style="margin-top:0">故障时间线（可选）</h3>
+        <p class="hint">“开始偏移”相对 k6 启动；0 表示一开始就注入。恢复方式选“永不恢复”时 TTL 置灰，stop-all 仍可清理。故障会写入 run 时间线。</p>
+        <table class="table fault-table">
+          <thead><tr><th>目标</th><th>动作</th><th>开始偏移</th><th>恢复方式</th><th>TTL</th><th></th></tr></thead>
+          <tbody id="faultRows">
+            <tr><td><select><option>app-2</option><option>app-1</option><option>app-3</option><option>redis-1</option><option>mysql-1</option><option>rabbitmq</option><option>network:redis</option></select></td><td><select><option>freeze</option><option>kill</option><option>restart</option><option>deadlock</option><option>cpu-burn</option><option>latency</option></select></td><td><input class="input" value="0" style="width:80px"> 秒</td><td><select class="recover"><option>自动恢复</option><option>永不恢复</option></select></td><td><input class="input" value="120" style="width:80px"></td><td><button class="btn ghost" onclick="this.closest('tr').remove()">删除</button></td></tr>
+            <tr><td><select><option>app-1</option><option>app-2</option><option>app-3</option></select></td><td><select><option>deadlock</option><option>stuck</option><option>cpu-burn</option><option>heap-leak</option><option>oom</option><option>thread-leak</option><option>starvation</option></select></td><td><input class="input" value="30" style="width:80px"> 秒</td><td><select class="recover"><option>自动恢复</option><option>永不恢复</option></select></td><td><input class="input" value="60" style="width:80px"></td><td><button class="btn ghost" onclick="this.closest('tr').remove()">删除</button></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row" style="margin-top:8px"><button class="btn ghost" id="addFault">添加故障</button><span class="chip info" data-tip="目标/动作受基础配置与白名单约束。">白名单</span></div>
+        <div class="topo" style="margin-top:10px;gap:0"><div style="flex:1;height:26px;border-radius:6px;background:#15202c;position:relative"><span style="position:absolute;left:2%;top:5px;color:#cfe3ff;font-size:10px">0s 启动</span><span style="position:absolute;left:48%;top:5px;color:#f7dfae;font-size:10px">30s 线程故障</span><span style="position:absolute;left:78%;top:5px;color:#ffd0d0;font-size:10px">60s 恢复/结束</span></div></div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="6">
-        <h3 style="margin-top:0">执行与观测</h3>
-        <div class="grid g3">
-          <div class="card tight"><div class="muted tiny">Run ID</div><div class="mono">run-20261028-020</div></div>
-          <div class="card tight"><div class="muted tiny">状态</div><span class="chip ok" data-tip="RUNNING：k6 已启动并持有写锁。">RUNNING</span></div>
-          <div class="card tight"><div class="muted tiny">k6</div><span class="chip ok" data-tip="容器运行中；日志与报告在实验记录页。">RUNNING</span></div>
+        <h3 style="margin-top:0">预检查与执行</h3>
+        <div class="grid g2">
+          <div class="field"><label>测试名称 <span class="key">name</span></label><input class="input" id="wizName" value="缓存穿透基线"></div>
+          <div class="field"><label>Run ID</label><input class="input" value="启动后生成（run-YYYYMMDD-NNN）" disabled></div>
         </div>
-        <div class="rowline" style="margin-top:8px"><span class="muted">操作</span><div class="btn-row"><button class="btn danger" onclick="toast('已发出停止请求；RUNNING→STOPPING→COMPLETED')">停止实验</button><button class="btn ghost" onclick="showPage('runs')">查看实验记录</button></div></div>
+        <div style="margin-top:10px">
+          <div class="rowline"><span>背景流量已停止</span><span class="chip ok" data-tip="traffic.stopped。">PASS</span></div>
+          <div class="rowline"><span>无残留容器故障</span><span class="chip ok" data-tip="chaos.clean。">PASS</span></div>
+          <div class="rowline"><span>无残留网络故障</span><span class="chip warn" data-tip="toxiproxy.clean：dev 未启用 chaos-proxy 时 WARN。">WARN</span></div>
+          <div class="rowline"><span>无未结操作</span><span class="chip ok" data-tip="operations.settled。">PASS</span></div>
+          <div class="rowline"><span>监控关键序列</span><span class="chip ok" data-tip="monitoring.ready。">PASS</span></div>
+          <div class="rowline"><span>资源预算 / 镜像一致</span><span class="chip ok" data-tip="resources.budget / images.consistent。">PASS</span></div>
+        </div>
+        <div class="notice warn" style="margin-top:9px">WARN 可继续；BLOCKED 不可强制跳过，run 保持 DRAFT。启动成功后自动跳转「实时监控与操作」。</div>
+        <div class="btn-row" style="margin-top:10px"><button class="btn" onclick="toast('预检查 PASS（1 WARN）')">重新预检查</button><button class="btn primary" id="wizStart">启动实验并进入监控</button></div>
       </div>
 
       <div class="card wizard-panel" data-wpanel="7">
         <h3 style="margin-top:0">报告与对比</h3>
         <div class="grid g3">
+          <div class="card tight"><div class="muted tiny">测试名称</div><div class="strong" id="reportName">缓存穿透基线</div></div>
           <div class="card tight"><div class="muted tiny">性能判定</div><span class="chip ok" data-tip="阈值全部满足。">PASS</span></div>
-          <div class="card tight"><div class="muted tiny">业务对账</div><span class="chip gray" data-tip="B3-04 规划；未接线时明确 DEGRADED，不冒充 PASS。">B3 规划</span></div>
-          <div class="card tight"><div class="muted tiny">证据等级</div><span class="chip info" data-tip="单次 run 标“演示性结果，未重复验证”。">单次</span></div>
+          <div class="card tight"><div class="muted tiny">业务对账</div><span class="chip gray" data-tip="B3-04 规划；未接线时 DEGRADED。">B3 规划</span></div>
         </div>
-        <div class="hint">报告保存配置、指标窗口、故障时间线、k6 summary；B5 提供两次对比与 N 次中位数。</div>
+        <table class="table" style="margin-top:10px">
+          <thead><tr><th>指标</th><th>本次</th><th>基线</th><th>差值</th></tr></thead>
+          <tbody>
+            <tr><td>RPS</td><td>1,240</td><td>1,000</td><td class="diff">+24%</td></tr>
+            <tr><td>P95 / P99</td><td>86 / 142 ms</td><td>110 / 190 ms</td><td class="diff">-22% / -25%</td></tr>
+            <tr><td>错误率</td><td>0.2%</td><td>0.8%</td><td class="diff">-0.6pp</td></tr>
+            <tr><td>GC 暂停 / 堆峰值</td><td>42 ms / 380 MB</td><td>55 ms / 410 MB</td><td class="diff">-13 ms</td></tr>
+            <tr><td>池拒绝 / Hikari 等待</td><td>0 / 2 ms</td><td>3 / 8 ms</td><td class="diff">改善</td></tr>
+            <tr><td>L1 / L2 命中率</td><td>82% / 91%</td><td>80% / 90%</td><td class="diff">+2pp / +1pp</td></tr>
+            <tr><td>业务对账</td><td>B3 规划</td><td>—</td><td class="diff">未接线</td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row" style="margin-top:10px"><button class="btn" onclick="showPage('runs')">打开实验记录</button><button class="btn ghost" onclick="toast('对比已加入（B5）')">加入对比</button><button class="btn ghost" onclick="toast('报告已归档（演示）')">归档报告</button></div>
       </div>
 
       <div class="btn-row" style="justify-content:space-between">
         <button class="btn ghost" id="wizPrev">上一步</button>
-        <div class="btn-row">
-          <button class="btn ghost" onclick="toast('草稿已保存（本地）')">保存草稿</button>
-          <button class="btn" onclick="toast('预检查 PASS（1 WARN）')">执行预检查</button>
-          <button class="btn primary" id="wizNext">下一步</button>
-        </div>
+        <div class="btn-row"><button class="btn ghost" onclick="toast('草稿已保存（本地）')">保存草稿</button><button class="btn primary" id="wizNext">下一步</button></div>
       </div>
     </section>
 
-    <!-- ============================== 实例 ============================== -->
+    <!-- 实例 -->
     <section class="page" data-page="instances">
-      <div class="notice info">实例/JVM 配置页属 B4 规划：这里保留字段与交互形态，应用按钮暂不可用。JDK8 外壳标记 <span class="chip gray" data-tip="LIMITED-OBSERVABILITY：支持镜像/参数/重启/GC 日志回读；热配置回读不可用。">LIMITED-OBSERVABILITY</span>。</div>
+      <div class="notice info">实例/JVM 配置属 B4：本页是“当前状态 + 配置组库”，向导第 3 步只引用配置组；应用/重建/健康确认在预检查前完成。未启用节点置灰。</div>
       <div class="grid g3">
-        <div class="card">
+        <div class="card" data-instance-card="app-1">
           <div class="card-head"><h3>app-1</h3><span class="chip ok" data-tip="配置已生效。">已生效</span></div>
-          <div class="field"><label>JDK 版本 <span class="key">jdkVersion</span></label><select><option>21</option><option>8</option></select></div>
-          <div class="field" style="margin-top:8px"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>初始堆 <span class="key">-Xms</span></label><input class="input" value="256"></div>
-            <div class="field"><label>最大堆 <span class="key">-Xmx</span></label><input class="input" value="512"></div>
-          </div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>G1</option><option>Parallel</option></select></div>
-            <div class="field"><label>G1 停顿 <span class="key">maxGcPauseMillis</span></label><input class="input" value="200"></div>
-          </div>
-          <div class="field" style="margin-top:8px"><label>业务线程池 <span class="key">core/max/queue</span></label><input class="input" value="16 / 64 / 500"></div>
-          <div class="field" style="margin-top:8px"><label>Caffeine L1 <span class="key">caffeineEnabled</span></label><select><option>开启</option><option>关闭</option></select></div>
+          <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>baseline</option><option>experiment-A</option></select></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>21</option><option>8（已验证镜像）</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>G1</option><option>Parallel</option></select></div></div>
+          <div class="field" style="margin-top:8px"><label>业务池 <span class="key">core/max/queue</span></label><input class="input" value="16 / 64 / 500"></div>
+          <div class="field" style="margin-top:8px"><label>Caffeine L1</label><select><option>开启</option><option>关闭</option></select></div>
           <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
         </div>
-        <div class="card">
+        <div class="card" data-instance-card="app-2">
           <div class="card-head"><h3>app-2</h3><span class="chip warn" data-tip="目标值已保存，需重启 JVM。">待重启</span></div>
-          <div class="field"><label>JDK 版本 <span class="key">jdkVersion</span></label><select><option>21</option></select></div>
-          <div class="field" style="margin-top:8px"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option></select></div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>初始堆 <span class="key">-Xms</span></label><input class="input" value="128"></div>
-            <div class="field"><label>最大堆 <span class="key">-Xmx</span></label><input class="input" value="256"></div>
-          </div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>Parallel</option><option>G1</option></select></div>
-            <div class="field"><label>G1 停顿 <span class="key">maxGcPauseMillis</span></label><input class="input" value="—"></div>
-          </div>
-          <div class="field" style="margin-top:8px"><label>业务线程池 <span class="key">core/max/queue</span></label><input class="input" value="8 / 32 / 200"></div>
-          <div class="field" style="margin-top:8px"><label>Caffeine L1 <span class="key">caffeineEnabled</span></label><select><option>关闭</option><option>开启</option></select></div>
+          <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>experiment-A</option><option>baseline</option></select></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>21</option><option>8（已验证镜像）</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="128 / 256 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>Parallel</option><option>G1</option></select></div></div>
+          <div class="field" style="margin-top:8px"><label>业务池 <span class="key">core/max/queue</span></label><input class="input" value="8 / 32 / 200"></div>
+          <div class="field" style="margin-top:8px"><label>Caffeine L1</label><select><option>关闭</option><option>开启</option></select></div>
           <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
         </div>
-        <div class="card">
-          <div class="card-head"><h3>JDK 8 外壳</h3><span class="chip gray" data-tip="LIMITED-OBSERVABILITY：热配置回读 READBACK_UNAVAILABLE，指标用 GC 日志/JMX/外部采集兜底。">LIMITED</span></div>
-          <div class="field"><label>JDK 版本 <span class="key">jdkVersion</span></label><select><option>8</option></select></div>
-          <div class="field" style="margin-top:8px"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk8</option></select></div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>初始堆 <span class="key">-Xms</span></label><input class="input" value="256"></div>
-            <div class="field"><label>最大堆 <span class="key">-Xmx</span></label><input class="input" value="512"></div>
-          </div>
-          <div class="field" style="margin-top:8px"><label>GC 日志 <span class="key">gcLogEnabled</span></label><select><option>开启</option><option>关闭</option></select></div>
-          <div class="hint">仅支持容器/进程/GC 日志回读；应用内指标不完整。</div>
+        <div class="card" data-instance-card="app-3">
+          <div class="card-head"><h3>app-3 · JDK8 外壳</h3><span class="chip gray" data-tip="LIMITED-OBSERVABILITY：热配置回读不可用；指标用 GC 日志/JMX/外部采集。">LIMITED</span></div>
+          <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>experiment-B</option><option>baseline</option></select></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>8</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk8</option></select></div></div>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC 日志</label><select><option>开启</option><option>关闭</option></select></div></div>
+          <div class="hint">仅支持容器/进程/GC 日志回读；应用内指标不完整，报告需标注来源。</div>
           <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
         </div>
       </div>
+      <div class="card"><div class="card-head"><h3>配置组库</h3><span class="chip gray" data-tip="B4：保存的 JDK/堆/GC/业务池/缓存组合；向导按组引用。">B4</span></div>
+        <table class="table"><thead><tr><th>配置组</th><th>JDK / GC / 堆</th><th>业务池</th><th>缓存</th><th>用途</th></tr></thead><tbody>
+          <tr><td>baseline</td><td>21 / G1 / 256-512m</td><td>16/64/500</td><td>L1 开</td><td>基线组</td></tr>
+          <tr><td>experiment-A</td><td>21 / Parallel / 128-256m</td><td>8/32/200</td><td>L1 关</td><td>堆/GC/缓存对照</td></tr>
+          <tr><td>experiment-B</td><td>8 / 适用 GC / 256-512m</td><td>16/64/500</td><td>L1 开</td><td>JDK 对照（LIMITED）</td></tr>
+        </tbody></table>
+      </div>
     </section>
 
-    <!-- ============================== Benchmark ============================== -->
+    <!-- Benchmark -->
     <section class="page" data-page="bench">
       <div class="card">
-          <div class="card-head"><h3>结构化实验参数</h3><span class="chip info" data-tip="根据场景动态展开；每项都有中文名、说明与默认值。">中文表单</span></div>
-          <div class="grid g2">
-            <div class="field"><label>场景 <span class="key">scenario</span></label><select id="benchScenario"><option>smoke</option><option selected>load</option><option>spike</option></select><div class="help">只开放 smoke/load/spike；stress/soak 仅 CLI。</div></div>
-            <div class="field"><label>流量模式 <span class="key">TRAFFIC_MODE</span></label><select id="benchMode"><option value="via-nginx">经 Nginx</option><option value="target-instance">定向实例</option></select><div class="help">定向模式需多节点 Java。</div></div>
-          </div>
-          <div class="field" style="margin-top:9px"><label>目标实例 <span class="key">TARGET_INSTANCE</span></label><select id="benchTarget"><option value="">全部（经 Nginx）</option><option>app-1</option><option>app-2</option><option>app-3</option></select><div class="help">只允许固定 app 表；via-nginx 时必须留空。</div></div>
-
-          <div class="param-group" data-bench="smoke" style="margin-top:10px">
-            <div class="grid g3">
-              <div class="field"><label>冒烟并发 VU <span class="key">SMOKE_VUS</span></label><input class="input" data-key="SMOKE_VUS" value="1"><div class="help">同时发请求的虚拟用户数，1–1000。</div></div>
-              <div class="field"><label>迭代次数 <span class="key">SMOKE_ITERATIONS</span></label><input class="input" data-key="SMOKE_ITERATIONS" value="1"><div class="help">每 VU 执行完整流程次数。</div></div>
-              <div class="field"><label>最长时长 <span class="key">SMOKE_DURATION</span></label><input class="input" data-key="SMOKE_DURATION" value="30s"><div class="help">k6 duration，≤3600s。</div></div>
-            </div>
-          </div>
-          <div class="param-group active" data-bench="load" style="margin-top:10px">
-            <div class="grid g3">
-              <div class="field"><label>起始 VU <span class="key">LOAD_START_VUS</span></label><input class="input" data-key="LOAD_START_VUS" value="50"><div class="help">爬升起点并发。</div></div>
-              <div class="field"><label>峰值 VU <span class="key">LOAD_VUS</span></label><input class="input" data-key="LOAD_VUS" value="200"><div class="help">保持阶段并发，≥起始且≤1000。</div></div>
-              <div class="field"><label>总时长 <span class="key">LOAD_DURATION</span></label><input class="input" data-key="LOAD_DURATION" value="10m"><div class="help">整个负载阶段时长，≤3600s。</div></div>
-              <div class="field"><label>爬升占比 <span class="key">LOAD_RAMP_UP_FRACTION</span></label><input class="input" data-key="LOAD_RAMP_UP_FRACTION" value="0.2"><div class="help">总时长中爬升比例；与下一项之和 <1。</div></div>
-              <div class="field"><label>峰值爬升占比 <span class="key">LOAD_RAMP_PEAK_FRACTION</span></label><input class="input" data-key="LOAD_RAMP_PEAK_FRACTION" value="0.2"><div class="help">继续升到峰值的比例。</div></div>
-              <div class="field"><label>预热时间 <span class="key">warmup</span></label><input class="input" value="30s" disabled><div class="help">B2 暂未单独暴露；预留。</div></div>
-            </div>
-          </div>
-          <div class="param-group" data-bench="spike" style="margin-top:10px">
-            <div class="grid g3">
-              <div class="field"><label>基线 VU <span class="key">SPIKE_BASELINE_VUS</span></label><input class="input" data-key="SPIKE_BASELINE_VUS" value="50"></div>
-              <div class="field"><label>基线时长 <span class="key">SPIKE_BASELINE_DURATION</span></label><input class="input" data-key="SPIKE_BASELINE_DURATION" value="30s"></div>
-              <div class="field"><label>爬升时长 <span class="key">SPIKE_RAMP_UP</span></label><input class="input" data-key="SPIKE_RAMP_UP" value="10s"></div>
-              <div class="field"><label>峰值 VU <span class="key">SPIKE_VUS</span></label><input class="input" data-key="SPIKE_VUS" value="800"></div>
-              <div class="field"><label>峰值时长 <span class="key">SPIKE_DURATION</span></label><input class="input" data-key="SPIKE_DURATION" value="60s"></div>
-              <div class="field"><label>回落时长 <span class="key">SPIKE_RAMP_DOWN</span></label><input class="input" data-key="SPIKE_RAMP_DOWN" value="10s"></div>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-          <div class="card-head"><h4 style="margin:0;font-size:13px">商品 ID 范围与热度分布</h4><span class="new-tag" data-tip="新增需求：k6 采样范围可以大于数据库范围，用于缓存穿透；正态分布让中间 ID 更热。">新需求</span></div>
-          <div class="grid g4">
-            <div class="field"><label>采样范围 <span class="key">preset</span></label><select id="idPreset"><option value="penetration" selected>含越界（5000–20000）</option><option value="hot">库内热点（1–10000）</option><option value="custom">自定义</option></select><div class="help">含越界用于穿透/空值缓存/布隆；库内热点用于正态热度对照。</div></div>
-            <div class="field"><label>采样起始 ID <span class="key">PRODUCT_ID_MIN</span></label><input class="input" id="idMin" value="5000"><div class="help">k6 采样的最小商品 ID。</div></div>
-            <div class="field"><label>采样结束 ID <span class="key">PRODUCT_ID_MAX</span></label><input class="input" id="idMax" value="20000"><div class="help">k6 采样的最大商品 ID；可大于数据库上限。</div></div>
-            <div class="field"><label>数据库范围</label><input class="input" value="1 – 10000" disabled><div class="help">固定 seed 10,000 商品；越界 ID 走不存在路径。</div></div>
-          </div>
-          <div class="grid g2" style="margin-top:9px">
-            <div class="field"><label>分布 <span class="key">PRODUCT_ID_DISTRIBUTION</span></label><select id="dist"><option value="uniform">平均分布（每个 ID 等概率）</option><option value="normal">正态分布（中间最多）</option></select><div class="help">平均分布用于基线；正态分布让中间 ID 更热，用于热点/穿透对照。</div></div>
-            <div class="field"><label>热度集中度 <span class="key">PRODUCT_ID_CONCENTRATION</span></label><input type="range" class="range" id="conc" min="0" max="100" value="55"><div class="help">正态分布下越大，中间商品越热；平均分布时忽略。</div></div>
-          </div>
-          <div class="field" style="margin-top:9px"><label>分布预览</label><div class="dist-preview" id="distBars"></div></div>
-          <div class="bar" style="margin-top:9px"><span class="in" id="inBar" style="width:33%"></span><span class="out" id="outBar" style="width:67%"></span></div>
-          <div class="hint" id="distText">DB 范围 1–10000；k6 采样 5000–20000：库内约 33%，越界约 67%。越界 ID 会触发缓存穿透路径。</div>
-
-          <div class="divider"></div>
-          <div class="grid g4">
-            <div class="field"><label>P95 阈值 <span class="key">P95_MS</span></label><input class="input" data-key="P95_MS" value="300"><div class="help">毫秒。</div></div>
-            <div class="field"><label>P99 阈值 <span class="key">P99_MS</span></label><input class="input" data-key="P99_MS" value="800"><div class="help">毫秒。</div></div>
-            <div class="field"><label>错误率阈值 <span class="key">ERROR_RATE</span></label><input class="input" data-key="ERROR_RATE" value="0.01"><div class="help">0–1。</div></div>
-            <div class="field"><label>校验通过率 <span class="key">CHECKS_RATE</span></label><input class="input" data-key="CHECKS_RATE" value="0.99"><div class="help">0–1。</div></div>
-          </div>
-          <div class="grid g2" style="margin-top:9px">
-            <div class="field"><label>备注 <span class="key">note</span></label><input class="input" value="load-baseline"><div class="help">台账/清理标记，≤200 字符。</div></div>
-            <div class="field"><label>等效 JSON 预览</label><textarea class="input" id="jsonPreview" rows="3" readonly></textarea><div class="help">高级用户可核对；服务端仍按白名单校验。</div></div>
-          </div>
-          <div class="btn-row" style="margin-top:12px">
-            <button class="btn" onclick="toast('预检查 PASS（1 WARN）')">预检查</button>
-            <button class="btn primary" onclick="toast('已创建 DRAFT 并启动 k6（演示）')">创建并启动</button>
-            <button class="btn ghost" onclick="toast('已停止当前活动 run')">停止活动</button>
-          </div>
-        </div>
-
+        <div class="card-head"><h3>场景库</h3><span class="tiny muted">执行配置已移入向导第 4 步</span></div>
         <div class="grid g3">
-          <div class="card">
-            <div class="card-head"><h3>场景目录</h3><span class="chip ok" data-tip="views.ui：只显示可启动场景；manifest 缺失时为 DEGRADED。">OK</span></div>
-            <div class="rowline"><div><div class="strong">smoke</div><div class="hint">冒烟：完整流程 1 次，写数据；P95/P99 判定。</div></div><span class="chip gray">1 VU / 30s</span></div>
-            <div class="rowline"><div><div class="strong">load</div><div class="hint">只读商品：爬升→峰值→保持；不消耗库存。</div></div><span class="chip gray">200 VU / 10m</span></div>
-            <div class="rowline"><div><div class="strong">spike</div><div class="hint">尖峰：秒杀商品；写库存；关注 409/429。</div></div><span class="chip gray">800 VU / 60s</span></div>
-            <div class="hint">stress/soak 只在 CLI；bandwidth 毒性首期隐藏。</div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>k6 执行</h3><span class="chip ok" data-tip="RUNNING：k6 容器运行中；日志/报告在实验记录页。">RUNNING</span></div>
-            <dl class="kv">
-              <dt>容器</dt><dd class="mono">jl-k6-run-20261028-020</dd>
-              <dt>场景</dt><dd id="k6Scenario">load</dd>
-              <dt>流量</dt><dd id="k6Traffic">via-nginx · 三实例</dd>
-              <dt>退出码</dt><dd>—</dd>
-              <dt>报告</dt><dd>未生成</dd>
-            </dl>
-            <div class="btn-row" style="margin-top:9px"><button class="btn ghost" onclick="toast('日志 tail=100（演示）')">刷新日志</button><button class="btn ghost" disabled>下载报告</button></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>实例分流</h3><span class="chip gray" data-tip="B5-02 规划：按实例展示请求数/占比/P95；未接线时显示不可用。">B5 规划</span></div>
-            <table class="table"><thead><tr><th>实例</th><th>请求数</th><th>占比</th><th>P95</th></tr></thead><tbody>
-              <tr><td>app-1</td><td>—</td><td>—</td><td>—</td></tr>
-              <tr><td>app-2</td><td>—</td><td>—</td><td>—</td></tr>
-              <tr><td>app-3</td><td>—</td><td>—</td><td>—</td></tr>
-            </tbody></table>
-            <div class="hint">无数据不显示 0；定向模式应只命中 app-2。</div>
-          </div>
+          <div class="card tight"><div class="card-head"><h4 style="margin:0">smoke</h4><span class="chip gray">1 VU / 30s</span></div><div class="hint" data-tip="最小完整流程：登录→商品→下单→秒杀；写数据，用于连通性与阈值冒烟。">最小完整流程；写数据，判阈值。</div><button class="btn ghost" style="margin-top:8px" onclick="useScenario('smoke')">用此场景打开向导</button></div>
+          <div class="card tight"><div class="card-head"><h4 style="margin:0">load</h4><span class="chip gray">200 VU / 10m</span></div><div class="hint" data-tip="爬坡到峰值并保持的稳态压测；只读商品，不消耗库存。">稳态压测；只读商品，不消耗库存。</div><button class="btn ghost" style="margin-top:8px" onclick="useScenario('load')">用此场景打开向导</button></div>
+          <div class="card tight"><div class="card-head"><h4 style="margin:0">spike</h4><span class="chip gray">800 VU / 60s</span></div><div class="hint" data-tip="短时尖峰；秒杀商品，写库存；关注 409/429。">短时尖峰；写库存，关注 409/429。</div><button class="btn ghost" style="margin-top:8px" onclick="useScenario('spike')">用此场景打开向导</button></div>
         </div>
+        <div class="hint">stress/soak 仅 CLI；bandwidth 毒性首期隐藏。k6 参数（VU/时长/ID 分布/阈值）统一在向导第 4 步配置。</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>最近运行</h3><button class="btn ghost" onclick="toast('已刷新（演示）')">刷新</button></div>
+        <table class="table"><thead><tr><th>测试名称</th><th>Run ID</th><th>场景</th><th>状态</th><th>RPS</th><th>P95</th><th>错误率</th></tr></thead><tbody>
+          <tr><td>缓存穿透基线</td><td class="mono">run-20261028-020</td><td>load</td><td><span class="chip ok" data-tip="RUNNING。">RUNNING</span></td><td>1,240</td><td>86 ms</td><td>0.2%</td></tr>
+          <tr><td>L1 关闭对照</td><td class="mono">run-20261028-017</td><td>load</td><td><span class="chip ok" data-tip="COMPLETED。">COMPLETED</span></td><td>1,100</td><td>104 ms</td><td>0.4%</td></tr>
+          <tr><td>主节点故障</td><td class="mono">run-20261028-014</td><td>load</td><td><span class="chip bad" data-tip="FAILED：k6 超时。">FAILED</span></td><td>—</td><td>—</td><td>—</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>两次对比（B5-03）</h3><span class="chip gray" data-tip="选择两个 run 后展示指标差值；单次结果标演示性。">B5 规划</span></div>
+        <table class="table"><thead><tr><th>指标</th><th>run-020</th><th>run-017</th><th>差值</th></tr></thead><tbody>
+          <tr><td>RPS</td><td>1,240</td><td>1,100</td><td class="diff">+12.7%</td></tr>
+          <tr><td>P95 / P99</td><td>86 / 142 ms</td><td>104 / 176 ms</td><td class="diff">-17% / -19%</td></tr>
+          <tr><td>错误率</td><td>0.2%</td><td>0.4%</td><td class="diff">-0.2pp</td></tr>
+        </tbody></table>
+      </div>
     </section>
 
-    <!-- ============================== 监控 ============================== -->
+    <!-- 监控与操作 -->
     <section class="page" data-page="observe">
+      <div class="card">
+        <div class="card-head"><h3>当前实验 · 缓存穿透基线</h3><div class="btn-row"><span class="chip ok" data-tip="RUNNING。">RUNNING</span><span class="chip info" data-tip="Prometheus 抓取间隔 15s；面板刷新 5s。" id="refreshInfo">数据 14:23:30 · 抓取 15s · 刷新 5s</span><button class="btn ghost" onclick="toast('已刷新面板')">刷新</button><button class="btn ghost" onclick="toast('打开 Grafana 当前时间范围（演示）')">Grafana 面板</button><button class="btn ghost" onclick="toast('打开实验工具（演示）')">实验工具</button></div></div>
+        <div class="k6prog">
+          <div class="progress"><i style="width:62%"></i></div>
+          <div class="timeaxis"><span>已运行 02:31 / 计划 04:00</span><span>VU 200 / 200</span><span>iterations 12,430 · 82/s</span><span>http_reqs 1,240/s</span></div>
+        </div>
+      </div>
+
       <div class="grid g4">
         <div class="card kpi"><div class="m"><span class="l">RPS</span><span class="chip ok" data-tip="OK：窗口内有真实序列。">OK</span></div><div class="v">1,240</div><div class="hint">更新 14:23:30</div></div>
-        <div class="card kpi"><div class="m"><span class="l">P95</span><span class="chip ok" data-tip="OK：来自 histogram_quantile，并非均值推算。">OK</span></div><div class="v">86 ms</div><div class="hint">更新 14:23:30</div></div>
-        <div class="card kpi"><div class="m"><span class="l">错误率</span><span class="chip ok" data-tip="OK：5xx/总请求。">OK</span></div><div class="v">0.2%</div><div class="hint">更新 14:23:30</div></div>
-        <div class="card kpi"><div class="m"><span class="l">executor.rejected</span><span class="chip gray" data-tip="NO_DATA：当前没有导出名，等 B4-01 接线；不显示 0。">NO_DATA</span></div><div class="v">—</div><div class="hint">未接线</div></div>
+        <div class="card kpi"><div class="m"><span class="l">P95</span><span class="chip ok" data-tip="来自 histogram_quantile，并非均值推算。">OK</span></div><div class="v">86 ms</div><div class="hint">更新 14:23:30</div></div>
+        <div class="card kpi"><div class="m"><span class="l">错误率</span><span class="chip ok" data-tip="5xx/总请求。">OK</span></div><div class="v">0.2%</div><div class="hint">更新 14:23:30</div></div>
+        <div class="card kpi"><div class="m"><span class="l">executor.rejected</span><span class="chip gray" data-tip="NO_DATA：没有导出名，等 B4-01 接线；不显示 0。">NO_DATA</span></div><div class="v">—</div><div class="hint">未接线</div></div>
       </div>
+
       <div class="grid g2">
         <div class="card">
-          <div class="card-head"><h3>实时拓扑</h3><div class="btn-row"><span class="chip info" data-tip="B5-01：热度维度切换；阈值可配置。">热度：综合</span><span class="chip gray">图例</span></div></div>
-          <div class="topo">
-            <div class="node">Nginx<small>upstream 1.2k/s</small></div><span class="arrow">→</span>
-            <div class="stack" id="observeApps">
-              <div class="node app">app-1<small>CPU 42% · P95 81ms</small></div>
-              <div class="node app warn">app-2<small>CPU 78% · P95 122ms</small></div>
-              <div class="node app">app-3<small>CPU 39% · P95 79ms</small></div>
-            </div><span class="arrow">→</span>
-            <div class="stack"><div class="node">Redis<small>L1 82% / L2 91%</small></div><div class="node">MySQL<small>QPS 320</small></div></div>
+          <div class="card-head"><h3>请求性能（时间轴）</h3><span class="chip info" data-tip="数据源 Prometheus；Grafana 读同一数据源。">Prometheus / Grafana 同源</span></div>
+          <div class="chart">
+            <svg viewBox="0 0 600 170" preserveAspectRatio="none">
+              <g stroke="#1c2a3a" stroke-width="1"><line x1="0" y1="30" x2="600" y2="30"/><line x1="0" y1="70" x2="600" y2="70"/><line x1="0" y1="110" x2="600" y2="110"/><line x1="0" y1="150" x2="600" y2="150"/><line x1="120" y1="20" x2="120" y2="150"/><line x1="240" y1="20" x2="240" y2="150"/><line x1="360" y1="20" x2="360" y2="150"/><line x1="480" y1="20" x2="480" y2="150"/></g>
+              <polyline fill="none" stroke="#38d39f" stroke-width="2" points="0,110 60,105 120,98 180,100 240,88 300,92 360,80 420,84 480,74 540,78 600,70"/>
+              <polyline fill="none" stroke="#f5b544" stroke-width="2" points="0,135 60,130 120,126 180,128 240,120 300,124 360,116 420,120 480,112 540,116 600,110"/>
+              <polyline fill="none" stroke="#ef6b6b" stroke-width="2" points="0,148 60,146 120,147 180,145 240,146 300,144 360,145 420,143 480,144 540,142 600,143"/>
+              <text x="4" y="165" fill="#5f7288" font-size="10">-10m</text><text x="140" y="165" fill="#5f7288" font-size="10">-8m</text><text x="260" y="165" fill="#5f7288" font-size="10">-6m</text><text x="380" y="165" fill="#5f7288" font-size="10">-4m</text><text x="500" y="165" fill="#5f7288" font-size="10">-2m</text><text x="575" y="165" fill="#5f7288" font-size="10">现在</text>
+            </svg>
+            <div class="legend2"><span><i class="dot" style="background:#38d39f"></i>RPS</span><span><i class="dot" style="background:#f5b544"></i>P95</span><span><i class="dot" style="background:#ef6b6b"></i>错误率</span><span class="muted">示意曲线；真实值来自 Prometheus</span></div>
           </div>
-          <div class="legend" style="margin-top:9px"><span><i class="dot" style="background:var(--accent)"></i>正常</span><span><i class="dot" style="background:var(--amber)"></i>接近阈值</span><span><i class="dot" style="background:var(--red)"></i>超过阈值</span><span><i class="dot" style="background:#5f7288"></i>无数据</span></div>
-          <div class="hint">悬停节点看实例名/健康/JDK/CPU/内存/线程/业务池/请求/P95/更新时间；无数据不显示 0。</div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>实例指标</h3><span class="chip gray" data-tip="B5-01 规划：实例表与曲线；当前为基础 KPI。">B5 规划</span></div>
+          <div class="card-head"><h3>k6 进度 / 速度（时间轴）</h3><span class="chip ok" data-tip="VU 曲线与 iterations/s 来自 k6 remote write。">k6</span></div>
+          <div class="chart">
+            <svg viewBox="0 0 600 170" preserveAspectRatio="none">
+              <g stroke="#1c2a3a" stroke-width="1"><line x1="0" y1="30" x2="600" y2="30"/><line x1="0" y1="70" x2="600" y2="70"/><line x1="0" y1="110" x2="600" y2="110"/><line x1="0" y1="150" x2="600" y2="150"/></g>
+              <polyline fill="none" stroke="#60a5fa" stroke-width="2" points="0,150 60,135 120,105 180,80 240,60 300,55 360,55 420,55 480,55 540,55 600,55"/>
+              <polyline fill="none" stroke="#38d39f" stroke-width="2" points="0,150 60,140 120,120 180,100 240,85 300,80 360,78 420,76 480,74 540,72 600,70"/>
+              <text x="4" y="165" fill="#5f7288" font-size="10">-10m</text><text x="260" y="165" fill="#5f7288" font-size="10">-6m</text><text x="500" y="165" fill="#5f7288" font-size="10">-2m</text><text x="575" y="165" fill="#5f7288" font-size="10">现在</text>
+            </svg>
+            <div class="legend2"><span><i class="dot" style="background:#60a5fa"></i>VU</span><span><i class="dot" style="background:#38d39f"></i>iterations/s</span><span class="muted">VU=虚拟并发用户数；不是服务端线程数</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card">
+          <div class="card-head"><h3>JVM / GC（时间轴）</h3><span class="chip info" data-tip="Prometheus 抓 Actuator/Micrometer；Grafana 同源。">Prometheus</span></div>
+          <div class="chart">
+            <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+              <g stroke="#1c2a3a" stroke-width="1"><line x1="0" y1="30" x2="600" y2="30"/><line x1="0" y1="70" x2="600" y2="70"/><line x1="0" y1="110" x2="600" y2="110"/></g>
+              <polyline fill="none" stroke="#a78bfa" stroke-width="2" points="0,100 60,96 120,90 180,94 240,82 300,86 360,78 420,84 480,76 540,80 600,72"/>
+              <polyline fill="none" stroke="#f5b544" stroke-width="2" points="0,125 60,120 120,118 180,122 240,115 300,118 360,112 420,116 480,110 540,114 600,108"/>
+              <text x="4" y="135" fill="#5f7288" font-size="10">-10m</text><text x="575" y="135" fill="#5f7288" font-size="10">现在</text>
+            </svg>
+            <div class="legend2"><span><i class="dot" style="background:#a78bfa"></i>堆 used</span><span><i class="dot" style="background:#f5b544"></i>GC 暂停</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>线程池 / 连接池（时间轴）</h3><span class="chip info" data-tip="业务池 active/queue/rejected 与 Hikari pending。">Prometheus</span></div>
+          <div class="chart">
+            <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+              <g stroke="#1c2a3a" stroke-width="1"><line x1="0" y1="30" x2="600" y2="30"/><line x1="0" y1="70" x2="600" y2="70"/><line x1="0" y1="110" x2="600" y2="110"/></g>
+              <polyline fill="none" stroke="#38d39f" stroke-width="2" points="0,100 60,95 120,90 180,92 240,84 300,88 360,80 420,84 480,76 540,80 600,74"/>
+              <polyline fill="none" stroke="#ef6b6b" stroke-width="2" points="0,128 60,126 120,127 180,124 240,126 300,122 360,124 420,120 480,122 540,118 600,120"/>
+              <text x="4" y="135" fill="#5f7288" font-size="10">-10m</text><text x="575" y="135" fill="#5f7288" font-size="10">现在</text>
+            </svg>
+            <div class="legend2"><span><i class="dot" style="background:#38d39f"></i>池 active</span><span><i class="dot" style="background:#ef6b6b"></i>queue / rejected</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card">
+          <div class="card-head"><h3>完整拓扑</h3><div class="btn-row"><span class="chip info" data-tip="热度维度切换属 B5；当前为健康度视图。">健康度</span><span class="chip gray">图例</span></div></div>
+          <div class="topo-grid">
+            <div class="topo-col"><div class="topo-label">入口</div><div class="node">k6 Runner<small>受控容器</small></div><div class="node">Nginx<small>round-robin</small></div></div>
+            <div class="topo-col"><div class="topo-label">Java 节点</div>
+              <div class="node app" data-node="app-1">app-1<small><i class="dot2"></i>健康</small></div>
+              <div class="node app warn" data-node="app-2">app-2<small><i class="dot2"></i>警告</small></div>
+              <div class="node app" data-node="app-3">app-3<small><i class="dot2"></i>健康</small></div>
+            </div>
+            <div class="topo-col"><div class="topo-label">Redis / Sentinel</div>
+              <div class="topo-sub">
+                <div class="topo-col"><div class="node" data-node="redis-1">redis-1<small>主 · 健康</small></div><div class="node" data-node="redis-2">redis-2<small>从 · 健康</small></div><div class="node" data-node="redis-3">redis-3<small>从 · 健康</small></div></div>
+                <div class="topo-col"><div class="node" data-node="sentinel-1">sentinel-1<small>哨兵 · 健康</small></div><div class="node" data-node="sentinel-2">sentinel-2<small>哨兵 · 健康</small></div><div class="node" data-node="sentinel-3">sentinel-3<small>哨兵 · 健康</small></div></div>
+              </div>
+            </div>
+            <div class="topo-col"><div class="topo-label">MySQL / Router</div>
+              <div class="node" data-node="mysql-1">mysql-1<small>主 · 健康</small></div>
+              <div class="node" data-node="mysql-2">mysql-2<small>从 · 健康</small></div>
+              <div class="node" data-node="mysql-3">mysql-3<small>从 · 健康</small></div>
+              <div class="node" data-node="mysql-router">mysql-router<small>6446 · 健康</small></div>
+            </div>
+            <div class="topo-col"><div class="topo-label">其他</div>
+              <div class="node" data-node="rabbitmq">RabbitMQ<small>队列</small></div>
+              <div class="node" data-node="toxiproxy">Toxiproxy<small>网络故障层</small></div>
+            </div>
+          </div>
+          <div class="hint">完整节点包含 Router/Sentinel/RabbitMQ；未启用置灰。无数据不显示 0。</div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>实例指标</h3><span class="chip gray" data-tip="B5-01：实例表与曲线完整版。">B5</span></div>
           <table class="table"><thead><tr><th>实例</th><th>Busy</th><th>Active</th><th>Queue</th><th>Hikari</th><th>状态</th></tr></thead><tbody>
-            <tr><td>app-1</td><td>42</td><td>18</td><td>0</td><td>0</td><td><span class="chip ok" data-tip="健康。">正常</span></td></tr>
-            <tr><td>app-2</td><td>80</td><td>32</td><td>120</td><td>6</td><td><span class="chip warn" data-tip="队列积压，接近阈值。">警告</span></td></tr>
-            <tr><td>app-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td><span class="chip gray" data-tip="实例被冻结。">已冻结</span></td></tr>
+            <tr><td>app-1</td><td>42</td><td>18</td><td>0</td><td>0</td><td><span class="chip ok">正常</span></td></tr>
+            <tr><td>app-2</td><td>80</td><td>32</td><td>120</td><td>6</td><td><span class="chip warn">警告</span></td></tr>
+            <tr><td>app-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td><span class="chip gray">已冻结</span></td></tr>
           </tbody></table>
-          <div class="hint">时间线：14:22 开始压测 → 14:23 app-3 freeze → 14:23 延迟上升 → 14:25 恢复。</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============================== 故障与缓存 ============================== -->
-    <section class="page" data-page="faults">
-      <div class="grid g2">
-        <div class="card">
-          <div class="card-head"><h3>容器故障</h3><span class="chip ok" data-tip="动作走 operationId；成功后写 run 故障时间线。">operation</span></div>
-          <div class="grid g2">
-            <div class="field"><label>目标容器 <span class="key">name</span></label><select><option>jl-app-2</option><option>jl-redis-1</option><option>jl-mysql-1</option></select><div class="help">只允许 lab=java-learn 白名单；探针容器受保护。</div></div>
-            <div class="field"><label>动作 <span class="key">action</span></label><select><option>freeze</option><option>kill</option><option>restart</option><option>resume</option><option>start</option></select><div class="help">kill/freeze 支持 TTL。</div></div>
-            <div class="field"><label>自动恢复 TTL <span class="key">ttlSeconds</span></label><input class="input" value="120"><div class="help">秒；最大 600；留空=手动保持。</div></div>
-            <div class="field"><label>关联实验 <span class="key">runId</span></label><input class="input" placeholder="run-…（可选）"><div class="help">写入该 run 的故障时间线；不存在 404。</div></div>
-          </div>
-          <button class="btn primary" style="margin-top:10px" onclick="toast('已注入 freeze（TTL 120s），operationId=op-8f2a')">注入故障</button>
-          <div class="divider"></div>
-          <div class="rowline"><div><div class="strong">jl-app-2 · freeze</div><div class="hint">剩余 1m 58s · 未冻结 · op-8f2a</div></div><div class="btn-row"><span class="chip ok" data-tip="ACTIVE：已生效，TTL 到点自动 resume。">ACTIVE</span><button class="btn ghost" onclick="toast('动作已撤销')">撤销</button></div></div>
-        </div>
-
-        <div class="card fault-card">
-          <div class="card-head"><h3>线程实验室 · 新入口</h3><span class="new-tag" data-tip="新入口：/chaos/instances/{name}/thread/**，返回 X-Operation-Id 并写故障时间线。">NEW</span></div>
-          <div class="grid g2">
-            <div class="field"><label>目标实例 <span class="key">instance</span></label><select><option>app-1</option><option>app-2</option><option>app-3</option></select></div>
-            <div class="field"><label>保持方式 <span class="key">hold</span></label><select><option>auto（TTL 自动恢复）</option><option>manual（不会自动恢复）</option></select></div>
-          </div>
-          <div class="field" style="margin-top:8px"><label>故障模式 <span class="key">mode</span></label></div>
-          <div class="mode-grid" id="threadModes">
-            <button class="mode selected" data-mode="deadlock">死锁<small>deadlock</small></button>
-            <button class="mode" data-mode="stuck">卡死<small>stuck</small></button>
-            <button class="mode" data-mode="cpu-burn">CPU 打满<small>cpu-burn</small></button>
-            <button class="mode" data-mode="heap-leak">堆泄漏<small>heap-leak</small></button>
-            <button class="mode" data-mode="oom">OOM<small>oom</small></button>
-            <button class="mode" data-mode="thread-leak">线程泄漏<small>thread-leak</small></button>
-            <button class="mode" data-mode="starvation">线程饥饿<small>starvation</small></button>
-          </div>
-          <div class="grid g2" style="margin-top:8px">
-            <div class="field"><label>TTL 秒 <span class="key">ttlSeconds</span></label><input class="input" value="60"><div class="help">auto 有效；manual 忽略。</div></div>
-            <div class="field"><label>虚拟线程 <span class="key">virtual</span></label><select><option>关闭</option><option>开启（JDK21）</option></select></div>
-          </div>
-          <div class="btn-row" style="margin-top:10px"><button class="btn primary" onclick="toast('已注入 deadlock（manual），operationId=op-th-4c1e')">注入线程故障</button><button class="btn ghost" onclick="toast('已停止该实例全部线程故障')">线程 stop-all</button></div>
-          <div class="divider"></div>
-          <div class="rowline"><div><div class="strong">app-1 · deadlock · manual</div><div class="hint">2 个线程 BLOCKED · op-th-4c1e</div></div><div class="btn-row"><span class="chip warn" data-tip="ACTIVE：手动保持，不会自动恢复；结束前必须清理。">手动保持</span><button class="btn ghost">暂停</button><button class="btn ghost">停止</button></div></div>
-          <div class="hint">暂停/恢复/停止单故障；stop-all 覆盖三实例。旧代理入口保留给读取/lifecycle/snapshot。</div>
-        </div>
-      </div>
-
-      <div class="grid g2">
-        <div class="card">
-          <div class="card-head"><h3>网络故障（Toxiproxy）</h3><span class="chip gray" data-tip="chaos-proxy 档才可用；dev 栈不可达时显示 DEGRADED。">仅 chaos-proxy</span></div>
-          <div class="grid g3">
-            <div class="field"><label>代理 <span class="key">proxy</span></label><select><option>redis</option><option>mysql</option></select><div class="help">Redis/MySQL 代理；固定白名单。</div></div>
-            <div class="field"><label>类型 <span class="key">type</span></label><select><option>latency 延迟</option><option>timeout 超时</option><option disabled>bandwidth（Future）</option></select><div class="help">bandwidth 首期隐藏；latency/timeout 走既有验证路径。</div></div>
-            <div class="field"><label>毒性名称 <span class="key">name</span></label><input class="input" value="latency-500"><div class="help">可选；删除时定位。</div></div>
-          </div>
-          <div class="grid g3" style="margin-top:8px">
-            <div class="field"><label>延迟 <span class="key">latencyMs</span></label><input class="input" value="500"><div class="help">毫秒；latency 类型使用。</div></div>
-            <div class="field"><label>抖动 <span class="key">jitterMs</span></label><input class="input" value="50"><div class="help">毫秒；latency 类型使用。</div></div>
-            <div class="field"><label>超时 <span class="key">timeoutMs</span></label><input class="input" value="1000"><div class="help">毫秒；timeout 类型使用。</div></div>
-          </div>
-          <div class="btn-row" style="margin-top:10px"><button class="btn" onclick="toast('已添加 toxic（演示）')">添加</button><button class="btn ghost">重置代理</button><button class="btn danger" onclick="toast('已移除全部 toxic 并启用代理')">网络 stop-all</button></div>
-          <div class="hint">bandwidth 首期隐藏；latency/timeout 走既有验证路径。</div>
-        </div>
-        <div class="card">
-          <div class="card-head"><h3>一键还原</h3><span class="chip warn" data-tip="停 k6 后 run 行仍 RUNNING、写锁未释放；需要操作员再 stop 该 run。">提示</span></div>
-          <p class="hint">顺序：容器/Toxiproxy → 背景流量 → 线程三实例 → k6 容器。失败按子项报告，不把已回滚动作报成整体失败。</p>
-          <button class="btn danger" onclick="stopAllDemo()">清除全部故障</button>
-          <div class="notice warn" style="margin-top:10px">stop-all 会停止 k6 容器，但不会自动收盘 RUNNING 的 run；请到「实验记录」再点一次 stop 释放写锁。</div>
-          <div class="notice warn" id="stopAllHint" style="display:none;margin-top:8px">k6 已停止；对应 run 仍为 RUNNING，请在实验记录页再点一次 stop 收盘并释放写锁。</div>
-          <div class="hint" style="margin-top:8px">结果会显示 reverted/failed/pending、toxiproxy、traffic、threads、k6 stopped/cleaned/failed。</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>缓存实验</h3><span class="chip gray" data-tip="B3 规划：L1 独立开关、目标/实际键数、键查询、A/B 对照。">B3 规划</span></div>
-        <div class="grid g4">
-          <div class="field"><label>L1 Caffeine</label><select><option>开启</option><option>关闭（绕过并清空）</option></select><div class="help">每实例独立。</div></div>
-          <div class="field"><label>L2 Redis</label><select><option>开启</option><option>关闭</option></select></div>
-          <div class="field"><label>目标 Redis 键数</label><input class="input" value="10000"><div class="help">目标规模，不等于实际。</div></div>
-          <div class="field"><label>L2 TTL</label><input class="input" value="300s"><div class="help">30s–30m。</div></div>
+        <div class="card-head"><h3>实时操作</h3><div class="tabs" id="opsTabs"><button class="tab active" data-tab="fault">故障</button><button class="tab" data-tab="cache">缓存</button><button class="tab" data-tab="tools">实验工具</button></div></div>
+        <div class="tab-panel active" data-tabpanel="fault">
+          <div class="grid g4">
+            <div class="field"><label>目标</label><select id="liveTarget"><option>app-1</option><option>app-2</option><option>app-3</option><option>redis-1</option><option>mysql-1</option><option>rabbitmq</option><option>network:redis</option></select></div>
+            <div class="field"><label>动作</label><select><option>freeze</option><option>kill</option><option>restart</option><option>deadlock</option><option>cpu-burn</option><option>latency</option></select></div>
+            <div class="field"><label>恢复方式</label><select id="liveRecover"><option>自动恢复</option><option>永不恢复</option></select></div>
+            <div class="field"><label>TTL 秒</label><input class="input" id="liveTtl" value="120"></div>
+          </div>
+          <div class="btn-row" style="margin-top:9px"><button class="btn primary" onclick="toast('已立即注入（运行时），写入 run 时间线')">立即注入</button><button class="btn danger" onclick="stopAllDemo()">清除全部故障</button><span class="hint">计划内故障在向导第 5 步；这里是运行时补充操作。</span></div>
+          <div class="rowline" style="margin-top:8px"><div><div class="strong">jl-app-2 · freeze</div><div class="hint">剩余 1m 58s · op-8f2a</div></div><div class="btn-row"><span class="chip ok" data-tip="ACTIVE。">ACTIVE</span><button class="btn ghost">暂停</button><button class="btn ghost">撤销</button></div></div>
+          <div class="notice warn" id="stopAllHint" style="display:none;margin-top:8px">stop-all 停 k6 后，run 仍 RUNNING；请到实验记录再 stop 收盘。</div>
         </div>
-        <div class="grid g3" style="margin-top:9px">
-          <div class="card tight"><div class="muted tiny">Redis 实际键</div><div class="mono">9,980 / 目标 10,000</div><div class="hint">差值 20 · 核验 14:23:15</div></div>
-          <div class="card tight"><div class="muted tiny">L1 实际条目</div><div class="mono">app-1 4,820 / app-3 4,790</div><div class="hint">app-2 已关闭</div></div>
-          <div class="card tight"><div class="muted tiny">命中率</div><div class="mono">L1 82% / L2 91%</div><div class="hint">DB fallback 2.1%</div></div>
+        <div class="tab-panel" data-tabpanel="cache">
+          <div class="grid g4">
+            <div class="field"><label>L1 Caffeine</label><select><option>开启</option><option>关闭（绕过并清空）</option></select></div>
+            <div class="field"><label>L2 Redis</label><select><option>开启</option><option>关闭</option></select></div>
+            <div class="field"><label>目标 Redis 键数</label><input class="input" value="10000"></div>
+            <div class="field"><label>L2 TTL</label><input class="input" value="300s"></div>
+          </div>
+          <div class="btn-row" style="margin-top:9px"><button class="btn" onclick="toast('已生成 10,000 条固定 seed 数据（演示）')">生成数据</button><button class="btn ghost">预热</button><button class="btn ghost">核验</button><button class="btn ghost" onclick="toast('键查询：SCAN 分页（演示）')">查询键</button></div>
+          <div class="hint">目标数与实际数分开显示；单键才读值；禁止 KEYS。</div>
         </div>
-        <div class="grid g2" style="margin-top:9px">
-          <div class="field"><label>键前缀查询 <span class="key">prefix</span></label><input class="input" value="cache:product:*"><div class="help">SCAN 分页，禁止 KEYS；单键才读值。</div></div>
-          <div class="field"><label>游标 / 上限 <span class="key">cursor / limit</span></label><input class="input" value="0 / 50"></div>
+        <div class="tab-panel" data-tabpanel="tools">
+          <div class="grid g2">
+            <div class="card fault-card">
+              <div class="card-head"><h3>线程实验室 · 新入口</h3><span class="new-tag">NEW</span></div>
+              <div class="grid g2"><div class="field"><label>实例</label><select><option>app-1</option><option>app-2</option><option>app-3</option></select></div><div class="field"><label>保持</label><select><option>auto</option><option>manual</option></select></div></div>
+              <div class="mode-grid" id="threadModes" style="margin-top:8px">
+                <button class="mode selected" data-mode="deadlock">死锁</button><button class="mode" data-mode="stuck">卡死</button><button class="mode" data-mode="cpu-burn">CPU</button><button class="mode" data-mode="heap-leak">堆泄漏</button><button class="mode" data-mode="oom">OOM</button><button class="mode" data-mode="thread-leak">线程泄漏</button><button class="mode" data-mode="starvation">饥饿</button>
+              </div>
+              <div class="btn-row" style="margin-top:8px"><button class="btn primary" onclick="toast('已注入线程故障，operationId=op-th-4c1e')">注入</button><button class="btn ghost">线程 stop-all</button></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>生命周期 / 快照 / 键浏览</h3><span class="chip gray">工具</span></div>
+              <div class="btn-row"><button class="btn ghost">lifecycle start</button><button class="btn ghost">step</button><button class="btn ghost">freeze</button><button class="btn ghost">reset</button><button class="btn ghost" onclick="toast('已生成 jstack 快照（演示）')">快照</button><button class="btn ghost" onclick="toast('打开缓存键浏览（演示）')">缓存键浏览</button></div>
+              <div class="hint">探索工具不要求正式 run；但操作仍受白名单与 token 约束。</div>
+            </div>
+          </div>
         </div>
-        <div class="btn-row" style="margin-top:9px"><button class="btn" onclick="toast('已生成 10,000 条固定 seed 数据')">生成数据</button><button class="btn ghost">预热</button><button class="btn ghost">核验</button><button class="btn ghost">查询键</button><button class="btn ghost" onclick="toast('A/B 对照已排入队列（B3 规划）')">运行 A/B</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Grafana 深入分析</h3><span class="chip info" data-tip="Grafana 与面板同源 Prometheus；iframe 受登录/Cookie 限制时用深链。">Grafana</span></div>
+        <div style="height:150px;border:1px dashed #2a3d52;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#5f7288;font-size:12px;background:#0a1119">Grafana 面板 iframe 占位（当前时间范围）</div>
+        <div class="btn-row" style="margin-top:8px"><button class="btn" onclick="toast('打开 Grafana 当前时间范围（演示）')">打开 Grafana</button><button class="btn ghost" onclick="toast('打开 Tempo trace（演示）')">打开 Tempo</button><span class="hint">iframe 不可用时降级为带时间范围的跳转链接。</span></div>
       </div>
     </section>
 
-    <!-- ============================== 实验记录 ============================== -->
+    <!-- 实验记录 -->
     <section class="page" data-page="runs">
-      <div class="notice warn" id="runHint" style="display:none">stop-all 已停止 k6；该 run 仍为 RUNNING、写锁仍持有，请点下方 stop 收盘。</div>
       <div class="grid g2">
         <div class="card">
-          <div class="card-head"><h3>实验列表</h3><span class="tiny muted">刷新/重启可恢复</span></div>
-          <table class="table"><thead><tr><th>Run ID</th><th>场景</th><th>状态</th><th>开始</th></tr></thead><tbody>
-            <tr onclick="selectRun()" style="cursor:pointer"><td class="mono">run-20261028-020</td><td>load</td><td><span class="chip ok" data-tip="RUNNING：k6 已启动并持有写锁。">RUNNING</span></td><td>14:22</td></tr>
-            <tr><td class="mono">run-20261028-017</td><td>load</td><td><span class="chip ok" data-tip="COMPLETED：自然退出或被操作员停止。">COMPLETED</span></td><td>14:08</td></tr>
-            <tr><td class="mono">run-20261028-014</td><td>load</td><td><span class="chip bad" data-tip="FAILED：k6 超时，容器已清理。">FAILED</span></td><td>13:57</td></tr>
-            <tr><td class="mono">run-20261028-013</td><td>load</td><td><span class="chip gray" data-tip="UNKNOWN：控制器重启时未结束，需人工处理。">UNKNOWN</span></td><td>13:51</td></tr>
+          <div class="card-head"><h3>实验列表</h3><div class="btn-row"><input class="input" style="width:140px" placeholder="按测试名称筛选"><button class="btn ghost" onclick="toast('已按名称筛选（演示）')">筛选</button></div></div>
+          <table class="table"><thead><tr><th>测试名称</th><th>Run ID</th><th>场景</th><th>状态</th><th>操作</th></tr></thead><tbody>
+            <tr><td>缓存穿透基线</td><td class="mono">run-020</td><td>load</td><td><span class="chip ok" data-tip="RUNNING。">RUNNING</span></td><td><button class="btn ghost" onclick="archiveRun()">归档</button><button class="btn ghost" onclick="openDelete()">删除</button></td></tr>
+            <tr><td>L1 关闭对照</td><td class="mono">run-017</td><td>load</td><td><span class="chip ok">COMPLETED</span></td><td><button class="btn ghost" onclick="archiveRun()">归档</button><button class="btn ghost" onclick="openDelete()">删除</button></td></tr>
+            <tr><td>主节点故障</td><td class="mono">run-014</td><td>load</td><td><span class="chip bad">FAILED</span></td><td><button class="btn ghost" onclick="archiveRun()">归档</button><button class="btn ghost" onclick="openDelete()">删除</button></td></tr>
+            <tr><td>重启后待确认</td><td class="mono">run-013</td><td>load</td><td><span class="chip gray">UNKNOWN</span></td><td><button class="btn ghost" onclick="archiveRun()">归档</button><button class="btn ghost" onclick="openDelete()">删除</button></td></tr>
           </tbody></table>
-          <div class="btn-row" style="margin-top:9px"><button class="btn primary" onclick="toast('新建实验表单见 Benchmark 页（演示）')">新建实验</button><button class="btn ghost" onclick="selectRun()">查看详情</button></div>
+          <div class="btn-row" style="margin-top:9px"><button class="btn primary" onclick="showPage('wizard')">新建实验（向导）</button><span class="hint">测试名称用于展示/筛选；runId 仍是不可变主键。</span></div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>run-20261028-020</h3><span class="chip ok" data-tip="RUNNING。">RUNNING</span></div>
-          <dl class="kv">
-            <dt>场景</dt><dd>load</dd>
-            <dt>流量</dt><dd>via-nginx · 三实例</dd>
-            <dt>预检查</dt><dd><span class="chip warn" data-tip="PASS/WARN/BLOCKED；WARN 可继续，BLOCKED 不可跳过。">WARN</span></dd>
-            <dt>k6</dt><dd><span class="chip ok" data-tip="容器运行中。">RUNNING</span></dd>
-            <dt>写锁</dt><dd>持有中</dd>
-          </dl>
-          <div class="btn-row" style="margin-top:9px"><button class="btn danger" onclick="toast('已发送 stop：RUNNING→STOPPING→COMPLETED')">停止实验</button><button class="btn ghost" onclick="toast('已完成一次时序刷新')">刷新</button></div>
+          <div class="card-head"><h3>缓存穿透基线</h3><span class="chip ok" data-tip="RUNNING。">RUNNING</span></div>
+          <dl class="kv"><dt>Run ID</dt><dd class="mono">run-20261028-020</dd><dt>场景</dt><dd>load</dd><dt>流量</dt><dd>via-nginx · 3 实例</dd><dt>预检查</dt><dd><span class="chip warn" data-tip="WARN 可继续。">WARN</span></dd><dt>k6</dt><dd><span class="chip ok">RUNNING</span></dd><dt>写锁</dt><dd>持有中</dd></dl>
+          <div class="btn-row" style="margin-top:9px"><button class="btn danger" onclick="toast('已发送 stop：RUNNING→STOPPING→COMPLETED')">停止实验</button><button class="btn ghost" onclick="toast('已刷新')">刷新</button></div>
           <div class="hint">stop-all 后本页 run 可能仍为 RUNNING；以这里的 stop 为准收盘并释放写锁。</div>
           <div class="divider"></div>
           <div class="card-head"><h4 style="margin:0;font-size:13px">操作</h4><span class="tiny muted">UNKNOWN 可人工关闭</span></div>
-          <div class="rowline"><div><div class="mono tiny">op-9f12 · start</div><div class="hint">APPLIED · 13:57:12</div></div><span class="chip ok" data-tip="APPLIED：副作用已生效。">APPLIED</span></div>
-          <div class="rowline"><div><div class="mono tiny">op-77aa · stop</div><div class="hint">UNKNOWN · 重启恢复后待确认</div></div><div class="btn-row"><button class="btn ghost" onclick="closeUnknown('RESTORED')">记为已恢复</button><button class="btn ghost" onclick="closeUnknown('FAILED')">记为失败</button></div></div>
+          <div class="rowline"><div><div class="mono tiny">op-9f12 · start</div><div class="hint">APPLIED</div></div><span class="chip ok">APPLIED</span></div>
+          <div class="rowline"><div><div class="mono tiny">op-77aa · stop</div><div class="hint">UNKNOWN · 待确认</div></div><div class="btn-row"><button class="btn ghost" onclick="closeUnknown('RESTORED')">记为已恢复</button><button class="btn ghost" onclick="closeUnknown('FAILED')">记为失败</button></div></div>
           <div id="closeMsg" class="hint"></div>
           <div class="divider"></div>
           <div class="card-head"><h4 style="margin:0;font-size:13px">故障事件</h4><span class="tiny muted">faults 时间线</span></div>
-          <div class="rowline"><div><div class="strong">jl-app-2 · freeze</div><div class="hint">container · op-c762 · 14:23:01</div></div><span class="chip ok" data-tip="已写入 run 故障时间线。">event</span></div>
+          <div class="rowline"><div><div class="strong">jl-app-2 · freeze</div><div class="hint">container · op-c762 · 14:23:01</div></div><span class="chip ok">event</span></div>
           <div class="rowline"><div><div class="strong">app-1 · thread-fault</div><div class="hint">thread · op-984e · 14:23:12</div></div><span class="chip ok">event</span></div>
-          <div class="hint">状态迁移步骤与故障事件分开展示；空数组显示“暂无故障事件”。</div>
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>报告与对比</h3><span class="chip gray" data-tip="B5-03 规划：两次 run 对比 / 重复 N 次中位数；单次结果标注演示性。">B5 规划</span></div>
-        <div class="grid g3">
-          <div class="card tight"><div class="muted tiny">k6 summary</div><div class="mono">summary.json · 4.8 KB</div><div class="hint">退出时写入；缺失判 FAILED。</div></div>
-          <div class="card tight"><div class="muted tiny">指标窗口</div><div class="mono">run start−15s .. end+30s</div><div class="hint">质量徽标逐项显示。</div></div>
-          <div class="card tight"><div class="muted tiny">对比</div><div class="hint">选择两个 run 后展示 RPS/P95/错误率/缓存/GC/业务对账差值。</div></div>
+        <div class="card-head"><h3>报告与对比</h3><span class="chip gray" data-tip="B5-03：两次对比 / N 次中位数；单次标演示性。">B5</span></div>
+        <div class="grid g4">
+          <div class="card tight"><div class="muted tiny">k6 summary</div><div class="mono">summary.json · 4.8 KB</div></div>
+          <div class="card tight"><div class="muted tiny">指标窗口</div><div class="mono">start−15s .. end+30s</div></div>
+          <div class="card tight"><div class="muted tiny">业务对账</div><span class="chip gray">B3 规划</span></div>
+          <div class="card tight"><div class="muted tiny">证据等级</div><span class="chip info">单次</span></div>
         </div>
+        <table class="table" style="margin-top:10px"><thead><tr><th>指标</th><th>run-020</th><th>run-017</th><th>差值</th></tr></thead><tbody>
+          <tr><td>RPS / 请求总量</td><td>1,240 / 744k</td><td>1,100 / 660k</td><td class="diff">+12.7%</td></tr>
+          <tr><td>P95 / P99</td><td>86 / 142 ms</td><td>104 / 176 ms</td><td class="diff">-17% / -19%</td></tr>
+          <tr><td>错误率 / 成功量</td><td>0.2% / 99.8%</td><td>0.4% / 99.6%</td><td class="diff">-0.2pp</td></tr>
+          <tr><td>GC 暂停 / 堆峰值</td><td>42 ms / 380 MB</td><td>55 ms / 410 MB</td><td class="diff">改善</td></tr>
+          <tr><td>池拒绝 / Hikari 等待</td><td>0 / 2 ms</td><td>3 / 8 ms</td><td class="diff">改善</td></tr>
+          <tr><td>L1 / L2 命中率</td><td>82% / 91%</td><td>80% / 90%</td><td class="diff">+2pp / +1pp</td></tr>
+          <tr><td>DB QPS / 业务对账</td><td>320 / B3 规划</td><td>300 / B3 规划</td><td class="diff">—</td></tr>
+        </tbody></table>
       </div>
     </section>
 
@@ -752,256 +810,345 @@
 
 <div class="toast" id="toastHost"></div>
 
-<script>
-  const $ = (s, root = document) => root.querySelector(s);
-  const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
-  const state = { page: 'overview', wizard: 0, exp: 'bench', scenario: 'load', mode: 'via-nginx', multiJava: true, multiMysql: true, redisHa: true, threadMode: 'deadlock' };
-  const titles = {
-    overview: ['总览', '环境健康、基础拓扑与当前可用实验'],
-    wizard: ['场景向导', '前置基础配置 + 7 步实验向导'],
-    instances: ['实例与 JVM', '逐实例运行时配置（B4 规划）'],
-    bench: ['Benchmark', '结构化参数、商品 ID 分布与 k6 执行'],
-    observe: ['实时监控', 'KPI 质量徽标、拓扑与实例指标'],
-    faults: ['故障与缓存实验', '容器/线程/网络故障与缓存实验'],
-    runs: ['实验记录', '台账、预检查、操作、故障时间线与报告']
+<div class="modal-back" id="deleteModal" onclick="if(event.target===this)closeDelete()">
+  <div class="modal">
+    <h3>删除实验记录</h3>
+    <p class="hint" id="deleteText">将删除该 run 的操作、故障事件、指标窗口与报告归档；此操作不可恢复。确定继续？</p>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" onclick="closeDelete()">取消</button><button class="btn danger" onclick="confirmDelete()">确认删除</button></div>
+  </div>
+</div>
+
+<script>const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+const state = {
+  page: 'overview', wizard: 0,
+  javaNodes: ['app-1', 'app-2', 'app-3'],
+  mysqlMode: 'cluster', redisHa: true, chaosProxy: false, showSidecars: false,
+  goals: ['throughput'], scenario: 'load', mode: 'via-nginx', target: '',
+  threadMode: 'deadlock'
+};
+const titles = {
+  overview: ['总览', '环境、节点拓扑与当前可用实验'],
+  wizard: ['场景向导', '前置基础配置 + 7 步实验向导'],
+  instances: ['实例与 JVM', '当前状态与配置组库（B4）'],
+  bench: ['Benchmark', '场景库、最近运行与对比'],
+  observe: ['实时监控与操作', '时间轴指标、k6 进度、拓扑与运行时操作'],
+  runs: ['实验记录', '测试名称、台账、报告与清理']
+};
+function showPage(page) {
+  state.page = page;
+  $$('.page').forEach(p => p.classList.toggle('active', p.dataset.page === page));
+  $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  const [t, d] = titles[page];
+  $('#pageTitle').textContent = t;
+  $('#pageDesc').textContent = d;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+$$('.nav-btn').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
+function toast(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  $('#toastHost').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+function javaCount() { return state.javaNodes.length; }
+
+function applyGates() {
+  const req = {
+    none: true,
+    'java-multi': javaCount() >= 2,
+    'mysql-cluster': state.mysqlMode === 'cluster',
+    'redis-ha': state.redisHa,
+    'chaos-proxy': state.chaosProxy,
+    b4: false
   };
-
-  function showPage(page) {
-    state.page = page;
-    $$('.page').forEach(p => p.classList.toggle('active', p.dataset.page === page));
-    $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-    const [t, d] = titles[page];
-    $('#pageTitle').textContent = t;
-    $('#pageDesc').textContent = d;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-  $$('.nav-btn').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
-
-  function toast(msg) {
-    const el = document.createElement('div');
-    el.textContent = msg;
-    $('#toastHost').appendChild(el);
-    setTimeout(() => el.remove(), 3200);
-  }
-
-  function applyGates() {
-    const req = { none: true, 'java-multi': state.multiJava, 'mysql-multi': state.multiMysql, 'redis-ha': state.redisHa, b4: false };
-    $$('[data-requires]').forEach(el => {
-      const ok = req[el.dataset.requires] !== false;
-      el.classList.toggle('disabled', !ok);
-      el.classList.toggle('exp-card', el.classList.contains('exp-card'));
-      el.setAttribute('aria-disabled', String(!ok));
-    });
-    const parts = [];
-    parts.push(state.multiJava ? '多节点 Java 开' : '多节点 Java 关（定向/分流/实例故障禁用）');
-    parts.push(state.multiMysql ? '多节点 MySQL 开' : '多节点 MySQL 关（数据库故障禁用）');
-    parts.push(state.redisHa ? 'Redis 高可用开' : 'Redis 高可用关（切换实验禁用）');
-    $('#gateNotice').textContent = '当前：' + parts.join('；') + '。';
-    const target = $('#wizTarget');
-    target.disabled = !state.multiJava;
-    const targetOpt = target.querySelector('option[value="target-instance"]');
-    if ($('#wizMode').value === 'target-instance' && !state.multiJava) $('#wizMode').value = 'via-nginx';
-    $('#wizMode').querySelector('option[value="target-instance"]').disabled = !state.multiJava;
-    $('#wizModeNotice').textContent = state.multiJava ? '当前多节点 Java 开启：定向模式可用。' : '当前多节点 Java 关闭：定向模式不可用；只能经 Nginx。';
-    $('#benchMode').querySelector('option[value="target-instance"]').disabled = !state.multiJava;
-    syncWizMode();
-    syncBenchMode();
-    renderTopology();
-  }
-
-  function syncWizMode() {
-    const mode = $('#wizMode').value;
-    const target = $('#wizTarget');
-    target.disabled = !state.multiJava || mode !== 'target-instance';
-    if (target.disabled) target.value = '';
-  }
-
-  function syncBenchMode() {
-    const mode = $('#benchMode').value;
-    const target = $('#benchTarget');
-    target.disabled = !state.multiJava || mode !== 'target-instance';
-    if (target.disabled) target.value = '';
-  }
-
-  function renderTopology() {
-    const apps = $('#appNodes');
-    if (apps) {
-      apps.innerHTML = state.multiJava
-        ? '<div class="node app">app-1<small>JDK21 · 健康</small></div><div class="node app warn">app-2<small>JDK21 · 冻结中</small></div><div class="node app">app-3<small>JDK21 · 健康</small></div>'
-        : '<div class="node app">app-1<small>单实例 · 健康</small></div>';
-    }
-    const obs = $('#observeApps');
-    if (obs) {
-      obs.innerHTML = state.multiJava
-        ? '<div class="node app">app-1<small>CPU 42% · P95 81ms</small></div><div class="node app warn">app-2<small>CPU 78% · P95 122ms</small></div><div class="node app">app-3<small>CPU 39% · P95 79ms</small></div>'
-        : '<div class="node app">app-1<small>单实例 · P95 81ms</small></div>';
-    }
-    const my = $('#mysqlNode');
-    if (my) my.innerHTML = state.multiMysql ? 'MySQL Router<small>3 节点集群</small>' : 'MySQL<small>单机</small>';
-    const rl = $('#redisLabel');
-    if (rl) rl.textContent = state.redisHa ? 'Sentinel 3 节点' : '单机';
-  }
-
-  [['multiJava', 'multiJava'], ['multiMysql', 'multiMysql'], ['redisHa', 'redisHa']].forEach(([id, key]) => {
-    const el = $('#' + id);
-    if (el) el.addEventListener('change', () => { state[key] = el.checked; syncBaseSwitches(); applyGates(); });
+  $$('[data-requires]').forEach(el => {
+    const ok = req[el.dataset.requires] !== false;
+    el.classList.toggle('disabled', !ok);
+    el.setAttribute('aria-disabled', String(!ok));
   });
-
-  function syncBaseSwitches() {
-    $$('.wiz-base').forEach(el => {
-      if (el.dataset.base === 'java') el.checked = state.multiJava;
-      if (el.dataset.base === 'mysql') el.checked = state.multiMysql;
-      if (el.dataset.base === 'redis') el.checked = state.redisHa;
-    });
+  $$('[data-node]').forEach(el => {
+    const n = el.dataset.node;
+    let ok = true;
+    if (/^app-/.test(n)) ok = state.javaNodes.includes(n);
+    if (/^(redis-[23]|sentinel-)/.test(n)) ok = state.redisHa;
+    if (/^mysql-([23]|router)/.test(n)) ok = state.mysqlMode === 'cluster';
+    if (n === 'toxiproxy') ok = state.chaosProxy;
+    el.classList.toggle('off', !ok);
+  });
+  const sidecars = $('#sidecars');
+  if (sidecars) sidecars.style.display = state.showSidecars ? 'flex' : 'none';
+  const parts = [];
+  parts.push('Java ' + javaCount() + '/3 节点');
+  parts.push(state.mysqlMode === 'cluster' ? 'MySQL 集群' : 'MySQL 单机');
+  parts.push(state.redisHa ? 'Redis 高可用' : 'Redis 单机');
+  if (state.chaosProxy) parts.push('chaos-proxy 开');
+  const gateText = '当前：' + parts.join('、') + '。';
+  if ($('#gateNotice')) $('#gateNotice').textContent = gateText;
+  if ($('#wizGateNotice')) $('#wizGateNotice').textContent = gateText;
+  const mode = $('#wizMode');
+  if (mode) {
+    const targetOpt = mode.querySelector('option[value="target-instance"]');
+    if (targetOpt) targetOpt.disabled = javaCount() < 1;
+    if (mode.value === 'target-instance' && javaCount() < 1) mode.value = 'via-nginx';
   }
-  $$('.wiz-base').forEach(el => el.addEventListener('change', () => {
-    if (el.dataset.base === 'java') { state.multiJava = el.checked; $('#multiJava').checked = el.checked; }
-    if (el.dataset.base === 'mysql') { state.multiMysql = el.checked; $('#multiMysql').checked = el.checked; }
-    if (el.dataset.base === 'redis') { state.redisHa = el.checked; $('#redisHa').checked = el.checked; }
+  rebuildTargets();
+  const weights = $('#weights');
+  if (weights) weights.textContent = state.javaNodes.length
+    ? state.javaNodes.map(n => n + '=1').join(' · ') + '（等权）'
+    : '无启用节点';
+  const notice = $('#wizModeNotice');
+  if (notice) notice.style.display = javaCount() < 2 ? 'block' : 'none';
+  $$('[data-instance-card]').forEach(card => {
+    const on = state.javaNodes.includes(card.dataset.instanceCard);
+    card.classList.toggle('off', !on);
+    card.style.opacity = on ? '' : '.38';
+    card.style.filter = on ? '' : 'grayscale(1)';
+  });
+  syncBaseControls();
+}
+
+function rebuildTargets() {
+  const sel = $('#wizTarget');
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">全部（经 Nginx）</option>' + state.javaNodes.map(n => `<option>${n}</option>`).join('');
+    if (state.javaNodes.includes(current)) sel.value = current;
+  }
+  const live = $('#liveTarget');
+  if (live) {
+    const currentLive = live.value;
+    const opts = [...state.javaNodes, 'redis-1', 'mysql-1', 'rabbitmq'];
+    if (state.chaosProxy) opts.push('network:redis');
+    live.innerHTML = opts.map(n => `<option>${n}</option>`).join('');
+    if (opts.includes(currentLive)) live.value = currentLive;
+  }
+}
+
+function syncBaseControls() {
+  $$('.java-node').forEach(el => el.checked = state.javaNodes.includes(el.value));
+  $$('.wiz-node').forEach(el => el.checked = state.javaNodes.includes(el.value));
+  $$('.mysql-mode').forEach(el => el.checked = el.value === state.mysqlMode);
+  $$('.wiz-mysql').forEach(el => el.checked = el.value === state.mysqlMode);
+  if ($('#redisHa')) $('#redisHa').checked = state.redisHa;
+  if ($('#wizRedis')) $('#wizRedis').checked = state.redisHa;
+  if ($('#chaosProxy')) $('#chaosProxy').checked = state.chaosProxy;
+  if ($('#wizChaos')) $('#wizChaos').checked = state.chaosProxy;
+}
+
+function bindJava(selector) {
+  $$(selector).forEach(el => el.addEventListener('change', () => {
+    const checked = $$(selector).filter(x => x.checked).map(x => x.value);
+    if (checked.length === 0) { el.checked = true; toast('至少保留 1 个 Java 节点'); }
+    state.javaNodes = checked.length ? checked : [el.value];
     applyGates();
   }));
+}
+bindJava('.java-node');
+bindJava('.wiz-node');
+$$('.mysql-mode').forEach(el => el.addEventListener('change', () => { if (el.checked) { state.mysqlMode = el.value; applyGates(); } }));
+$$('.wiz-mysql').forEach(el => el.addEventListener('change', () => { if (el.checked) { state.mysqlMode = el.value; applyGates(); } }));
+if ($('#redisHa')) $('#redisHa').addEventListener('change', e => { state.redisHa = e.target.checked; applyGates(); });
+if ($('#wizRedis')) $('#wizRedis').addEventListener('change', e => { state.redisHa = e.target.checked; applyGates(); });
+if ($('#chaosProxy')) $('#chaosProxy').addEventListener('change', e => { state.chaosProxy = e.target.checked; applyGates(); });
+if ($('#wizChaos')) $('#wizChaos').addEventListener('change', e => { state.chaosProxy = e.target.checked; applyGates(); });
+if ($('#showSidecars')) $('#showSidecars').addEventListener('change', e => { state.showSidecars = e.target.checked; applyGates(); });
 
-  function showWizard(step) {
-    state.wizard = step;
-    $$('.step').forEach(s => s.classList.toggle('active', Number(s.dataset.step) === step));
-    $$('.wizard-panel').forEach(p => p.classList.toggle('active', Number(p.dataset.wpanel) === step));
-  }
-  $$('.step').forEach(s => s.addEventListener('click', () => showWizard(Number(s.dataset.step))));
-  $('#wizPrev').addEventListener('click', () => showWizard(Math.max(0, state.wizard - 1)));
-  $('#wizNext').addEventListener('click', () => showWizard(Math.min(7, state.wizard + 1)));
+function showWizard(step) {
+  state.wizard = step;
+  $$('.step').forEach(s => s.classList.toggle('active', Number(s.dataset.step) === step));
+  $$('.wizard-panel').forEach(p => p.classList.toggle('active', Number(p.dataset.wpanel) === step));
+}
+$$('.step').forEach(s => s.addEventListener('click', () => showWizard(Number(s.dataset.step))));
+$('#wizPrev').addEventListener('click', () => showWizard(Math.max(0, state.wizard - 1)));
+$('#wizNext').addEventListener('click', () => showWizard(Math.min(7, state.wizard + 1)));
 
-  $$('#wizExp .exp-card').forEach(card => card.addEventListener('click', () => {
-    if (card.classList.contains('disabled')) { toast('该实验被基础配置或批次门禁禁用'); return; }
-    $$('#wizExp .exp-card').forEach(c => c.classList.remove('selected'));
-    card.classList.add('selected');
-    state.exp = card.dataset.exp;
-    $$('.param-group').forEach(p => p.classList.toggle('active', p.dataset.expPanel === state.exp));
+const goalNames = { throughput: '吞吐基线', penetration: '缓存穿透', cacheab: '缓存 A/B', thread: '线程故障', instance: '实例分流/故障', database: '数据库故障', redis: 'Redis 切换', jvm: 'JVM/GC' };
+function bindGoals(selector) {
+  $$(selector + ' .goal-card').forEach(card => card.addEventListener('click', () => {
+    if (card.classList.contains('disabled')) { toast('该实验目标被基础配置或批次门禁禁用'); return; }
+    card.classList.toggle('selected');
+    const selected = $$(selector + ' .goal-card.selected').map(c => c.dataset.goal);
+    state.goals = selected.length ? selected : ['throughput'];
+    if (!selected.length) card.classList.add('selected');
+    updateGoalSummary();
   }));
+}
+function updateGoalSummary() {
+  const text = state.goals.map(g => goalNames[g] || g).join(' + ');
+  if ($('#goalSummary')) $('#goalSummary').textContent = text;
+}
+bindGoals('#wizGoals');
+$$('.page[data-page="overview"] .goal-card').forEach(card => card.addEventListener('click', () => {
+  if (card.classList.contains('disabled')) { toast('该实验目标被基础配置或批次门禁禁用'); return; }
+  showPage('wizard');
+  showWizard(1);
+  const goal = card.dataset.goal;
+  state.goals = [goal];
+  $$('#wizGoals .goal-card').forEach(c => c.classList.toggle('selected', c.dataset.goal === goal));
+  updateGoalSummary();
+}));
 
-  $('#wizMode').addEventListener('change', e => {
-    if (e.target.value === 'target-instance' && !state.multiJava) {
-      e.target.value = 'via-nginx'; toast('需先开启多节点 Java'); return;
-    }
-    syncWizMode();
-  });
-
-  $('#benchScenario').addEventListener('change', e => {
-    state.scenario = e.target.value;
-    $$('[data-bench]').forEach(g => g.classList.toggle('active', g.dataset.bench === state.scenario));
-    updatePreview();
-  });
-  $('#benchMode').addEventListener('change', e => {
-    if (e.target.value === 'target-instance' && !state.multiJava) { e.target.value = 'via-nginx'; toast('需先开启多节点 Java'); return; }
-    syncBenchMode();
-  });
-
-  $$('#threadModes .mode').forEach(m => m.addEventListener('click', () => {
-    $$('#threadModes .mode').forEach(x => x.classList.remove('selected'));
-    m.classList.add('selected'); state.threadMode = m.dataset.mode;
-  }));
-
-  function updatePreview() {
-    const params = {};
-    $$('[data-key]').forEach(input => {
-      if (input.closest('.param-group') && !input.closest('.param-group').classList.contains('active')) return;
-      const v = input.value.trim();
-      if (v === '') return;
-      params[input.dataset.key] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
-    });
-    const sc = $('#benchScenario').value;
-    const mode = $('#benchMode').value;
-    if (mode) params.TRAFFIC_MODE = mode;
-    const target = $('#benchTarget').value;
-    if (mode === 'target-instance' && target) params.TARGET_INSTANCE = target;
-    params.PRODUCT_ID_MIN = Number($('#idMin').value);
-    params.PRODUCT_ID_MAX = Number($('#idMax').value);
-    params.PRODUCT_ID_DISTRIBUTION = $('#dist').value;
-    params.PRODUCT_ID_CONCENTRATION = Number($('#conc').value) / 100;
-    const payload = { scenario: sc, params };
-    $('#jsonPreview').value = JSON.stringify(payload, null, 2);
-    const k6s = $('#k6Scenario');
-    if (k6s) k6s.textContent = sc;
-    const k6t = $('#k6Traffic');
-    if (k6t) k6t.textContent = mode === 'target-instance'
-      ? 'target-instance · ' + (target || 'app-1')
-      : 'via-nginx · 三实例';
-  }
-  $$('[data-key], #benchScenario, #benchMode, #benchTarget').forEach(el => {
-    el.addEventListener('input', updatePreview);
-    el.addEventListener('change', updatePreview);
-  });
-
-  function normalPdf(x, mu, sigma) { return Math.exp(-0.5 * Math.pow((x - mu) / sigma, 2)) / (sigma * Math.sqrt(2 * Math.PI)); }
-  function erf(x) {
-    const s = Math.sign(x); x = Math.abs(x);
-    const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-    const t = 1 / (1 + p * x);
-    const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-    return s * y;
-  }
-  function normalCdf(x, mu, sigma) { return 0.5 * (1 + erf((x - mu) / (sigma * Math.sqrt(2)))); }
-  function renderDistribution() {
-    const min = Number($('#idMin').value) || 0;
-    const max = Number($('#idMax').value) || 1;
-    const dbMin = 1, dbMax = 10000;
-    const dist = $('#dist').value;
-    const conc = Number($('#conc').value) / 100;
-    const mu = (min + max) / 2;
-    const sigma = Math.max(1, (max - min) * (0.18 - 0.13 * conc));
-    let inFrac;
-    if (dist === 'uniform') {
-      const lo = Math.max(min, dbMin), hi = Math.min(max, dbMax);
-      inFrac = Math.max(0, hi - lo) / Math.max(1, max - min);
-    } else {
-      inFrac = Math.max(0, Math.min(1, normalCdf(dbMax, mu, sigma) - normalCdf(dbMin, mu, sigma)));
-    }
-    const bars = $('#distBars');
-    if (bars) {
-      let html = '';
-      for (let i = 0; i < 28; i++) {
-        const x = min + (max - min) * (i + 0.5) / 28;
-        const h = dist === 'uniform' ? 55 : Math.max(4, Math.min(100, normalPdf(x, mu, sigma) / normalPdf(mu, mu, sigma) * 100));
-        html += `<i style="height:${h}%"></i>`;
-      }
-      bars.innerHTML = html;
-    }
-    $('#inBar').style.width = (inFrac * 100).toFixed(0) + '%';
-    $('#outBar').style.width = ((1 - inFrac) * 100).toFixed(0) + '%';
-    const outPct = (1 - inFrac) * 100;
-    $('#distText').textContent = `DB 范围 ${dbMin}–${dbMax}；k6 采样 ${min}–${max}：库内约 ${(inFrac * 100).toFixed(0)}%，越界约 ${outPct.toFixed(0)}%。`
-      + (dist === 'normal' ? ' 正态分布下中间 ID 更热（集中度越高越集中）。' : ' 平均分布下每个 ID 等概率。')
-      + (outPct > 1 ? ' 越界 ID 会触发缓存穿透路径。' : ' 本次没有越界 ID；如需穿透实验，选择“含越界”范围。');
-    updatePreview();
-  }
-  $('#idPreset').addEventListener('change', e => {
-    if (e.target.value === 'penetration') { $('#idMin').value = 5000; $('#idMax').value = 20000; }
-    if (e.target.value === 'hot') { $('#idMin').value = 1; $('#idMax').value = 10000; }
-    renderDistribution();
-  });
-  ['#idMin', '#idMax'].forEach(sel => $(sel).addEventListener('input', () => { $('#idPreset').value = 'custom'; }));
-  ['#idMin', '#idMax', '#dist', '#conc'].forEach(s => $(s).addEventListener('input', renderDistribution));
-  ['#dist', '#conc'].forEach(s => $(s).addEventListener('change', renderDistribution));
-
-  function stopAllDemo() {
-    $('#stopAllHint').style.display = 'block';
-    $('#runHint').style.display = 'block';
-    toast('stop-all：traffic=stopped · threads=app-1:ok/app-2:ok/app-3:ok · k6 cleaned=1；run 需手动 stop');
-  }
-
-  function closeUnknown(status) {
-    $('#closeMsg').textContent = `op-77aa 已关闭为 ${status}（演示）；重复同终态 200，异终态 409。`;
-    toast(`操作已关闭为 ${status}`);
-  }
-
-  function selectRun() {
-    toast('已选中 run-20261028-020（详情已在右侧）');
-  }
-
-  $('#refreshBtn').addEventListener('click', () => toast('已刷新（演示）'));
-  $('#autoSync').addEventListener('change', e => toast(e.target.checked ? '自动同步已开启（5s）' : '自动同步已关闭'));
-
+$('#wizMode').addEventListener('change', () => {
+  if ($('#wizMode').value === 'target-instance' && javaCount() < 1) { $('#wizMode').value = 'via-nginx'; toast('没有可用 Java 节点'); }
   applyGates();
-  syncBaseSwitches();
-  renderDistribution();
   updatePreview();
+});
+$('#wizTarget').addEventListener('change', updatePreview);
+$('#wizScenario').addEventListener('change', e => {
+  state.scenario = e.target.value;
+  $$('[data-wizbench]').forEach(g => g.classList.toggle('active', g.dataset.wizbench === state.scenario));
+  syncLoadOnly();
+  updatePreview();
+});
+function syncLoadOnly() {
+  const show = $('#wizScenario').value === 'load';
+  $$('.load-only').forEach(el => { el.style.display = show ? '' : 'none'; });
+}
+
+function normalPdf(x, mu, sigma) { return Math.exp(-0.5 * Math.pow((x - mu) / sigma, 2)) / (sigma * Math.sqrt(2 * Math.PI)); }
+function erf(x) {
+  const s = Math.sign(x); x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return s * y;
+}
+function normalCdf(x, mu, sigma) { return 0.5 * (1 + erf((x - mu) / (sigma * Math.sqrt(2)))); }
+function renderDistribution() {
+  const min = Number($('#wizIdMin').value) || 0;
+  const max = Number($('#wizIdMax').value) || 1;
+  const dbMin = 1, dbMax = 10000;
+  const dist = $('#wizDist').value;
+  const conc = Number($('#wizConc').value) / 100;
+  const mu = (min + max) / 2;
+  const sigma = Math.max(1, (max - min) * (0.18 - 0.13 * conc));
+  let inFrac;
+  if (dist === 'uniform') {
+    const lo = Math.max(min, dbMin), hi = Math.min(max, dbMax);
+    inFrac = Math.max(0, hi - lo) / Math.max(1, max - min);
+  } else {
+    inFrac = Math.max(0, Math.min(1, normalCdf(dbMax, mu, sigma) - normalCdf(dbMin, mu, sigma)));
+  }
+  const bars = $('#wizBars');
+  if (bars) {
+    let html = '';
+    for (let i = 0; i < 28; i++) {
+      const x = min + (max - min) * (i + 0.5) / 28;
+      const h = dist === 'uniform' ? 55 : Math.max(4, Math.min(100, normalPdf(x, mu, sigma) / normalPdf(mu, mu, sigma) * 100));
+      html += `<i style="height:${h}%"></i>`;
+    }
+    bars.innerHTML = html;
+  }
+  const outPct = (1 - inFrac) * 100;
+  $('#wizIn').style.width = (inFrac * 100).toFixed(0) + '%';
+  $('#wizOut').style.width = outPct.toFixed(0) + '%';
+  $('#wizDistText').textContent = `DB 范围 ${dbMin}–${dbMax}；k6 采样 ${min}–${max}：库内约 ${(inFrac * 100).toFixed(0)}%，越界约 ${outPct.toFixed(0)}%。`
+    + (dist === 'normal' ? ' 正态分布下中间 ID 更热（集中度越高越集中）。' : ' 平均分布下每个 ID 等概率。')
+    + (outPct > 1 ? ' 越界 ID 会触发缓存穿透路径。' : ' 本次没有越界 ID；如需穿透实验，选择“含越界”范围。');
+  updatePreview();
+}
+$('#wizPreset').addEventListener('change', e => {
+  if (e.target.value === 'penetration') { $('#wizIdMin').value = 5000; $('#wizIdMax').value = 20000; }
+  if (e.target.value === 'hot') { $('#wizIdMin').value = 1; $('#wizIdMax').value = 10000; }
+  renderDistribution();
+});
+['#wizIdMin', '#wizIdMax'].forEach(sel => $(sel).addEventListener('input', () => { $('#wizPreset').value = 'custom'; }));
+['#wizIdMin', '#wizIdMax', '#wizDist', '#wizConc'].forEach(sel => $(sel).addEventListener('input', renderDistribution));
+['#wizDist', '#wizConc'].forEach(sel => $(sel).addEventListener('change', renderDistribution));
+
+function updatePreview() {
+  const scenario = $('#wizScenario').value;
+  const params = {};
+  $$('[data-key]').forEach(input => {
+    if (input.closest('.param-group') && !input.closest('.param-group').classList.contains('active')) return;
+    const key = input.dataset.key;
+    if (scenario !== 'load' && (key === 'LOAD_VUS' || key === 'LOAD_DURATION')) return;
+    const v = input.value.trim();
+    if (v === '') return;
+    params[key] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+  });
+  params.TRAFFIC_MODE = $('#wizMode').value;
+  const target = $('#wizTarget').value;
+  if ($('#wizMode').value === 'target-instance' && target) params.TARGET_INSTANCE = target;
+  params.PRODUCT_ID_MIN = Number($('#wizIdMin').value);
+  params.PRODUCT_ID_MAX = Number($('#wizIdMax').value);
+  params.PRODUCT_ID_DISTRIBUTION = $('#wizDist').value;
+  params.PRODUCT_ID_CONCENTRATION = Number($('#wizConc').value) / 100;
+  if ($('#wizJson')) $('#wizJson').value = JSON.stringify({ scenario, params }, null, 2);
+  if ($('#reportName') && $('#wizName')) $('#reportName').textContent = $('#wizName').value || '未命名实验';
+}
+$$('[data-key], #wizScenario, #wizTarget').forEach(el => { el.addEventListener('input', updatePreview); el.addEventListener('change', updatePreview); });
+if ($('#wizName')) $('#wizName').addEventListener('input', updatePreview);
+
+$('#addFault').addEventListener('click', () => {
+  const tbody = $('#faultRows');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><select><option>app-1</option><option>app-2</option><option>app-3</option><option>redis-1</option><option>mysql-1</option><option>rabbitmq</option><option>network:redis</option></select></td><td><select><option>freeze</option><option>kill</option><option>restart</option><option>deadlock</option><option>cpu-burn</option><option>latency</option></select></td><td><input class="input" value="0" style="width:80px"> 秒</td><td><select class="recover"><option>自动恢复</option><option>永不恢复</option></select></td><td><input class="input" value="120" style="width:80px"></td><td><button class="btn ghost" onclick="this.closest('tr').remove()">删除</button></td>`;
+  tbody.appendChild(tr);
+  bindRecover(tr);
+});
+function bindRecover(root) {
+  const rec = root.querySelector('.recover');
+  if (!rec) return;
+  rec.addEventListener('change', () => {
+    const inputs = root.querySelectorAll('input');
+    const ttl = inputs[1];
+    if (ttl) ttl.disabled = rec.value === '永不恢复';
+  });
+}
+$$('#faultRows tr').forEach(bindRecover);
+
+$('#wizStart').addEventListener('click', () => {
+  toast('预检查 PASS（1 WARN），已启动 k6；自动跳转实时监控与操作');
+  showPage('observe');
+});
+
+$$('#threadModes .mode').forEach(m => m.addEventListener('click', () => {
+  $$('#threadModes .mode').forEach(x => x.classList.remove('selected'));
+  m.classList.add('selected');
+  state.threadMode = m.dataset.mode;
+}));
+
+$$('#opsTabs .tab').forEach(tab => tab.addEventListener('click', () => {
+  $$('#opsTabs .tab').forEach(t => t.classList.toggle('active', t === tab));
+  $$('[data-tabpanel]').forEach(p => p.classList.toggle('active', p.dataset.tabpanel === tab.dataset.tab));
+}));
+
+if ($('#liveRecover')) $('#liveRecover').addEventListener('change', e => {
+  if ($('#liveTtl')) $('#liveTtl').disabled = e.target.value === '永不恢复';
+});
+
+function stopAllDemo() {
+  const hint = $('#stopAllHint');
+  if (hint) hint.style.display = 'block';
+  toast('stop-all：traffic=stopped · threads=3 实例 ok · k6 cleaned=1；run 需手动 stop');
+}
+function closeUnknown(status) {
+  if ($('#closeMsg')) $('#closeMsg').textContent = `op-77aa 已关闭为 ${status}（演示）；同终态 200，异终态 409。`;
+  toast(`操作已关闭为 ${status}`);
+}
+function archiveRun() { toast('已归档（演示）；归档记录默认不在列表展示'); }
+function openDelete() { $('#deleteModal').classList.add('show'); }
+function closeDelete() { $('#deleteModal').classList.remove('show'); }
+function confirmDelete() {
+  closeDelete();
+  toast('已删除 run 及其操作/事件/指标/报告（演示，不可恢复）');
+}
+function useScenario(sc) {
+  showPage('wizard');
+  showWizard(4);
+  $('#wizScenario').value = sc;
+  state.scenario = sc;
+  $$('[data-wizbench]').forEach(g => g.classList.toggle('active', g.dataset.wizbench === sc));
+  updatePreview();
+}
+$('#refreshBtn').addEventListener('click', () => toast('已刷新（演示）'));
+$('#autoSync').addEventListener('change', e => toast(e.target.checked ? '自动同步已开启（5s）' : '自动同步已关闭'));
+
+applyGates();
+syncLoadOnly();
+renderDistribution();
+updatePreview();
+updateGoalSummary();
 </script>
