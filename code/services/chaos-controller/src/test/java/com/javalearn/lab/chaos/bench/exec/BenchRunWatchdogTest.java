@@ -95,6 +95,21 @@ class BenchRunWatchdogTest {
     }
 
     @Test
+    void anExitZeroWithoutTheExpectedReportFailsTheRun() {
+        when(executor.state(RUN_ID)).thenReturn(exitedWithoutReport(0));
+        when(writer.transition(anyString(), any(), any(), anyString(), any(), anyString()))
+                .thenReturn(true);
+
+        watchdog.tick();
+
+        verify(writer).transition(eq(RUN_ID), eq(RunStatus.RUNNING), eq(RunStatus.FAILED),
+                eq("k6-report-missing"), any(), anyString());
+        verify(writer, never()).transition(eq(RUN_ID), eq(RunStatus.RUNNING),
+                eq(RunStatus.STOPPING), anyString(), any(), anyString());
+        verify(envLock).release(RUN_ID);
+    }
+
+    @Test
     void aNonZeroExitFailsTheRunAndReleasesTheLockWithoutStopping() {
         when(executor.state(RUN_ID)).thenReturn(exited(2));
         when(writer.transition(anyString(), any(), any(), anyString(), any(), anyString()))
@@ -321,7 +336,13 @@ class BenchRunWatchdogTest {
     }
 
     private BenchExecutionState exited(int exitCode) {
-        return state("EXITED", exitCode, "2026-10-28T09:50:00Z", "2026-10-28T09:55:00Z");
+        return new BenchExecutionState("EXITED", "jl-k6-" + RUN_ID, "cid-" + RUN_ID, "load",
+                exitCode, "2026-10-28T09:50:00Z", "2026-10-28T09:55:00Z", true, 1024, null);
+    }
+
+    private BenchExecutionState exitedWithoutReport(int exitCode) {
+        return new BenchExecutionState("EXITED", "jl-k6-" + RUN_ID, "cid-" + RUN_ID, "load",
+                exitCode, "2026-10-28T09:50:00Z", "2026-10-28T09:55:00Z", false, 0, null);
     }
 
     private BenchExecutionState running(Instant startedAt) {

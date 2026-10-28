@@ -243,7 +243,11 @@ public class BenchRunWatchdog {
         if (K6ContainerGateway.STATUS_EXITED.equals(status)) {
             Integer exitCode = state.exitCode();
             if (exitCode != null && exitCode == 0) {
-                completeNaturally(run, state);
+                if (expectsReport(snapshot, run.scenario()) && !state.reportAvailable()) {
+                    failAfterMissingReport(run, state);
+                } else {
+                    completeNaturally(run, state);
+                }
             } else {
                 failAfterExit(run, state, exitCode);
             }
@@ -254,6 +258,29 @@ public class BenchRunWatchdog {
             return;
         }
         log.debug("k6 run watchdog: run {} container is {}; nothing to do", run.runId(), status);
+    }
+
+    private static boolean expectsReport(Snapshot snapshot, String scenarioName) {
+        if (snapshot == null || snapshot.scenarios() == null || scenarioName == null) {
+            return false;
+        }
+        Scenario definition = snapshot.scenarios().get(scenarioName);
+        return definition != null && definition.thresholdsExpected();
+    }
+
+    /**
+     * k6 can exit 0 even when its end-of-test summary could not be written
+     * (observed live with a read-only reports mount). A run whose scenario
+     * expects thresholds must not be declared COMPLETED without that evidence.
+     */
+    private void failAfterMissingReport(RunRecord run, BenchExecutionState state) {
+        Map<String, Object> detail = outcomeDetail(state);
+        detail.put("reason", "k6 exited 0 but wrote no summary report; thresholds cannot be judged");
+        if (!transition(run.runId(), RunStatus.RUNNING, RunStatus.FAILED,
+                "k6-report-missing", detail)) {
+            return;
+        }
+        releaseLock(run.runId(), "FAILED (k6 report missing)");
     }
 
     private void completeNaturally(RunRecord run, BenchExecutionState state) {

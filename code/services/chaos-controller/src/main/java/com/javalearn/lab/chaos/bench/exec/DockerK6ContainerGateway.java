@@ -102,8 +102,7 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
         }
 
         Bind[] binds = plan.binds().stream()
-                .map(bind -> new Bind(bind.source(), new Volume(bind.destination()),
-                        AccessMode.fromBoolean(bind.readOnly())))
+                .map(DockerK6ContainerGateway::toBind)
                 .toArray(Bind[]::new);
         HostConfig hostConfig = HostConfig.newHostConfig()
                 .withBinds(binds)
@@ -398,6 +397,17 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
     private boolean isK6Container(Container container) {
         Map<String, String> labels = labels(container);
         return LAB_VALUE.equals(labels.get(LAB_LABEL)) && ROLE_VALUE.equals(labels.get(ROLE_LABEL));
+    }
+
+    /**
+     * Docker's {@code AccessMode.fromBoolean} means <em>read-write</em> when the
+     * flag is true, which is the opposite of the plan's {@code readOnly}. Passing
+     * it through directly mounted the scripts read-write and the reports volume
+     * read-only - a live k6 then failed to write summary.json.
+     */
+    static Bind toBind(BenchLaunchPlan.Bind bind) {
+        AccessMode mode = bind.readOnly() ? AccessMode.ro : AccessMode.rw;
+        return new Bind(bind.source(), new Volume(bind.destination()), mode);
     }
 
     private static Map<String, String> labels(Container container) {
