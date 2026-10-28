@@ -1,6 +1,11 @@
 package com.javalearn.lab.chaos.ledger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javalearn.lab.chaos.bench.BenchScenarioCatalog;
+import com.javalearn.lab.chaos.bench.exec.BenchLaunchPlanner;
+import com.javalearn.lab.chaos.bench.exec.BenchRunExecutor;
+import com.javalearn.lab.chaos.bench.exec.BenchRunLifecycleHook;
+import com.javalearn.lab.chaos.bench.exec.BenchScriptsHostDirResolver;
 import com.javalearn.lab.chaos.precheck.RunPrecheckService;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -168,12 +173,20 @@ public class LedgerConfig {
     }
 
     /**
-     * B1-04 replaced the pre-check hook with a real gate; the remaining hook is
-     * the B2-02 k6 launch seam.
+     * Stage2 B2-02b-2a: the real launch/stop hook. It only depends on the
+     * repository, catalog, planner, resolver and executor - never on the
+     * lifecycle service - so there is no cycle. The hook itself does not write
+     * run status or the lock; {@link RunLifecycleService} keeps that ownership.
      */
     @Bean
-    public RunLifecycleHook runLifecycleHook() {
-        return RunLifecycleHook.none();
+    public RunLifecycleHook runLifecycleHook(RunLedgerRepository repository,
+                                             BenchScenarioCatalog benchmarkCatalog,
+                                             BenchLaunchPlanner benchLaunchPlanner,
+                                             BenchScriptsHostDirResolver scriptsHostDirResolver,
+                                             BenchRunExecutor benchRunExecutor,
+                                             ObjectMapper objectMapper) {
+        return new BenchRunLifecycleHook(repository, benchmarkCatalog, benchLaunchPlanner,
+                scriptsHostDirResolver, benchRunExecutor, objectMapper);
     }
 
     @Bean

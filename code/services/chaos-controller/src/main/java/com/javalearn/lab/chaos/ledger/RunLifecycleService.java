@@ -39,9 +39,13 @@ import java.util.Map;
  * closed as ABORTED and its lock released - that is the operator cleanup path,
  * not a claim that the environment was restored.</p>
  *
- * <p><b>Still contract-first.</b> No k6 execution exists yet (B2-02);
- * VALIDATING/READY are persisted checkpoints and the launch hook is a no-op. Do
- * not read these states as evidence that traffic started.</p>
+ * <p><b>B2-02b-2a.</b> The hook now returns a detail map: {@code launch}
+ * details are merged into the start summary and {@code stop} details into the
+ * stop summary. Stop is best-effort - a failing stop is recorded as
+ * {@code k6StopError} and the run still reaches COMPLETED, because the operator
+ * asked to close the run and the orphan sweep can remove a stranded
+ * container. A failed start closes the run as FAILED and asks the hook to stop
+ * the half-started k6 container before releasing the lock.</p>
  */
 public class RunLifecycleService {
 
@@ -100,7 +104,7 @@ public class RunLifecycleService {
             transition(runId, current.status(), RunStatus.VALIDATING, "validate", null);
             mutated = true;
             transition(runId, RunStatus.VALIDATING, RunStatus.READY, "ready", null);
-            hook.launch(runId);
+            RunLifecycleHook.LaunchResult launched = hook.launch(runId);
             transition(runId, RunStatus.READY, RunStatus.RUNNING, "start", null);
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("runStatus", RunStatus.RUNNING.name());
@@ -111,6 +115,9 @@ public class RunLifecycleService {
                 // Non-blocking findings live in the operation summary (the full
                 // evidence stays at GET /lab/runs/{runId}/precheck).
                 after.put("precheckWarnings", report.warningSummary());
+            }
+            if (launched != null) {
+                after.putAll(launched.details());
             }
             return OperationOutcome.applied(after, null);
         } catch (RuntimeException e) {
@@ -130,9 +137,23 @@ public class RunLifecycleService {
         }
         requireTransition(current.status(), RunStatus.STOPPING, "stop");
         transition(runId, current.status(), RunStatus.STOPPING, "stop", null);
+        Map<String, Object> after = new LinkedHashMap<>();
+        try {
+            RunLifecycleHook.LaunchResult stopped = hook.stop(runId);
+            if (stopped != null) {
+                after.putAll(stopped.details());
+            }
+        } catch (RuntimeException e) {
+            // Best effort: the operator asked to close the run; a failed k6 stop
+            // must not leave it RUNNING. The orphan sweep is the safety net.
+            after.put("k6StopError", AuditSanitizer.describe(e));
+            log.warn("Stopping the k6 container for run {} failed; completing the run anyway: {}",
+                    runId, e.toString());
+        }
         transition(runId, RunStatus.STOPPING, RunStatus.COMPLETED, "complete", null);
         EnvLockService.ReleaseReport release = envLock.release(runId);
-        return OperationOutcome.applied(lockSummary(RunStatus.COMPLETED, release), null);
+        after.putAll(lockSummary(RunStatus.COMPLETED, release));
+        return OperationOutcome.applied(after, null);
     }
 
     /**
@@ -154,6 +175,10 @@ public class RunLifecycleService {
                 RunRecord now = repository.findRun(runId).orElse(null);
                 if (now != null
                         && (now.status() == RunStatus.VALIDATING || now.status() == RunStatus.READY)) {
+                    // The hook may have created the k6 container before the
+                    // transition to RUNNING failed; stop it before declaring the
+                    // run FAILED (idempotent: ABSENT is fine).
+                    stopK6BestEffort(runId);
                     boolean written = writer.transition(runId, now.status(), RunStatus.FAILED,
                             "start-failed", clock.instant(),
                             "{\"reason\":\"" + escape(AuditSanitizer.describe(cause)) + "\"}");
@@ -189,6 +214,16 @@ public class RunLifecycleService {
             after.put("lockHolderRunId", release.currentHolderRunId());
         }
         return after;
+    }
+
+    /** A failed start must not leave a half-launched k6 container behind. */
+    private void stopK6BestEffort(String runId) {
+        try {
+            hook.stop(runId);
+        } catch (RuntimeException e) {
+            log.warn("Stopping the k6 container after a failed start of run {} failed: {}",
+                    runId, e.toString());
+        }
     }
 
     private void transition(String runId, RunStatus from, RunStatus to, String stepKey, String detailJson) {

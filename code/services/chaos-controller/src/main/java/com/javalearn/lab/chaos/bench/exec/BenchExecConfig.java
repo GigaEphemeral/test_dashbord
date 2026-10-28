@@ -1,11 +1,20 @@
 package com.javalearn.lab.chaos.bench.exec;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dockerjava.api.DockerClient;
+import com.javalearn.lab.chaos.bench.BenchScenarioCatalog;
 import com.javalearn.lab.chaos.error.BenchUnavailableException;
+import com.javalearn.lab.chaos.ledger.EnvLockService;
+import com.javalearn.lab.chaos.ledger.LedgerBootstrap;
+import com.javalearn.lab.chaos.ledger.LedgerProperties;
+import com.javalearn.lab.chaos.ledger.LedgerWriter;
+import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Clock;
 import java.util.List;
 
 /**
@@ -42,6 +51,29 @@ public class BenchExecConfig {
     public BenchRunExecutor benchRunExecutor(BenchExecProperties properties,
                                              K6ContainerGateway gateway) {
         return new BenchRunExecutor(properties, gateway);
+    }
+
+    /**
+     * Stage2 B2-02b-2a: exit/timeout watchdog and startup orphan cleanup. It
+     * owns a dedicated daemon thread (no {@code @EnableScheduling}); the first
+     * tick runs immediately, and a ledger that is not ready simply defers.
+     */
+    @Bean(destroyMethod = "stop")
+    public BenchRunWatchdog benchRunWatchdog(BenchExecProperties properties,
+                                             LedgerProperties ledgerProperties,
+                                             LedgerBootstrap ledgerBootstrap,
+                                             RunLedgerRepository runLedgerRepository,
+                                             LedgerWriter ledgerWriter,
+                                             EnvLockService envLockService,
+                                             BenchRunExecutor benchRunExecutor,
+                                             BenchScenarioCatalog benchScenarioCatalog,
+                                             ObjectMapper objectMapper,
+                                             Clock ledgerClock) {
+        BenchRunWatchdog watchdog = new BenchRunWatchdog(properties, ledgerProperties,
+                ledgerBootstrap, runLedgerRepository, ledgerWriter, envLockService,
+                benchRunExecutor, benchScenarioCatalog, objectMapper, ledgerClock);
+        watchdog.start();
+        return watchdog;
     }
 
     private static BenchUnavailableException unavailable() {
