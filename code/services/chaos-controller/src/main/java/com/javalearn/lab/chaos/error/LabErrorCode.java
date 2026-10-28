@@ -34,7 +34,13 @@ public enum LabErrorCode implements ErrorCode {
      * from the generic 50301 so the console can point at
      * {@code GET /lab/ledger/status}.
      */
-    LEDGER_UNAVAILABLE("50302", "Ledger unavailable");
+    LEDGER_UNAVAILABLE("50302", "Ledger unavailable"),
+    /**
+     * Stage2 B2-01b: the k6 scenario manifest is missing, unreadable or fails
+     * validation. The endpoint refuses with 503 instead of returning an empty
+     * catalog, so the console can render "场景目录不可用" rather than a fake OK.
+     */
+    BENCH_UNAVAILABLE("50303", "Bench scenario catalog unavailable");
 
     private final String code;
     private final String message;
