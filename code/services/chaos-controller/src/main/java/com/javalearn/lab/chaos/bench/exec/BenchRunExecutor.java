@@ -52,6 +52,16 @@ public class BenchRunExecutor {
         Path runDir = reportDirectory(runId);
         try {
             Files.createDirectories(runDir);
+            // The grafana/k6 image runs as uid 12345, not root. The controller
+            // (root) creates this directory on the shared volume, so without an
+            // explicit mode k6 cannot write summary.json and still exits 0.
+            // 0777 on the dedicated per-run reports directory keeps the k6
+            // process unprivileged; non-POSIX hosts (unit tests) ignore it.
+            Files.setPosixFilePermissions(runDir,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxrwx"));
+        } catch (UnsupportedOperationException ignored) {
+            // Windows/unit-test filesystem: the live container always sees a
+            // POSIX volume, so this branch only affects local tests.
         } catch (IOException e) {
             throw new BenchUnavailableException("cannot create the k6 report directory '"
                     + runDir + "': " + e.getMessage(), e);

@@ -443,3 +443,10 @@ clock.instant() > deadline → 超时
 - **无报告仍判完成**：退出 0 但 summary 缺失时旧看门狗直接 COMPLETED。现在若 manifest 场景 `thresholdsExpected=true` 且 `reportAvailable=false`，转 `RUNNING→FAILED`（step `k6-report-missing`）并释放锁；新增单测。`thresholdsExpected=false`（stress 等）不受影响。
 - **测试**：全模块 **590 / 0 / 0 / 0**（新增 bind 2 + 报告缺失 1）。
 - **真机复验**：修正后需重跑 A01，确认 k6 容器 `scripts:ro`、`reports:rw`，summary 落盘并可下载。
+
+
+## 补充：报告目录权限（真机 A01 三跑，2026-10-28）
+
+- **问题**：`grafana/k6` 镜像以 uid **12345** 运行；控制器（root）在共享卷上创建的 `/reports/<runId>` 是 0755，k6 无法写 `summary.json`，且仍 exit 0（无日志报错），看门狗按上一条规则把 run 判 FAILED。
+- **修正**：`BenchRunExecutor.start` 创建 run 目录后显式 `setPosixFilePermissions(0777)`；k6 进程保持非 root，只有该 run 的专用目录可写。非 POSIX 文件系统（Windows 单测）忽略该调用。
+- **真机复验**：k6 容器 `scripts rw=false`、`reports rw=true`；修正后重跑 A01，确认 summary 落盘与下载。
