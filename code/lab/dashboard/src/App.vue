@@ -1,9 +1,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import AnimationLab from './components/AnimationLab.vue'
-import CacheLab from './components/CacheLab.vue'
+import BenchmarkPanel from './components/BenchmarkPanel.vue'
+import FaultsPanel from './components/FaultsPanel.vue'
+import InstancesPanel from './components/InstancesPanel.vue'
+import ObservePanel from './components/ObservePanel.vue'
+import OverviewPanel from './components/OverviewPanel.vue'
+import RunLedger from './components/RunLedger.vue'
 import ScenarioWizard from './components/ScenarioWizard.vue'
-import ThreadLab from './components/ThreadLab.vue'
+import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import {
   describeError,
   fetchActiveFaults,
@@ -11,7 +15,10 @@ import {
   fetchGuideScenarios,
   fetchGuideState,
   fetchHealth,
+  fetchLedgerStatus,
   fetchLogs,
+  fetchRuns,
+  fetchToxiproxyState,
   fetchTrafficState,
   runGuideAction,
   runTrafficAction,
@@ -22,9 +29,28 @@ import {
 const TOKEN_STORAGE_KEY = 'ha-lab-token'
 const DEFAULT_TAIL = 200
 const SYNC_INTERVAL_MS = Number(import.meta.env.VITE_LAB_SYNC_INTERVAL_MS || 5000)
+const SUMMARY_RUN_LIMIT = Number(import.meta.env.VITE_LAB_LEDGER_SUMMARY_LIMIT || 5)
+const GRAFANA_URL = (import.meta.env.VITE_LAB_GRAFANA_URL || 'http://127.0.0.1:3000')
+  .replace(/\/+$/, '')
+
+// Order is the operator workflow. testids follow nav-<section>; the old
+// nav-console/nav-thread/nav-cache/nav-animation ids are gone with the rewrite.
+const SECTIONS = [
+  { id: 'overview', label: '总览', hint: '环境、容器池、故障、台账摘要' },
+  { id: 'wizard', label: '场景向导', hint: '逐步注入故障并观察' },
+  { id: 'instances', label: '实例与 JVM', hint: '实例卡片与线程实验室' },
+  { id: 'bench', label: 'Benchmark', hint: '背景流量、容器清单与日志' },
+  { id: 'observe', label: '实时监控', hint: '质量徽标 KPI 与拓扑' },
+  { id: 'faults', label: '故障与缓存实验', hint: '容器故障、缓存防护与动画' },
+  { id: 'runs', label: '实验记录', hint: '台账、时间线、预检查与操作' }
+]
 
 const token = ref(localStorage.getItem(TOKEN_STORAGE_KEY) || 'lab-token')
 const showToken = ref(false)
+const autoSync = ref(true)
+const section = ref('overview')
+
+const healthState = ref('checking')
 const containers = ref([])
 const selected = ref('')
 const tail = ref(DEFAULT_TAIL)
@@ -32,17 +58,22 @@ const logs = ref('')
 const error = ref('')
 const loadingContainers = ref(false)
 const loadingLogs = ref(false)
-const healthState = ref('checking')
 
 const scenarios = ref([])
 const guide = ref(null)
 const traffic = ref(null)
 const faults = ref([])
+const toxiproxy = ref(null)
 const busy = ref('')
-const autoSync = ref(true)
-const view = ref('console')
-// Instance the animation view hands to the thread page ("filter to this app").
+const syncTick = ref(0)
+
+const ledgerStatus = ref(null)
+const ledgerError = ref('')
+const latestRun = ref(null)
+
+// Instance handed to the thread lab by an instance card / animation view.
 const threadInstance = ref('')
+const threadNonce = ref(0)
 
 watch(token, (value) => {
   localStorage.setItem(TOKEN_STORAGE_KEY, value)
@@ -60,8 +91,6 @@ const healthPillClass = computed(() => {
   return 'muted'
 })
 
-const guideStatus = computed(() => guide.value?.status || 'unknown')
-const runningFaults = computed(() => faults.value.length)
 // Profile-gated and one-shot services are down by design: jl-traffic is
 // created-but-stopped, the db-ha init jobs and the toxiproxy init exit(0) after
 // bootstrapping. The rollup only promises the always-on services, so the
@@ -74,7 +103,7 @@ const onDemandContainerNames = computed(() => {
   const names = new Set(
     configured.length > 0
       ? configured
-      : ['jl-traffic', 'jl-mysql-cluster-init', 'jl-mysql-router-init', 'jl-toxiproxy-init', 'jl-seckill-app-jdk8'],
+      : ['jl-traffic', 'jl-mysql-cluster-init', 'jl-mysql-router-init', 'jl-toxiproxy-init', 'jl-seckill-app-jdk8']
   )
   if (traffic.value?.container) {
     names.add(traffic.value.container)
@@ -87,17 +116,6 @@ const steadyContainers = computed(() =>
 const healthyContainers = computed(
   () => steadyContainers.value.filter((item) => item.state === 'running').length
 )
-const trafficRunning = computed(() => Boolean(traffic.value?.running))
-
-function stateClass(state) {
-  return state === 'running' ? 'ok' : 'warn'
-}
-
-function healthClass(health) {
-  if (health === 'healthy') return 'ok'
-  if (health === 'unhealthy') return 'down'
-  return 'muted'
-}
 
 async function checkHealth() {
   try {
@@ -149,17 +167,38 @@ async function refreshContainers() {
   }
 }
 
+/** The proxy layer is optional: never let its absence fail the whole sync. */
+async function refreshToxiproxyQuiet() {
+  if (!containers.value.some((item) => item.name === 'jl-toxiproxy')) {
+    toxiproxy.value = null
+    return
+  }
+  try {
+    toxiproxy.value = await fetchToxiproxyState(token.value.trim())
+  } catch {
+    toxiproxy.value = null
+  }
+}
+
 async function syncEnvironment() {
   const value = token.value.trim()
   try {
-    const [guideState, actions, trafficState] = await Promise.all([
+    const [guideState, actions, trafficState, list] = await Promise.all([
       fetchGuideState(value),
       fetchActiveFaults(value),
-      fetchTrafficState(value)
+      fetchTrafficState(value),
+      fetchContainers(value)
     ])
     guide.value = guideState
     faults.value = actions || []
     traffic.value = trafficState
+    containers.value = list || []
+    if (!containers.value.some((item) => item.name === selected.value)) {
+      selected.value = containers.value.find((item) => item.name === 'jl-app-1')?.name
+        || containers.value[0]?.name
+        || ''
+    }
+    await refreshToxiproxyQuiet()
     healthState.value = 'up'
   } catch (err) {
     error.value = describeError(err)
@@ -176,6 +215,28 @@ async function refreshScenarios() {
   }
 }
 
+/** Ledger summary is independent of the environment sync: a 503 must not
+ *  turn the controller health pill red, it turns the ledger card DEGRADED. */
+async function refreshLedgerSummary() {
+  const value = token.value.trim()
+  try {
+    ledgerStatus.value = await fetchLedgerStatus(value)
+  } catch {
+    ledgerStatus.value = null
+  }
+  try {
+    const page = await fetchRuns(value, { limit: SUMMARY_RUN_LIMIT })
+    const items = page?.items || []
+    latestRun.value = items.find(
+      (run) => !['COMPLETED', 'FAILED', 'INVALID', 'ABORTED'].includes(run.status)
+    ) || items[0] || null
+    ledgerError.value = ''
+  } catch (err) {
+    latestRun.value = null
+    ledgerError.value = describeError(err)
+  }
+}
+
 /** Every guide transition answers with the new state, so the reply is the truth. */
 async function callGuide(action, scenarioId) {
   error.value = ''
@@ -183,7 +244,7 @@ async function callGuide(action, scenarioId) {
   try {
     const value = token.value.trim()
     guide.value = scenarioId ? await startGuide(value, scenarioId) : await runGuideAction(value, action)
-    await Promise.all([refreshFaultsQuiet(), refreshContainersQuiet()])
+    await syncEnvironment()
   } catch (err) {
     error.value = describeError(err)
     await syncEnvironment()
@@ -218,31 +279,24 @@ async function clearFaults() {
   }
 }
 
-async function refreshFaultsQuiet() {
-  try {
-    faults.value = (await fetchActiveFaults(token.value.trim())) || []
-  } catch {
-    // The sync poll picks this up; a stale fault list must not mask the action result.
-  }
-}
-
-async function refreshContainersQuiet() {
-  try {
-    containers.value = (await fetchContainers(token.value.trim())) || []
-  } catch {
-    // Same reason as refreshFaultsQuiet.
-  }
-}
-
 function selectContainer(name) {
   selected.value = name
   refreshLogs()
 }
 
-/** The instance view links into the thread lab with the same app preselected. */
+function setTail(value) {
+  tail.value = value
+}
+
+/** Instance cards and the animation view link into the thread lab. */
 function openThread(instance) {
   threadInstance.value = instance
-  view.value = 'thread'
+  threadNonce.value += 1
+  section.value = 'instances'
+}
+
+function navigate(id) {
+  section.value = id
 }
 
 let syncTimer = null
@@ -254,13 +308,15 @@ function stopPolling() {
   }
 }
 
+async function globalSync() {
+  if (busy.value) return
+  await Promise.all([syncEnvironment(), refreshLedgerSummary()])
+  syncTick.value += 1
+}
+
 function startPolling() {
   stopPolling()
-  syncTimer = setInterval(() => {
-    if (!busy.value) {
-      syncEnvironment()
-    }
-  }, SYNC_INTERVAL_MS)
+  syncTimer = setInterval(globalSync, SYNC_INTERVAL_MS)
 }
 
 watch(autoSync, (enabled) => {
@@ -272,21 +328,11 @@ watch(autoSync, (enabled) => {
   }
 })
 
-// The thread/cache pages own their own 5s poll (same busy rule); only one view polls.
-watch(view, (value) => {
-  if (value === 'console') {
-    syncEnvironment()
-    if (autoSync.value) {
-      startPolling()
-    }
-  } else {
-    stopPolling()
-  }
-})
-
 async function reloadAll() {
+  error.value = ''
   await checkHealth()
-  await Promise.all([syncEnvironment(), refreshScenarios(), refreshContainers()])
+  await Promise.all([syncEnvironment(), refreshScenarios(), refreshContainers(), refreshLedgerSummary()])
+  syncTick.value += 1
   if (autoSync.value) {
     startPolling()
   }
@@ -301,230 +347,149 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div class="page">
+  <div class="page workspace-page">
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark">HA</div>
         <div>
-          <h1>HA Lab · 实验操作台</h1>
-          <p class="subtitle">M2–M6 · 场景向导、故障状态、线程/缓存实验室与动画视图</p>
+          <h1>HA Lab · 实验工作区</h1>
+          <p class="subtitle">侧边导航 · 总览 / 向导 / 实例 / Benchmark / 监控 / 故障 / 台账</p>
         </div>
       </div>
       <div class="topbar-meta">
         <span class="pill" :class="healthPillClass">{{ healthLabel }}</span>
         <a class="link" href="/prom/" target="_blank" rel="noreferrer">Prometheus</a>
-        <a class="link" href="http://127.0.0.1:3000" target="_blank" rel="noreferrer">Grafana</a>
+        <a class="link" :href="GRAFANA_URL" target="_blank" rel="noreferrer">Grafana</a>
       </div>
     </header>
 
-    <nav class="console-nav" aria-label="控制台视图">
-      <button
-        type="button"
-        class="nav-btn"
-        :class="{ active: view === 'console' }"
-        data-testid="nav-console"
-        @click="view = 'console'"
-      >实验操作台</button>
-      <button
-        type="button"
-        class="nav-btn"
-        :class="{ active: view === 'thread' }"
-        data-testid="nav-thread"
-        @click="view = 'thread'"
-      >线程实验室</button>
-      <button
-        type="button"
-        class="nav-btn"
-        :class="{ active: view === 'cache' }"
-        data-testid="nav-cache"
-        @click="view = 'cache'"
-      >缓存实验室</button>
-      <button
-        type="button"
-        class="nav-btn"
-        :class="{ active: view === 'animation' }"
-        data-testid="nav-animation"
-        @click="view = 'animation'"
-      >动画视图</button>
-    </nav>
-
-    <main class="content">
-      <template v-if="view === 'console'">
-      <section class="status-bar">
-        <div class="status-item">
-          <span class="status-label">向导</span>
-          <span class="pill" :class="guideStatus" data-testid="guide-status">{{ guideStatus }}</span>
-          <span class="status-value">{{ guide?.scenarioName || '未载入场景' }}</span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">活动故障</span>
-          <span class="pill" :class="runningFaults ? 'warn' : 'ok'" data-testid="fault-count">{{ runningFaults }}</span>
-          <span class="status-value">
-            <code v-for="item in faults" :key="item.id" class="fault-tag">
-              {{ item.action }} · {{ item.target }} · {{ item.status }}
-            </code>
-            <template v-if="!runningFaults">无</template>
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">容器</span>
-          <span
-            class="pill"
-            :class="healthyContainers === steadyContainers.length ? 'ok' : 'warn'"
-            data-testid="container-rollup"
-            :title="`常驻容器 ${healthyContainers}/${steadyContainers.length} 运行中；背景流量容器按需启停`"
-          >
-            {{ healthyContainers }}/{{ steadyContainers.length }}
-          </span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">还原</span>
-          <span class="pill muted" data-testid="reset-mode">{{ guide?.resetMode === 'auto' ? 'auto 结束自动还原' : 'manual 手动还原' }}</span>
-        </div>
-        <div class="status-item traffic-item">
-          <span class="status-label">背景流量</span>
-          <span class="pill" :class="trafficRunning ? 'ok' : 'muted'" data-testid="traffic-state">
-            {{ traffic?.state || 'unknown' }}
-          </span>
-          <button
-            type="button"
-            class="btn ghost"
-            data-testid="traffic-start"
-            :disabled="trafficRunning || Boolean(busy)"
-            @click="callTraffic('start')"
-          >
-            {{ busy === 'traffic-start' ? '启动中…' : '开启' }}
-          </button>
-          <button
-            type="button"
-            class="btn ghost"
-            data-testid="traffic-stop"
-            :disabled="!trafficRunning || Boolean(busy)"
-            @click="callTraffic('stop')"
-          >
-            {{ busy === 'traffic-stop' ? '停止中…' : '停止' }}
-          </button>
-        </div>
-        <div class="status-item">
-          <button type="button" class="btn ghost danger" data-testid="stop-all" :disabled="Boolean(busy)" @click="clearFaults">
-            {{ busy === 'stop-all' ? '还原中…' : '清除全部故障' }}
-          </button>
-          <label class="auto-sync">
-            <input v-model="autoSync" type="checkbox" />
-            每 {{ Math.round(SYNC_INTERVAL_MS / 1000) }}s 自动同步
-          </label>
-        </div>
-      </section>
-
-      <section class="card token-card">
-        <div class="card-head">
-          <h2>访问令牌</h2>
-          <span class="hint">请求头 X-Lab-Token · 保存在浏览器 localStorage</span>
-        </div>
-        <div class="token-row">
-          <input
-            data-testid="token-input"
-            v-model="token"
-            :type="showToken ? 'text' : 'password'"
-            class="input token-input"
-            autocomplete="off"
-            spellcheck="false"
-            aria-label="实验室访问令牌"
-            @keyup.enter="reloadAll"
-          />
-          <button type="button" class="btn ghost" @click="showToken = !showToken">
-            {{ showToken ? '隐藏' : '显示' }}
-          </button>
-          <button type="button" data-testid="connect" class="btn" :disabled="loadingContainers" @click="reloadAll">
-            {{ loadingContainers ? '连接中…' : '连接 / 刷新' }}
-          </button>
-        </div>
-      </section>
-
-      <div v-if="error" class="error-banner" role="alert" data-testid="error-banner">{{ error }}</div>
-
-      <ScenarioWizard
-        :scenarios="scenarios"
-        :state="guide"
-        :busy="busy"
-        @start="(id) => callGuide('start', id)"
-        @step="() => callGuide('step')"
-        @skip="() => callGuide('skip')"
-        @pause="() => callGuide('pause')"
-        @resume="() => callGuide('resume')"
-        @reset="() => callGuide('reset')"
-        @refresh="syncEnvironment"
-      />
-
-      <div class="grid">
-        <section class="card">
-          <div class="card-head">
-            <h2>容器清单 <span class="count">{{ containers.length }}</span></h2>
-            <button type="button" class="btn ghost" :disabled="loadingContainers" @click="refreshContainers">
-              {{ loadingContainers ? '加载中…' : '刷新' }}
-            </button>
-          </div>
-          <p class="hint">仅显示 Docker 标签 <code>lab=java-learn</code> 的白名单容器。</p>
-          <ul class="container-list">
-            <li v-for="item in containers" :key="item.name">
-              <button
-                type="button"
-                class="container-row"
-                :class="{ selected: item.name === selected }"
-                @click="selectContainer(item.name)"
-              >
-                <span class="container-name">{{ item.name }}</span>
-                <span class="badges">
-                  <span class="badge" :class="stateClass(item.state)">{{ item.state }}</span>
-                  <span class="badge" :class="healthClass(item.health)">{{ item.health }}</span>
-                </span>
-              </button>
-            </li>
-            <li v-if="!containers.length" class="empty">暂无容器，请检查令牌或控制器状态。</li>
-          </ul>
-        </section>
-
-        <section class="card logs-card">
-          <div class="card-head">
-            <h2>日志</h2>
-            <div class="log-controls">
-              <select v-model="selected" class="input select" aria-label="选择容器" data-testid="log-container" @change="refreshLogs">
-                <option value="" disabled>选择容器</option>
-                <option v-for="item in containers" :key="item.name" :value="item.name">{{ item.name }}</option>
-              </select>
-              <label class="tail-label">
-                tail
-                <input v-model.number="tail" type="number" class="input tail-input" min="1" max="1000" />
-              </label>
-              <button type="button" class="btn" data-testid="log-refresh" :disabled="loadingLogs || !selected" @click="refreshLogs">
-                {{ loadingLogs ? '读取中…' : '刷新日志' }}
-              </button>
-            </div>
-          </div>
-          <pre class="logs" data-testid="log-view">{{ logs || '（暂无日志，选择容器后刷新）' }}</pre>
-          <p class="hint">只读 · tail 1–1000 · 经 Docker API 读取 stdout/stderr</p>
-        </section>
+    <section class="card shell-bar">
+      <div class="token-row">
+        <span class="status-label">访问令牌</span>
+        <input
+          data-testid="token-input"
+          v-model="token"
+          :type="showToken ? 'text' : 'password'"
+          class="input token-input"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="实验室访问令牌"
+          @keyup.enter="reloadAll"
+        />
+        <button type="button" class="btn ghost" @click="showToken = !showToken">
+          {{ showToken ? '隐藏' : '显示' }}
+        </button>
+        <button type="button" data-testid="connect" class="btn" :disabled="loadingContainers" @click="reloadAll">
+          {{ loadingContainers ? '连接中…' : '连接 / 刷新' }}
+        </button>
       </div>
-      </template>
+      <div class="shell-flags">
+        <label class="auto-sync">
+          <input v-model="autoSync" type="checkbox" data-testid="auto-sync" />
+          每 {{ Math.round(SYNC_INTERVAL_MS / 1000) }}s 自动同步
+        </label>
+        <span class="hint">请求头 <code>X-Lab-Token</code> · 保存在 localStorage</span>
+        <button type="button" class="btn ghost danger" data-testid="global-stop-all" :disabled="Boolean(busy)" @click="clearFaults">
+          {{ busy === 'stop-all' ? '还原中…' : '全部停止' }}
+        </button>
+      </div>
+    </section>
 
-      <ThreadLab
-        v-else-if="view === 'thread'"
-        :token="token.trim()"
-        :active="view === 'thread'"
-        :focus-instance="threadInstance"
-      />
-      <CacheLab
-        v-else-if="view === 'cache'"
-        :token="token.trim()"
-        :active="view === 'cache'"
-      />
-      <AnimationLab
-        v-else
-        :token="token.trim()"
-        :active="view === 'animation'"
-        @open-thread="openThread"
-      />
-    </main>
+    <div v-if="error" class="error-banner" role="alert" data-testid="error-banner">{{ error }}</div>
+
+    <div class="workspace">
+      <WorkspaceSidebar :sections="SECTIONS" :active="section" @select="navigate" />
+
+      <main class="content workspace-main">
+        <OverviewPanel
+          v-if="section === 'overview'"
+          :health-state="healthState"
+          :health-label="healthLabel"
+          :steady-containers="steadyContainers"
+          :healthy-containers="healthyContainers"
+          :faults="faults"
+          :guide="guide"
+          :traffic="traffic"
+          :ledger-status="ledgerStatus"
+          :ledger-error="ledgerError"
+          :latest-run="latestRun"
+          :loading-containers="loadingContainers"
+          @navigate="navigate"
+          @refresh="refreshContainers"
+        />
+
+        <ScenarioWizard
+          v-else-if="section === 'wizard'"
+          :scenarios="scenarios"
+          :state="guide"
+          :busy="busy"
+          @start="(id) => callGuide('start', id)"
+          @step="() => callGuide('step')"
+          @skip="() => callGuide('skip')"
+          @pause="() => callGuide('pause')"
+          @resume="() => callGuide('resume')"
+          @reset="() => callGuide('reset')"
+          @refresh="syncEnvironment"
+        />
+
+        <InstancesPanel
+          v-else-if="section === 'instances'"
+          :token="token.trim()"
+          :active="section === 'instances'"
+          :sync-tick="syncTick"
+          :focus-instance="threadInstance"
+          :focus-nonce="threadNonce"
+          :containers="containers"
+          :faults="faults"
+        />
+
+        <BenchmarkPanel
+          v-else-if="section === 'bench'"
+          :containers="containers"
+          :selected="selected"
+          :tail="tail"
+          :logs="logs"
+          :loading-containers="loadingContainers"
+          :loading-logs="loadingLogs"
+          :traffic="traffic"
+          :busy="busy"
+          @refresh-containers="refreshContainers"
+          @select-container="selectContainer"
+          @refresh-logs="refreshLogs"
+          @update:tail="setTail"
+          @traffic="callTraffic"
+          @stop-all="clearFaults"
+        />
+
+        <ObservePanel
+          v-else-if="section === 'observe'"
+          :token="token.trim()"
+          :active="section === 'observe'"
+          :sync-tick="syncTick"
+          :containers="containers"
+          :faults="faults"
+          :toxiproxy="toxiproxy"
+        />
+
+        <FaultsPanel
+          v-else-if="section === 'faults'"
+          :token="token.trim()"
+          :active="section === 'faults'"
+          :sync-tick="syncTick"
+          :containers="containers"
+          :faults="faults"
+          @open-thread="openThread"
+          @changed="syncEnvironment"
+        />
+
+        <RunLedger
+          v-else
+          :token="token.trim()"
+          :active="section === 'runs'"
+          :sync-tick="syncTick"
+        />
+      </main>
+    </div>
 
     <footer class="footer">
       <span>业务入口 <a href="/api/hello" target="_blank" rel="noreferrer">/api/hello</a></span>
