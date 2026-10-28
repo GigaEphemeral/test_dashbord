@@ -589,6 +589,21 @@ services:
       # the k6 directory is mounted read-only below and the default is a file:
       # location. An invalid manifest answers 503/50303, never an empty catalog.
       LAB_BENCH_SCENARIOS_LOCATION: ${LAB_BENCH_SCENARIOS_LOCATION:-file:/app/k6/scenarios/manifest.json}
+      # Stage2 B2-02a: controlled k6 executor defaults. The planner refuses a
+      # blank scripts host dir (B2-02b resolves the real path); the same keys
+      # and defaults live in application.yml and .env.example.
+      LAB_BENCH_EXEC_K6_IMAGE: ${LAB_BENCH_EXEC_K6_IMAGE:-grafana/k6:1.3.0}
+      LAB_BENCH_EXEC_NETWORK: ${LAB_BENCH_EXEC_NETWORK:-jl-net}
+      LAB_BENCH_EXEC_SCRIPTS_HOST_DIR: ${LAB_BENCH_EXEC_SCRIPTS_HOST_DIR:-}
+      LAB_BENCH_EXEC_SCRIPTS_MOUNT: ${LAB_BENCH_EXEC_SCRIPTS_MOUNT:-/scripts}
+      LAB_BENCH_EXEC_REPORTS_MOUNT: ${LAB_BENCH_EXEC_REPORTS_MOUNT:-/reports}
+      LAB_BENCH_EXEC_REPORTS_VOLUME: ${LAB_BENCH_EXEC_REPORTS_VOLUME:-jl-k6-reports}
+      LAB_BENCH_EXEC_PROMETHEUS_RW_URL: ${LAB_BENCH_EXEC_PROMETHEUS_RW_URL:-http://prometheus:9090/api/v1/write}
+      LAB_BENCH_EXEC_BASE_URL: ${LAB_BENCH_EXEC_BASE_URL:-http://nginx}
+      LAB_BENCH_EXEC_CONTAINER_PREFIX: ${LAB_BENCH_EXEC_CONTAINER_PREFIX:-jl-k6-}
+      LAB_BENCH_EXEC_MAX_VUS: ${LAB_BENCH_EXEC_MAX_VUS:-1000}
+      LAB_BENCH_EXEC_MAX_DURATION_SECONDS: ${LAB_BENCH_EXEC_MAX_DURATION_SECONDS:-3600}
+      LAB_BENCH_EXEC_SUMMARY_FILE: ${LAB_BENCH_EXEC_SUMMARY_FILE:-summary.json}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
