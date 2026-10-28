@@ -134,6 +134,15 @@ lab:
     prometheus-timeout-seconds: ${LAB_PRECHECK_PROMETHEUS_TIMEOUT_SECONDS:5}
     # Healthy up{job="seckill-app"} target count.
     required-app-targets: ${LAB_PRECHECK_REQUIRED_APP_TARGETS:3}
+    # Which monitoring series the gate insists on. The dev stack has the
+    # single-node redis-exporter and the MySQL cluster probe; an ha-only render
+    # turns the matching flag off and can add its own requirements through
+    # extra-queries (semicolon separated name=promql; each entry must return a
+    # non-empty instant result, so a threshold lives inside the PromQL, e.g.
+    # redis-ha=sum(up{job="redis-exporter-ha"}) >= 1).
+    require-redis-exporter: ${LAB_PRECHECK_REQUIRE_REDIS_EXPORTER:true}
+    require-mysql-probe: ${LAB_PRECHECK_REQUIRE_MYSQL_PROBE:true}
+    extra-queries: ${LAB_PRECHECK_EXTRA_QUERIES:}
     # Memory rule: sum(mem_limit of running lab containers) + reserve must fit
     # inside Docker Info.MemTotal, otherwise the start is blocked.
     memory-reserve-mb: ${LAB_PRECHECK_MEMORY_RESERVE_MB:1024}

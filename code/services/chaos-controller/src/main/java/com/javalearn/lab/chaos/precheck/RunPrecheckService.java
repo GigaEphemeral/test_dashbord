@@ -341,13 +341,44 @@ public class RunPrecheckService implements RunPrecheckGate {
             return skipped(KEY_MONITORING, deadline);
         }
         long at = clock.instant().getEpochSecond();
-        Double appUp;
-        Double redisUp;
-        Double probeUp;
+        int requiredApps = properties.getRequiredAppTargets();
+        Map<String, Object> detail = new LinkedHashMap<>();
+        List<String> failures = new java.util.ArrayList<>();
         try {
-            appUp = scalar(PROMQL_APP_UP, at);
-            redisUp = scalar(PROMQL_REDIS_EXPORTER_UP, at);
-            probeUp = scalar(PROMQL_MYSQL_PROBE_UP, at);
+            detail.put("requiredAppTargets", requiredApps);
+            Double appUp = scalar(PROMQL_APP_UP, at);
+            detail.put("appUp", appUp);
+            if (appUp == null || Math.round(appUp) != requiredApps) {
+                failures.add("app tier is not fully scraped: up{job=\"seckill-app\"}="
+                        + text(appUp) + ", expected " + requiredApps);
+            }
+            if (properties.isRequireRedisExporter()) {
+                Double redisUp = scalar(PROMQL_REDIS_EXPORTER_UP, at);
+                detail.put("redisExporterUp", redisUp);
+                if (redisUp == null || Math.round(redisUp) < 1) {
+                    failures.add("redis-exporter is not up (up{job=\"redis-exporter\"}="
+                            + text(redisUp) + ")");
+                }
+            } else {
+                detail.put("redisExporterUp", "not-required");
+            }
+            if (properties.isRequireMysqlProbe()) {
+                Double probeUp = scalar(PROMQL_MYSQL_PROBE_UP, at);
+                detail.put("mysqlClusterProbeUp", probeUp);
+                if (probeUp == null || Math.round(probeUp) != 1) {
+                    failures.add("mysql_cluster_probe_up=" + text(probeUp)
+                            + " (expected 1); the MySQL cluster probe is not reporting");
+                }
+            } else {
+                detail.put("mysqlClusterProbeUp", "not-required");
+            }
+            for (PrecheckProperties.RequiredQuery query : properties.extraQueryList()) {
+                Double value = scalar(query.promql(), at);
+                detail.put("extra." + query.name(), value);
+                if (value == null) {
+                    failures.add("extra query '" + query.name() + "' returned no series");
+                }
+            }
         } catch (PrometheusQueryException e) {
             return PrecheckItem.block(KEY_MONITORING,
                     "Prometheus is unreachable, so the run could not be verified: " + describe(e),
@@ -356,29 +387,12 @@ public class RunPrecheckService implements RunPrecheckGate {
             return PrecheckItem.block(KEY_MONITORING,
                     "Prometheus query failed: " + describe(e), Map.of("prometheusReachable", false));
         }
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("requiredAppTargets", properties.getRequiredAppTargets());
-        detail.put("appUp", appUp);
-        detail.put("redisExporterUp", redisUp);
-        detail.put("mysqlClusterProbeUp", probeUp);
-        int requiredApps = properties.getRequiredAppTargets();
-        if (appUp == null || Math.round(appUp) != requiredApps) {
+        if (!failures.isEmpty()) {
             return PrecheckItem.block(KEY_MONITORING,
-                    "app tier is not fully scraped: up{job=\"seckill-app\"}=" + text(appUp)
-                            + ", expected " + requiredApps, detail);
-        }
-        if (redisUp == null || Math.round(redisUp) < 1) {
-            return PrecheckItem.block(KEY_MONITORING,
-                    "redis-exporter is not up (up{job=\"redis-exporter\"}=" + text(redisUp) + ")",
-                    detail);
-        }
-        if (probeUp == null || Math.round(probeUp) != 1) {
-            return PrecheckItem.block(KEY_MONITORING,
-                    "mysql_cluster_probe_up=" + text(probeUp) + " (expected 1); the MySQL cluster"
-                            + " probe is not reporting", detail);
+                    "monitoring is not ready: " + String.join("; ", failures), detail);
         }
         return PrecheckItem.pass(KEY_MONITORING,
-                "app targets, redis-exporter and the MySQL cluster probe are up", detail);
+                "required monitoring series are present", detail);
     }
 
     private PrecheckItem resourcesCheck(Instant deadline) {

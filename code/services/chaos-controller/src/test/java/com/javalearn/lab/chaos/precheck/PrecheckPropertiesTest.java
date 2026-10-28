@@ -24,6 +24,10 @@ class PrecheckPropertiesTest {
                 .containsExactly("jl-app-1", "jl-app-2", "jl-app-3");
         assertThat(properties.getPrometheusTimeoutSeconds()).isEqualTo(5);
         assertThat(properties.getRequiredAppTargets()).isEqualTo(3);
+        assertThat(properties.isRequireRedisExporter()).isTrue();
+        assertThat(properties.isRequireMysqlProbe()).isTrue();
+        assertThat(properties.getExtraQueries()).isEmpty();
+        assertThat(properties.extraQueryList()).isEmpty();
         assertThat(properties.getMemoryReserveMb()).isEqualTo(1024);
         assertThat(properties.getExpectedAppImageId()).isEmpty();
         assertThat(properties.getMaxListedItems()).isEqualTo(10);
@@ -67,6 +71,32 @@ class PrecheckPropertiesTest {
         noTimeout.setCheckTimeoutSeconds(0);
         assertThatThrownBy(noTimeout::validate)
                 .hasMessageContaining("LAB_PRECHECK_CHECK_TIMEOUT_SECONDS");
+    }
+
+    @Test
+    void extraQueriesAreParsedAndValidated() {
+        PrecheckProperties properties = new PrecheckProperties();
+        properties.setExtraQueries(" redis-ha = sum(up{job=\"redis-exporter-ha\"}) >= 1 ; "
+                + "mysql-ha=sum(mysql_cluster_probe_up) == 1 ");
+        assertThat(properties.extraQueryList()).containsExactly(
+                new PrecheckProperties.RequiredQuery("redis-ha",
+                        "sum(up{job=\"redis-exporter-ha\"}) >= 1"),
+                new PrecheckProperties.RequiredQuery("mysql-ha", "sum(mysql_cluster_probe_up) == 1"));
+        assertThatCode(properties::validate).doesNotThrowAnyException();
+
+        PrecheckProperties noEquals = new PrecheckProperties();
+        noEquals.setExtraQueries("redis-ha");
+        assertThatThrownBy(noEquals::validate)
+                .hasMessageContaining("LAB_PRECHECK_EXTRA_QUERIES")
+                .hasMessageContaining("name=promql");
+
+        PrecheckProperties badName = new PrecheckProperties();
+        badName.setExtraQueries("Redis HA=sum(up)");
+        assertThatThrownBy(badName::validate).hasMessageContaining("must match [a-z0-9_.-]");
+
+        PrecheckProperties duplicate = new PrecheckProperties();
+        duplicate.setExtraQueries("redis=sum(up);redis=sum(up)");
+        assertThatThrownBy(duplicate::validate).hasMessageContaining("repeats name");
     }
 
     @Test

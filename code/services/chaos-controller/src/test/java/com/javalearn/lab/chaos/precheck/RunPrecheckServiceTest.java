@@ -299,8 +299,35 @@ class RunPrecheckServiceTest {
     }
 
     @Test
-    void anUnreachablePrometheusBlocksBecauseThereIsNoDataToVerify() {
-        prometheus.failure = new PrometheusQueryException("prometheus unreachable at http://prometheus:9090");
+    void monitoringRequirementsCanBeTunedPerStack() {
+        properties.setRequireRedisExporter(false);
+        properties.setRequireMysqlProbe(false);
+        prometheus.values.remove(RunPrecheckService.PROMQL_REDIS_EXPORTER_UP);
+        prometheus.values.put(RunPrecheckService.PROMQL_MYSQL_PROBE_UP, 0.0);
+
+        PrecheckItem item = item(service.inspectReport(RUN), RunPrecheckService.KEY_MONITORING);
+
+        assertThat(item.status()).isEqualTo(PrecheckStatus.PASS);
+        assertThat(item.detail()).containsEntry("redisExporterUp", "not-required")
+                .containsEntry("mysqlClusterProbeUp", "not-required");
+    }
+
+    @Test
+    void anExtraRequiredQueryWithoutSeriesBlocksMonitoring() {
+        properties.setExtraQueries("redis-ha=sum(up{job=\"redis-exporter-ha\"}) >= 1");
+
+        PrecheckItem blocked = item(service.inspectReport(RUN), RunPrecheckService.KEY_MONITORING);
+        assertThat(blocked.status()).isEqualTo(PrecheckStatus.BLOCK);
+        assertThat(blocked.message()).contains("redis-ha");
+
+        prometheus.values.put("sum(up{job=\"redis-exporter-ha\"}) >= 1", 1.0);
+        PrecheckItem passed = item(service.inspectReport(RUN), RunPrecheckService.KEY_MONITORING);
+        assertThat(passed.status()).isEqualTo(PrecheckStatus.PASS);
+        assertThat(passed.detail()).containsEntry("extra.redis-ha", 1.0);
+    }
+
+    @Test
+    void anUnreachablePrometheusBlocksBecauseThereIsNoDataToVerify() {        prometheus.failure = new PrometheusQueryException("prometheus unreachable at http://prometheus:9090");
 
         PrecheckItem item = item(service.inspectReport(RUN), RunPrecheckService.KEY_MONITORING);
 

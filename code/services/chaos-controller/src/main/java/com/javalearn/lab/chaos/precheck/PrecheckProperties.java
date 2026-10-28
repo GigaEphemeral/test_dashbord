@@ -44,6 +44,30 @@ public class PrecheckProperties {
     private int requiredAppTargets = 3;
 
     /**
+     * Require {@code sum(up{job="redis-exporter"}) >= 1}. The dev stack runs
+     * that single-node exporter; an ha/db-ha render only has the
+     * {@code redis-exporter-ha} job, so that stack sets this to false and (if
+     * it still wants a Redis gate) lists the ha job through
+     * {@link #extraQueries}.
+     */
+    private boolean requireRedisExporter = true;
+
+    /**
+     * Require {@code mysql_cluster_probe_up == 1}. Only a stack running the
+     * MySQL cluster probe can satisfy it; a pure dev stack sets this to false.
+     */
+    private boolean requireMysqlProbe = true;
+
+    /**
+     * Additional required series, semicolon separated {@code name=promql}.
+     * Each entry must return a non-empty instant result, so a condition is
+     * expressed in the PromQL itself (e.g.
+     * {@code redis-ha=sum(up{job="redis-exporter-ha"}) >= 1}: the comparison
+     * yields no series when the condition fails). Blank means "none".
+     */
+    private String extraQueries = "";
+
+    /**
      * Host memory kept free on top of the summed {@code mem_limit} of the
      * running lab containers (MB). The budget is
      * {@code sum(mem_limit) + reserve <= Docker Info.MemTotal}; exceeding it is
@@ -83,6 +107,28 @@ public class PrecheckProperties {
         return List.copyOf(names);
     }
 
+    /** Parsed {@link #extraQueries} entries, in declaration order; malformed parts are skipped. */
+    public List<RequiredQuery> extraQueryList() {
+        List<RequiredQuery> queries = new ArrayList<>();
+        if (extraQueries == null) {
+            return queries;
+        }
+        for (String part : extraQueries.split(";")) {
+            String entry = part.trim();
+            int split = entry.indexOf('=');
+            if (split < 1 || split == entry.length() - 1) {
+                continue;
+            }
+            queries.add(new RequiredQuery(entry.substring(0, split).trim(),
+                    entry.substring(split + 1).trim()));
+        }
+        return List.copyOf(queries);
+    }
+
+    /** One configured monitoring requirement. */
+    public record RequiredQuery(String name, String promql) {
+    }
+
     /** Startup validation; messages name the property path and env variable. */
     public void validate() {
         requireText(trafficContainer, "lab.precheck.traffic-container", "LAB_PRECHECK_TRAFFIC_CONTAINER");
@@ -101,6 +147,48 @@ public class PrecheckProperties {
                 "LAB_PRECHECK_MAX_LISTED_ITEMS");
         range(checkTimeoutSeconds, 1, 3600, "lab.precheck.check-timeout-seconds",
                 "LAB_PRECHECK_CHECK_TIMEOUT_SECONDS");
+        validateExtraQueries();
+    }
+
+    private void validateExtraQueries() {
+        String raw = extraQueries == null ? "" : extraQueries.trim();
+        if (raw.isEmpty()) {
+            return;
+        }
+        List<String> entries = new ArrayList<>();
+        for (String part : raw.split(";")) {
+            String entry = part.trim();
+            if (!entry.isEmpty()) {
+                entries.add(entry);
+            }
+        }
+        if (entries.size() > 20) {
+            throw new IllegalStateException("lab.precheck.extra-queries lists " + entries.size()
+                    + " entries (max 20); env LAB_PRECHECK_EXTRA_QUERIES");
+        }
+        // Shape first: substring() below must never see a missing or trailing '='.
+        for (String entry : entries) {
+            int split = entry.indexOf('=');
+            if (split < 1 || split == entry.length() - 1) {
+                throw new IllegalStateException("lab.precheck.extra-queries entry '" + entry
+                        + "' must be name=promql; env LAB_PRECHECK_EXTRA_QUERIES");
+            }
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (RequiredQuery query : extraQueryList()) {
+            if (!query.name().matches("[a-z0-9_.-]{1,32}")) {
+                throw new IllegalStateException("lab.precheck.extra-queries name '" + query.name()
+                        + "' must match [a-z0-9_.-]{1,32}; env LAB_PRECHECK_EXTRA_QUERIES");
+            }
+            if (query.promql().isBlank()) {
+                throw new IllegalStateException("lab.precheck.extra-queries '" + query.name()
+                        + "' has a blank PromQL; env LAB_PRECHECK_EXTRA_QUERIES");
+            }
+            if (!seen.add(query.name())) {
+                throw new IllegalStateException("lab.precheck.extra-queries repeats name '"
+                        + query.name() + "'; env LAB_PRECHECK_EXTRA_QUERIES");
+            }
+        }
     }
 
     private static void requireText(String value, String property, String env) {
@@ -186,5 +274,29 @@ public class PrecheckProperties {
 
     public void setCheckTimeoutSeconds(int checkTimeoutSeconds) {
         this.checkTimeoutSeconds = checkTimeoutSeconds;
+    }
+
+    public boolean isRequireRedisExporter() {
+        return requireRedisExporter;
+    }
+
+    public void setRequireRedisExporter(boolean requireRedisExporter) {
+        this.requireRedisExporter = requireRedisExporter;
+    }
+
+    public boolean isRequireMysqlProbe() {
+        return requireMysqlProbe;
+    }
+
+    public void setRequireMysqlProbe(boolean requireMysqlProbe) {
+        this.requireMysqlProbe = requireMysqlProbe;
+    }
+
+    public String getExtraQueries() {
+        return extraQueries;
+    }
+
+    public void setExtraQueries(String extraQueries) {
+        this.extraQueries = extraQueries;
     }
 }
