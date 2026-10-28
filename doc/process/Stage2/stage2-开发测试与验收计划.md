@@ -24,11 +24,11 @@
 | 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | 32/32 PASS（B0 未新增断言；指标字典抽样断言归 B1 起补） |
 | 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 | 通过 |
 
-> **B1 现行基线（2026-10-28，B1-02 后）**：reactor **939 tests**（chaos-controller **384**，含 Testcontainers
-> `LedgerSchemaIT`/`EnvLockIT`/`RunLifecycleIT`/`OperationServiceIT`；app 469 / jdk8 59 / core 13 / platform 分别 10+4），
-> 其余闸门不变（verify 109 PASS/1 WARN、smoke 7/7、k6 79、claims 32、console-smoke 42 未重跑）。
-> 真机证据见 `step-S2-B1-01-ledger-persistence.md` 附录 F 与 `step-S2-B1-02-operation-contract.md` 附录 E。
-> 历史：B1-01 后 reactor 888 / chaos 333；B0 收口 reactor 851 / chaos 296。
+> **B1 现行基线（2026-10-28，B1-03 后）**：reactor **990 tests**（chaos-controller **435**，含 Testcontainers
+> `LedgerSchemaIT`/`EnvLockIT`/`RunLifecycleIT`/`OperationServiceIT`/`MetricWindowLedgerIT`；app 469 / jdk8 59 / core 13 /
+> platform 分别 10+4），其余闸门不变（verify 109 PASS/1 WARN、smoke 7/7、k6 79、claims 32、console-smoke 42 未重跑）。
+> 真机证据见 `step-S2-B1-01-ledger-persistence.md` 附录 F、`step-S2-B1-02-operation-contract.md` 附录 E、
+> `step-S2-B1-03-metrics-aggregation.md` 补充节。历史：B1-02 后 939/384；B1-01 后 888/333；B0 收口 851/296。
 
 规约要点（每一步都适用）：
 

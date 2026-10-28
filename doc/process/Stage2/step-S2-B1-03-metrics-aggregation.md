@@ -286,3 +286,57 @@ docker compose --env-file code/lab/docker/.env.example \
 - 配置：`application.yml`、`code/lab/docker/compose.base.yml`、`code/lab/docker/.env.example`
 - 接线检查：`code/lab/scripts/test-chaos-env-wiring.sh`
 - 测试：`.../src/test/java/com/javalearn/lab/chaos/metrics/`、`.../ledger/MetricWindowLedgerIT.java`
+
+## 补充：主会话真机演练（2026-10-28，合并 `deced73` 后）
+
+本节关闭上文"真机演练留主会话"清单：A22、run 上下文落台账、Prometheus 不可达 DEGRADED、深链地址。
+镜像沿用离线构建路径（容器内 Maven Central TLS 不通），最终 imageId **`ed2140af3572`**。
+
+### 1. 基础窗口查询（真机 OK）
+
+`GET /lab/metrics/window?from=now-300&to=now&keys=http.rps,cache.l1.hit.ratio,cache.l2.keys,business.orders.created,mysql.cluster.probe.up`
+→ `overall=OK`；单项 `OK`；`http.rps` 3 条实例序列（last≈0.40）、`cache.l1.hit.ratio` 3 条（0.263）、
+`cache.l2.keys` 1 条（1023）、`mysql.cluster.probe.up=1`；`step=15s/range=15s`。
+
+### 2. A22 停 exporter（真机 PASS，无 0 填充）
+
+| 步骤 | 窗口 | 结果 |
+|---|---|---|
+| `docker stop jl-redis-exporter`，等 50s | `[now-30, now]` | 整体/两项 **COLLECTING**（窗口侵入当前抓取间隔，语义正确的"还没采到"） |
+| 同上 | `[now-40, now-20]`（已过 `scrape-grace=15s`） | 整体/两项 **NO_DATA**，`series=[]`，reason=`no series returned for the selected window`，**无 0 序列** |
+| `docker start jl-redis-exporter`，等 25s | `[now-90, now-20]` | 整体/单项 **OK**，`last=1023` |
+
+### 3. run 上下文落台账
+
+`GET /lab/runs/run-20261028-002/metrics?keys=http.rps,cache.l2.keys` 连查两次 → 两次 HTTP 200；
+`lab_metric_window` 按 `(run_id, phase=adhoc, metric_key, data_quality)` 聚合为 **2 行/指标（各 2 批）**，质量 `OK`。
+
+### 4. Prometheus 不可达 → DEGRADED
+
+以 `LAB_METRICS_PROMETHEUS_URL=http://127.0.0.1:1` 覆盖重建：
+整体与单项均 `DEGRADED`、`series=[]`、reason=`prometheus unreachable at http://127.0.0.1:1: java.net.ConnectException`，
+HTTP 仍 200（查询结果可用，状态由质量字段表达）。随后不带覆盖重建回默认地址。
+
+### 5. 深链默认值修正（合并后主会话补）
+
+真机发现：`lab.metrics.grafana-url` 原默认 `http://grafana:3000` 只在内网可解析，而链接由**操作者浏览器**打开 →
+默认链接不可用。已改为 `http://localhost:3000`（yml / `MetricsProperties` / compose / `.env.example` + 断言同步），
+真机回读 `http://localhost:3000/explore?from=...&to=...`。
+Tempo 仅 `expose: 3200`、未发布宿主端口，链接暂为控制器侧地址；`.env.example` 已注明"发布 3200 后再用 Tempo 链接"。
+
+### 6. 回归闸门（重建后）
+
+| 闸门 | 结果 |
+|---|---|
+| `mvn -pl services/chaos-controller -am test` | **435 / 0 fail / 0 error / 0 skip** |
+| `mvn test`（全量 reactor） | **990 / 0 / 0 / 0**（chaos 435、app 469、jdk8 59、core 13、platform 10+4） |
+| `smoke.sh` | 7/7 |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL** |
+| `test-chaos-env-wiring.sh` | 8 chaos + 47 ledger/metrics 键全 PASS |
+
+### 7. 遗留
+
+- `executor.rejected` 无导出名 → 永久 NO_DATA 直到 B4-01 接拒绝计数器（目录注释与字典一致）；
+- `cache.l2.keys` 用 `redis_db_keys{db="db0"}`（指标字典未列该导出名，已在目录注释与本交接说明；字典补录归 B5-04 缺口补采）；
+- 整体质量汇总规则：混合 `OK + NO_DATA` → 整体 `OK`（逐项仍标 NO_DATA）；B1-05 UI 必须逐项渲染质量，不能只看 overall；
+- 深链未接 UI（B1-05）；Tempo 链接需先发布 3200。
