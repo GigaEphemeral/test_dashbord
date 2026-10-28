@@ -254,6 +254,12 @@ public class MetricsService {
             }
             labels.put(key, value);
         });
+        String instance = labels.get("instance");
+        if (instance != null && (instance.length() > 128 || instance.contains("://")
+                || instance.contains("?") || instance.contains(" "))) {
+            // A URL/trace-like value must never masquerade as the instance dimension.
+            labels.remove("instance");
+        }
         return labels;
     }
 
@@ -446,7 +452,8 @@ public class MetricsService {
                         "'from' must be at least 1 second before 'to'");
             }
             long step = Math.max(properties.getMinStepSeconds(),
-                    (long) Math.ceil(seconds / (double) properties.getMaxPoints()));
+                    (long) Math.ceil(seconds
+                            / (double) Math.max(1L, properties.getMaxPoints() - 1L)));
             return new Window(from, to, step, step + "s");
         }
     }

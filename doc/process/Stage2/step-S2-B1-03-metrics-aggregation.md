@@ -78,8 +78,9 @@
   `from = start - scrape_grace(15s)`，`to = end + drain_grace(30s)`。
 - 显式 `from`/`to` 覆盖 run 窗口时**不再叠加** grace（调用方给的是精确查询窗）。
 - 实时窗口：`from`/`to` 必须同时给出。
-- `step = max(min_step_seconds, ceil(windowSeconds / max_points))`；`${range}` 替换为 `"<step>s"`。
-  例：300s 窗口 + `max-points=10` → step 30s；默认 240s 窗口 → step 15s。
+- `step = max(min_step_seconds, ceil(windowSeconds / (max_points - 1)))`；`${range}` 替换为 `"<step>s"`。
+  `max_points - 1` 是因为 query_range 含首尾两个端点；这样返回点数不会超过上限。
+  例：300s 窗口 + `max-points=10` → step 34s（10 个点）；默认 240s 窗口 → step 15s。
 - 每序列最多 `max-points` 个点（Prometheus 理论上按 step 返回；若仍超限，保留**最新**尾部并置 `DEGRADED`）。
 - 全局最多 `max-series` 条序列；超出按请求/目录顺序截断，受影响指标 `DEGRADED`，已返回的序列仍保留。
 - Prometheus 请求超时/连接超时分别为 `request-timeout-seconds` / `connect-timeout-seconds`。

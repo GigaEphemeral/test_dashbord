@@ -161,10 +161,10 @@ class MetricsServiceTest {
         MetricsQueryViewResult view = query(gateway, null, null, null, new MetricDefinition[]{RPS},
                 NOW.minusSeconds(360).toString(), NOW.minusSeconds(60).toString());
 
-        assertThat(lastStep.get()).isEqualTo(30);
-        assertThat(lastQuery.get()).contains("[30s]");
-        assertThat(view.view().window().stepSeconds()).isEqualTo(30);
-        assertThat(view.view().window().range()).isEqualTo("30s");
+        assertThat(lastStep.get()).isEqualTo(34);
+        assertThat(lastQuery.get()).contains("[34s]");
+        assertThat(view.view().window().stepSeconds()).isEqualTo(34);
+        assertThat(view.view().window().range()).isEqualTo("34s");
     }
 
     @Test
