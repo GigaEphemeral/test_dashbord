@@ -1,13 +1,21 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { describeError, fetchBenchScenarios } from '../api'
 
 /**
- * Benchmark / operations corner: the background k6 traffic container, the
- * container inventory and the log viewer. These are the same read-only Docker
- * surfaces the old 实验操作台 used; nothing here starts a benchmark script
- * directly (B2 owns k6 execution).
+ * Benchmark / operations corner: the read-only scenario catalog, the background
+ * k6 traffic container, the container inventory and the log viewer. Nothing here
+ * starts a benchmark script directly (B2 owns k6 execution).
+ *
+ * The catalog is the manifest projection served by GET /lab/bench/scenarios.
+ * Only views.ui is rendered, so stress/soak (deliberately CLI-only) can never
+ * appear. A missing/invalid manifest is 503/50303 and is presented as
+ * DEGRADED "场景目录不可用" - an empty list must never look like a healthy OK.
  */
 const props = defineProps({
+  token: { type: String, default: '' },
+  active: { type: Boolean, default: false },
+  syncTick: { type: Number, default: 0 },
   containers: { type: Array, default: () => [] },
   selected: { type: String, default: '' },
   tail: { type: [Number, String], default: 200 },
@@ -30,6 +38,92 @@ const emit = defineEmits([
 const trafficRunning = computed(() => Boolean(props.traffic?.running))
 const trafficState = computed(() => props.traffic?.state || 'unknown')
 
+const catalog = ref(null)
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const catalogUnavailable = ref(false)
+let catalogInFlight = false
+let catalogQueued = false
+
+// Keys worth showing on a catalog row: load shape and SLO thresholds.
+const PARAM_HINTS = /(VUS|DURATION|STAGES|P95_MS|P99_MS|ERROR_RATE|CHECKS_RATE)/
+const MAX_KEY_PARAMS = 6
+
+const catalogState = computed(() => {
+  if (catalogError.value) return catalogUnavailable.value ? 'DEGRADED' : 'ERROR'
+  if (catalog.value) return 'OK'
+  return catalogLoading.value ? 'LOADING' : 'IDLE'
+})
+
+const catalogPillClass = computed(() => {
+  if (catalogState.value === 'OK') return 'ok'
+  if (catalogState.value === 'LOADING' || catalogState.value === 'IDLE') return 'muted'
+  return 'down'
+})
+
+const uiScenarios = computed(() => {
+  const views = catalog.value?.views?.ui
+  const scenarios = catalog.value?.scenarios
+  if (!Array.isArray(views) || !scenarios) return []
+  return views
+    .map((name) => ({ name, ...(scenarios[name] || {}) }))
+    .filter((item) => item.script)
+})
+
+function formatParam(value) {
+  if (Array.isArray(value)) return `${value.length} stages`
+  if (value === null || value === undefined) return 'null'
+  return String(value)
+}
+
+function keyParams(item) {
+  return Object.entries(item.params || {})
+    .filter(([key]) => PARAM_HINTS.test(key))
+    .slice(0, MAX_KEY_PARAMS)
+    .map(([key, value]) => `${key}=${formatParam(value)}`)
+}
+
+async function loadCatalog() {
+  if (!props.active || !props.token) return
+  if (catalogInFlight) {
+    catalogQueued = true
+    return
+  }
+  catalogInFlight = true
+  catalogLoading.value = true
+  try {
+    catalog.value = await fetchBenchScenarios(props.token)
+    catalogError.value = ''
+    catalogUnavailable.value = false
+  } catch (err) {
+    // Never keep the previous rows as if they were current: a broken mount is
+    // DEGRADED, not an empty-but-OK catalog.
+    catalog.value = null
+    catalogError.value = describeError(err)
+    catalogUnavailable.value = err?.status === 503 || err?.code === '50303'
+  } finally {
+    catalogLoading.value = false
+    catalogInFlight = false
+    if (catalogQueued) {
+      catalogQueued = false
+      loadCatalog()
+    }
+  }
+}
+
+watch(
+  () => [props.active, props.syncTick, props.token],
+  ([active]) => {
+    if (active) loadCatalog()
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  catalogInFlight = false
+  catalogQueued = false
+})
+
 function stateClass(state) {
   return state === 'running' ? 'ok' : 'warn'
 }
@@ -51,6 +145,62 @@ function onTailChange(event) {
 
 <template>
   <div class="bench-panel">
+    <section class="card" data-testid="bench-scenarios">
+      <div class="card-head">
+        <h2>
+          场景目录
+          <span v-if="catalogState === 'OK'" class="count">{{ uiScenarios.length }}</span>
+        </h2>
+        <span class="pill" :class="catalogPillClass" data-testid="bench-scenarios-state">{{ catalogState }}</span>
+      </div>
+      <p class="hint">
+        只读 <code>scenarios/manifest.json</code>
+        <template v-if="catalog?.version">（v{{ catalog.version }}）</template>，
+        仅渲染 <code>views.ui</code>；stress/soak 按已确认口径只在 CLI 运行。
+      </p>
+      <p v-if="catalogState === 'DEGRADED'" class="hint scenario-hint" data-testid="bench-scenarios-hint">
+        场景目录不可用：{{ catalogError }}
+      </p>
+      <p v-else-if="catalogState === 'ERROR'" class="hint scenario-hint error" data-testid="bench-scenarios-hint">
+        场景目录加载失败：{{ catalogError }}
+      </p>
+      <p v-else-if="catalogState === 'LOADING'" class="hint" data-testid="bench-scenarios-hint">
+        正在加载场景目录…
+      </p>
+      <ul class="scenario-list">
+        <li
+          v-for="item in uiScenarios"
+          :key="item.name"
+          class="scenario-row"
+          :data-testid="`bench-scenario-${item.name}`"
+        >
+          <div class="scenario-head">
+            <span class="scenario-name">{{ item.name }}</span>
+            <span class="badge muted">profile {{ item.requires?.profile || '—' }}</span>
+            <span class="badge" :class="item.requires?.chaos ? 'warn' : 'muted'">
+              chaos {{ item.requires?.chaos ? '是' : '否' }}
+            </span>
+            <span class="badge" :class="item.requires?.cache ? 'warn' : 'muted'">
+              cache {{ item.requires?.cache ? '是' : '否' }}
+            </span>
+            <span class="badge" :class="item.writesData ? 'warn' : 'muted'">
+              写数据 {{ item.writesData ? '是' : '否' }}
+            </span>
+            <span class="badge" :class="item.thresholdsExpected ? 'ok' : 'muted'">
+              阈值{{ item.thresholdsExpected ? '预期' : '不判定' }}
+            </span>
+          </div>
+          <p class="scenario-params">{{ keyParams(item).join(' · ') || '无关键参数' }}</p>
+          <p class="scenario-script">
+            {{ item.script }}<span v-if="!item.scriptExists"> · 脚本未挂载（scriptExists=false）</span>
+          </p>
+        </li>
+      </ul>
+      <p v-if="catalogState === 'OK' && !uiScenarios.length" class="empty">
+        目录里没有 UI 场景（views.ui 为空）。
+      </p>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2>背景流量 · k6</h2>

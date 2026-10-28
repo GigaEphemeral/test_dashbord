@@ -358,6 +358,58 @@ h2 {
   text-align: center;
 }
 
+/* Bench scenario catalog (B2-01b): manifest rows are read-only. */
+.scenario-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.scenario-row {
+  border: 1px solid transparent;
+  background: rgba(9, 15, 22, 0.6);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scenario-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scenario-name {
+  font-family: var(--mono);
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.scenario-params,
+.scenario-script {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.hint.scenario-hint {
+  color: var(--amber);
+}
+
+.hint.scenario-hint.error {
+  color: var(--red);
+}
+
 .logs-card {
   display: flex;
   flex-direction: column;

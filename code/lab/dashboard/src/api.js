@@ -161,6 +161,16 @@ export function runTrafficAction(token, action) {
   return postJson(`/lab/traffic/${action}`, token)
 }
 
+/**
+ * Read-only bench scenario catalog: manifest version, run/bench/ui views and the
+ * per-scenario fields (script, requires, writesData, thresholdsExpected, env,
+ * params defaults, scriptExists). A missing/invalid manifest is HTTP 503/50303,
+ * never an empty catalog.
+ */
+export function fetchBenchScenarios(token) {
+  return getJson('/lab/bench/scenarios', token)
+}
+
 /** Tracked chaos actions ({ id, target, action, ttlSeconds, status, ... }). */
 export function fetchActiveFaults(token) {
   return getJson('/chaos/actions', token)
