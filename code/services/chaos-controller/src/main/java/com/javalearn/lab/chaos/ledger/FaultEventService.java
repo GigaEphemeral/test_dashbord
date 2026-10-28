@@ -101,32 +101,60 @@ public class FaultEventService {
     public boolean recordContainerAction(String runId, String operationId, String target,
                                          String action, Integer ttlSeconds, String status,
                                          Instant expiresAt, String runStatus) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("ttlSeconds", ttlSeconds);
+        detail.put("status", status);
+        detail.put("expiresAt", expiresAt == null ? null : expiresAt.toString());
+        return recordEvent(runId, operationId, "container", target, action, detail, runStatus);
+    }
+
+    /**
+     * B2-04b2: generic timeline row for the Toxiproxy and thread-lab actions.
+     *
+     * <p>Same contract as {@link #recordContainerAction}: the row is written only
+     * after the action really succeeded, and a write failure (MySQL down, run
+     * deleted by retention between validation and write) is logged and swallowed
+     * because the fault already happened. {@code operationId} and
+     * {@code runStatus} are always added to the detail snapshot; keys in
+     * {@code detail} never override them.</p>
+     *
+     * @param source   event source column ({@code container}, {@code toxiproxy},
+     *                 {@code thread}); max 32 chars in the schema
+     * @param target   proxy name, app instance or container name
+     * @param event    event column ({@code kill}, {@code toxiproxy-add},
+     *                 {@code thread-stop-all} ...); max 64 chars in the schema
+     * @param detail   credential-free request summary; may be empty
+     * @param runStatus status observed during validation, or {@code null}
+     * @return true when the row was written, false when it was skipped/failed
+     */
+    public boolean recordEvent(String runId, String operationId, String source, String target,
+                               String event, Map<String, Object> detail, String runStatus) {
         String normalized = normalize(runId);
         if (normalized == null) {
             return false;
         }
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("ttlSeconds", ttlSeconds);
-        detail.put("status", status);
-        detail.put("operationId", operationId);
-        detail.put("expiresAt", expiresAt == null ? null : expiresAt.toString());
-        detail.put("runStatus", runStatus);
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        if (detail != null) {
+            snapshot.putAll(detail);
+        }
+        snapshot.put("operationId", operationId);
+        snapshot.put("runStatus", runStatus);
         String detailJson;
         try {
-            detailJson = objectMapper.writeValueAsString(detail);
+            detailJson = objectMapper.writeValueAsString(snapshot);
         } catch (JsonProcessingException e) {
             log.warn("Fault event detail for run {} is not serializable; skipping the row: {}",
                     normalized, e.getMessage());
             return false;
         }
         try {
-            repository.insertFaultEvent(normalized, operationId, "container", target, action,
+            repository.insertFaultEvent(normalized, operationId, source, target, event,
                     clock.instant(), detailJson);
             return true;
         } catch (DataAccessException e) {
-            log.warn("Fault event for run {} ({} on {}) could not be written;"
-                            + " the action result is unchanged: {}", normalized, action, target,
-                    e.getMostSpecificCause().getMessage());
+            log.warn("Fault event for run {} ({} {} on {}) could not be written;"
+                            + " the action result is unchanged: {}", normalized, source, event,
+                    target, e.getMostSpecificCause().getMessage());
             return false;
         }
     }

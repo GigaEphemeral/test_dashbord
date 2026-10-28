@@ -1,6 +1,7 @@
 package com.javalearn.lab.chaos.web;
 
 import com.javalearn.lab.chaos.bench.exec.BenchLaunchRejectedException;
+import com.javalearn.lab.chaos.error.AppFaultFailedException;
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
 import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.AppProxyResponseTooLargeException;
@@ -198,6 +199,18 @@ public class LabExceptionHandler {
     @ExceptionHandler(AppResponseNotJsonException.class)
     public ResponseEntity<Result<Void>> handleAppResponseNotJson(AppResponseNotJsonException ex) {
         log.warn("App proxy upstream returned a non-JSON answer: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Result.failure(LabErrorCode.BAD_GATEWAY, ex.getMessage()));
+    }
+
+    /**
+     * B2-04b2: the app instance refused a thread-lab fault call. The operation
+     * is settled FAILED first (no timeline event), then this 502 tells the
+     * caller that the fault was not applied.
+     */
+    @ExceptionHandler(AppFaultFailedException.class)
+    public ResponseEntity<Result<Void>> handleAppFaultFailed(AppFaultFailedException ex) {
+        log.warn("Thread fault refused by the app instance: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Result.failure(LabErrorCode.BAD_GATEWAY, ex.getMessage()));
     }
