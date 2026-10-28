@@ -90,6 +90,29 @@ lab:
       ttl-seconds: ${LAB_LEDGER_ENV_LOCK_TTL_SECONDS:1800}
       # Retries when the lock row keeps changing between insert and read.
       acquire-attempts: ${LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS:3}
+  # Stage2 B1-03 metrics aggregation: chaos-controller queries Prometheus
+  # /api/v1/query_range only through the versioned catalog (no arbitrary PromQL
+  # from the frontend). The run window is [runStart - scrape-grace,
+  # runEnd + drain-grace]; every value below is mirrored in compose and
+  # .env.example. A missing/failed Prometheus is DEGRADED, never a synthetic 0.
+  metrics:
+    prometheus-url: ${LAB_METRICS_PROMETHEUS_URL:http://prometheus:9090}
+    connect-timeout-seconds: ${LAB_METRICS_CONNECT_TIMEOUT_SECONDS:2}
+    request-timeout-seconds: ${LAB_METRICS_REQUEST_TIMEOUT_SECONDS:10}
+    # Padding before the run start / after the run end (both externalized).
+    scrape-grace-seconds: ${LAB_METRICS_SCRAPE_GRACE_SECONDS:15}
+    drain-grace-seconds: ${LAB_METRICS_DRAIN_GRACE_SECONDS:30}
+    # Per-series point cap (raised step), step floor and total series/key caps.
+    max-points: ${LAB_METRICS_MAX_POINTS:300}
+    min-step-seconds: ${LAB_METRICS_MIN_STEP_SECONDS:15}
+    max-series: ${LAB_METRICS_MAX_SERIES:120}
+    max-keys: ${LAB_METRICS_MAX_KEYS:40}
+    # Deep links: base addresses are externalized; a blank dashboard UID means
+    # the Grafana link points at Explore (no panel UID is hard-coded).
+    grafana-url: ${LAB_METRICS_GRAFANA_URL:http://grafana:3000}
+    tempo-url: ${LAB_METRICS_TEMPO_URL:http://tempo:3200}
+    grafana-dashboard-uid: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:}
+    catalog-location: ${LAB_METRICS_CATALOG_LOCATION:classpath:metrics/catalog.yml}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.

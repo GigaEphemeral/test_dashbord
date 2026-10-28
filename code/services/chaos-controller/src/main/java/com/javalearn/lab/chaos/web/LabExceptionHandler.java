@@ -13,6 +13,7 @@ import com.javalearn.lab.chaos.error.EnvLockConflictException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
+import com.javalearn.lab.chaos.error.InvalidMetricsRequestException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.error.InvalidToxiproxyRequestException;
@@ -226,6 +227,13 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleLedgerConflict(LedgerConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Result.failure(CommonErrorCode.CONFLICT, ex.getMessage()));
+    }
+
+    /** B1-03: bad window/key/phase input; unknown catalog keys are 400 as well. */
+    @ExceptionHandler(InvalidMetricsRequestException.class)
+    public ResponseEntity<Result<Void>> handleInvalidMetricsRequest(InvalidMetricsRequestException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
     }
 
     /**

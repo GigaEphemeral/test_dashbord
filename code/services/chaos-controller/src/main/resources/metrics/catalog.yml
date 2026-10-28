@@ -1,0 +1,179 @@
+# Stage2 B1-03 metric catalog (versioned resource, the ONLY fact source for keys).
+#
+# Rules enforced at startup (MetricCatalog):
+#   - key matches [a-z0-9_.-]+ and is unique
+#   - label / unit / promql are non-blank
+#   - the only placeholder is ${range}, replaced with the computed step (e.g. 30s)
+#   - entries <= lab.metrics.max-keys
+#
+# Export names follow doc/process/Stage2/指标字典.md. A catalog entry that names
+# a series the collectors do not (yet) produce must return NO_DATA/COLLECTING,
+# never a synthetic 0 - that is exactly the A22 contract this layer implements.
+version: 1
+metrics:
+
+  # ---------------------------------------------------------------- HTTP / k6
+  - key: http.rps
+    label: HTTP 请求速率
+    unit: req/s
+    promql: 'sum by (instance) (rate(http_server_requests_seconds_count{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  - key: http.success.ratio
+    label: HTTP 成功率（1-5xx）
+    unit: ratio
+    promql: '1 - (sum by (instance) (rate(http_server_requests_seconds_count{job="seckill-app",status=~"5.."}[${range}])) / sum by (instance) (rate(http_server_requests_seconds_count{job="seckill-app"}[${range}])))'
+    groupByInstance: true
+
+  - key: http.failure.ratio
+    label: HTTP 失败率（5xx）
+    unit: ratio
+    promql: 'sum by (instance) (rate(http_server_requests_seconds_count{job="seckill-app",status=~"5.."}[${range}])) / sum by (instance) (rate(http_server_requests_seconds_count{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  - key: http.status.rps
+    label: HTTP 状态码分布
+    unit: req/s
+    promql: 'sum by (instance, status) (rate(http_server_requests_seconds_count{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  # http_server_requests_seconds is a Micrometer histogram in this lab (B0-01),
+  # so P95/P99 are real histogram_quantile values, not estimates from _max.
+  - key: http.latency.p95
+    label: HTTP P95 延迟
+    unit: s
+    promql: 'histogram_quantile(0.95, sum by (instance, le) (rate(http_server_requests_seconds_bucket{job="seckill-app"}[${range}])))'
+    groupByInstance: true
+
+  - key: http.latency.p99
+    label: HTTP P99 延迟
+    unit: s
+    promql: 'histogram_quantile(0.99, sum by (instance, le) (rate(http_server_requests_seconds_bucket{job="seckill-app"}[${range}])))'
+    groupByInstance: true
+
+  # --------------------------------------------------------------------- JVM
+  - key: jvm.heap.used
+    label: JVM 堆已用
+    unit: bytes
+    promql: 'sum by (instance) (jvm_memory_used_bytes{job="seckill-app",area="heap"})'
+    groupByInstance: true
+
+  - key: jvm.heap.max
+    label: JVM 堆上限
+    unit: bytes
+    promql: 'sum by (instance) (jvm_memory_max_bytes{job="seckill-app",area="heap"})'
+    groupByInstance: true
+
+  - key: jvm.gc.pause.max
+    label: GC 最长暂停
+    unit: s
+    promql: 'max by (instance) (jvm_gc_pause_seconds_max{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: jvm.cpu.usage
+    label: 进程 CPU 使用率
+    unit: ratio
+    promql: 'max by (instance) (process_cpu_usage{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: jvm.threads.live
+    label: Live 线程数
+    unit: threads
+    promql: 'max by (instance) (jvm_threads_live_threads{job="seckill-app"})'
+    groupByInstance: true
+
+  # -------------------------------------------------------- pools / executors
+  - key: hikari.active
+    label: Hikari 活跃连接
+    unit: connections
+    promql: 'sum by (instance, pool) (hikaricp_connections_active{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: hikari.pending
+    label: Hikari 等待连接
+    unit: connections
+    promql: 'sum by (instance, pool) (hikaricp_connections_pending{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: executor.active
+    label: 业务线程池活跃线程
+    unit: threads
+    promql: 'sum by (instance, name) (executor_active_threads{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: executor.queue
+    label: 业务线程池排队任务
+    unit: tasks
+    promql: 'sum by (instance, name) (executor_queued_tasks{job="seckill-app"})'
+    groupByInstance: true
+
+  # Micrometer 1.15 ExecutorServiceMetrics exports no rejected counter (B0-01
+  # dictionary has no such export name). Until B4-01 wires one this key resolves
+  # to NO_DATA/COLLECTING - the aggregation layer never fills in 0.
+  - key: executor.rejected
+    label: 业务线程池拒绝任务
+    unit: tasks
+    promql: 'sum by (instance, name) (increase(executor_rejected_total{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  # ------------------------------------------------------------- Caffeine/L2
+  - key: cache.l1.hit.ratio
+    label: Caffeine L1 命中率
+    unit: ratio
+    promql: 'avg by (instance) (cache_l1_hit_ratio{job="seckill-app"})'
+    groupByInstance: true
+
+  - key: cache.l1.entries
+    label: Caffeine L1 条目数（估算）
+    unit: entries
+    promql: 'sum by (instance) (cache_l1_estimated_size{job="seckill-app"})'
+    groupByInstance: true
+
+  # redis-exporter really exports redis_db_keys (B0-01 did not list it; verified
+  # on the live stack: db0 carries the business keys). Sum keeps labels {}.
+  - key: cache.l2.keys
+    label: Redis L2 业务键数
+    unit: keys
+    promql: 'sum (redis_db_keys{job="redis-exporter", db="db0"})'
+    groupByInstance: false
+
+  - key: cache.l2.memory
+    label: Redis L2 内存
+    unit: bytes
+    promql: 'sum (redis_memory_used_bytes{job="redis-exporter"})'
+    groupByInstance: false
+
+  # ------------------------------------------------------- business counters
+  - key: business.orders.created
+    label: 订单新增
+    unit: orders
+    promql: 'sum by (instance) (increase(orders_created_total{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  - key: business.stock.sold_out
+    label: 库存耗尽拒绝
+    unit: events
+    promql: 'sum by (instance) (increase(seckill_attempts_total{job="seckill-app",result="sold_out"}[${range}]))'
+    groupByInstance: true
+
+  - key: business.stock.oversold
+    label: 超卖拦截
+    unit: events
+    promql: 'sum by (instance) (increase(stock_oversold_total{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  # ------------------------------------------------------- MySQL / liveness
+  - key: mysql.cluster.probe.up
+    label: MySQL 集群探针
+    unit: bool
+    promql: 'max (mysql_cluster_probe_up{job="chaos-controller"})'
+    groupByInstance: false
+
+  # Compose-service liveness ("pod/container up") from the universal up metric;
+  # cAdvisor is deliberately omitted from the required set because B0-01 records
+  # its WSL2 downgrade, but it is still included so a stopped scraper is visible.
+  - key: targets.up
+    label: 抓取目标/Pod 存活
+    unit: bool
+    promql: 'up{job=~"seckill-app|seckill-app-jdk8|chaos-controller|prometheus|grafana|tempo|nginx-exporter|redis-exporter|redis-exporter-ha|mysqld-exporter|mysqld-exporter-ha|rabbitmq|rabbitmq-queue|cadvisor"}'
+    groupByInstance: true
