@@ -92,8 +92,15 @@ async function clearAll() {
   pendingNote.value = ''
   busy.value = 'clear'
   try {
-    const result = await stopAllFaults(props.token)
-    operation.value = result?.operationId ? { operationId: result.operationId, status: 'RESTORED' } : null
+    const { status, data } = await stopAllFaults(props.token)
+    if (status === 202 || data?.status === 'PENDING_CONFIRMATION') {
+      // Same operation contract as the inject path: never claim RESTORED while
+      // the controller still reports PENDING_CONFIRMATION.
+      operation.value = data?.operationId ? { operationId: data.operationId, status: data.status } : null
+      await pollOperation(data?.operationId)
+    } else {
+      operation.value = data?.operationId ? { operationId: data.operationId, status: 'RESTORED' } : null
+    }
     emit('changed')
   } catch (err) {
     error.value = describeError(err)
@@ -106,6 +113,24 @@ function timeLabel(value) {
   if (!value) return '—'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+/**
+ * B2-04a/c liveness label: `remainingMs` is the only countdown source, frozen
+ * while the guide is paused. REVERTED/FAILED already settled, so their status
+ * (kept on the row) is the only meaningful text; a null remainder means the
+ * action has no TTL (one-shot start/restart/resume).
+ */
+function remainingLabel(item) {
+  if (!item) return '—'
+  if (['REVERTED', 'FAILED'].includes(item.status)) return item.status
+  if (item.remainingMs === null || item.remainingMs === undefined) return '不过期/一次性'
+  const ms = Math.max(0, Number(item.remainingMs) || 0)
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`
+  const minutes = ms / 60000
+  return `${minutes < 10 ? Math.round(minutes * 10) / 10 : Math.round(minutes)}m`
 }
 </script>
 
@@ -157,9 +182,11 @@ function timeLabel(value) {
     </div>
 
     <ul v-if="faults.length" class="fault-tags" data-testid="chaos-active-faults">
-      <li v-for="item in faults" :key="item.id">
+      <li v-for="(item, index) in faults" :key="item.id" :data-testid="`chaos-fault-row-${index}`">
         <code>{{ item.action }} · {{ item.target }} · {{ item.status }}</code>
-        <span class="hint">{{ item.expiresAt ? `到期 ${timeLabel(item.expiresAt)}` : '手动保持' }}</span>
+        <span class="badge muted" data-testid="chaos-fault-remaining">{{ remainingLabel(item) }}</span>
+        <span v-if="item.paused" class="badge warn" data-testid="chaos-fault-paused">已冻结</span>
+        <span v-if="item.expiresAt" class="hint">到期 {{ timeLabel(item.expiresAt) }}</span>
       </li>
     </ul>
   </section>

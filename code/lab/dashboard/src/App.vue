@@ -466,7 +466,7 @@ onBeforeUnmount(stopPolling)
           @refresh-logs="refreshLogs"
           @update:tail="setTail"
           @traffic="callTraffic"
-          @stop-all="clearFaults"
+          @changed="syncEnvironment"
         />
 
         <ObservePanel

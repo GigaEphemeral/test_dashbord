@@ -176,9 +176,13 @@ export function fetchActiveFaults(token) {
   return getJson('/chaos/actions', token)
 }
 
-/** Revert every tracked fault without clearing the wizard cursor. */
-export function stopAllFaults(token) {
-  return postJson('/chaos/stop-all', token)
+/**
+ * Revert every tracked fault without clearing the wizard cursor. The reply is
+ * a StopAllResult (200) with per-layer outcomes, or an OperationView (202) when
+ * the blocking budget ran out; keep the status so callers can poll.
+ */
+export function stopAllFaults(token, idempotencyKey) {
+  return postJsonDetailed('/chaos/stop-all', token, undefined, idempotencyHeaders(idempotencyKey))
 }
 
 /** Network-fault layer ({ enabled, allowedProxies, proxies:[{name,present,enabled,toxics}] }). */
@@ -237,6 +241,17 @@ export function fetchOperations(token, { runId, status, limit, offset } = {}) {
 
 export function fetchOperation(token, operationId) {
   return getJson(`/lab/operations/${encodeURIComponent(operationId)}`, token)
+}
+
+/**
+ * B2-04a/c: close an UNKNOWN operation as RESTORED or FAILED. Repeating the
+ * same verdict is 200, the other verdict is 409/40905, a non-UNKNOWN operation
+ * is 409 and a missing one is 404; note is optional (<=512 chars).
+ */
+export function closeOperation(token, operationId, status, note) {
+  const body = { status }
+  if (note) body.note = note
+  return postJson(`/lab/operations/${encodeURIComponent(operationId)}/close`, token, body)
 }
 
 /** 200 = settled inside the sync budget, 202 = PENDING_CONFIRMATION. */

@@ -1,6 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { describeError, fetchBenchScenarios } from '../api'
+import {
+  describeError,
+  fetchBenchScenarios,
+  fetchOperation,
+  stopAllFaults
+} from '../api'
 
 /**
  * Benchmark / operations corner: the read-only scenario catalog, the background
@@ -32,11 +37,79 @@ const emit = defineEmits([
   'refresh-logs',
   'update:tail',
   'traffic',
-  'stop-all'
+  'changed'
 ])
 
 const trafficRunning = computed(() => Boolean(props.traffic?.running))
 const trafficState = computed(() => props.traffic?.state || 'unknown')
+
+// B2-04b1/c: one stop-all reply carries four independent layer outcomes
+// (containers, toxiproxy, traffic/threads, orphaned k6). Failures stay local
+// to this card - they must never paint a global error or a DEGRADED state.
+const OPERATION_POLL_INTERVAL_MS = Number(import.meta.env.VITE_LAB_OPERATION_POLL_INTERVAL_MS || 1000)
+const OPERATION_POLL_TIMEOUT_MS = Number(import.meta.env.VITE_LAB_OPERATION_POLL_TIMEOUT_MS || 30000)
+
+const stopAllBusy = ref(false)
+const stopAllResult = ref(null)
+const stopAllError = ref('')
+const stopAllPending = ref('')
+
+const threadEntries = computed(() => Object.entries(stopAllResult.value?.threads || {}))
+const threadText = computed(() => (
+  threadEntries.value.length
+    ? threadEntries.value.map(([name, outcome]) => `${name}:${outcome}`).join(' ')
+    : '未配置实例'
+))
+const trafficOutcome = computed(() => stopAllResult.value?.traffic || '—')
+const toxiproxyStatus = computed(() => stopAllResult.value?.toxiproxy?.status || '—')
+const containerFailed = computed(() => Number(stopAllResult.value?.failed || 0))
+const containerPending = computed(() => Number(stopAllResult.value?.pending || 0))
+const threadFailed = computed(() => threadEntries.value.filter(([, outcome]) => outcome !== 'ok').length)
+const k6Failed = computed(() => Number(stopAllResult.value?.k6Failed || 0))
+const toxiproxyWarn = computed(() => ['failed', 'partial'].includes(toxiproxyStatus.value))
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** A 202 reply only proves PENDING_CONFIRMATION; poll to the terminal state. */
+async function pollStopAll(operationId) {
+  if (!operationId) return null
+  const deadline = Date.now() + OPERATION_POLL_TIMEOUT_MS
+  let latest = null
+  while (Date.now() < deadline) {
+    latest = await fetchOperation(props.token, operationId)
+    if (['APPLIED', 'RESTORED', 'FAILED', 'UNKNOWN'].includes(latest?.status)) {
+      return latest
+    }
+    await sleep(OPERATION_POLL_INTERVAL_MS)
+  }
+  stopAllPending.value = `stop-all operation ${operationId} 仍在 PENDING_CONFIRMATION；刷新后继续观察。`
+  return latest
+}
+
+async function clearAllFaults() {
+  stopAllBusy.value = true
+  stopAllError.value = ''
+  stopAllPending.value = ''
+  stopAllResult.value = null
+  try {
+    const { status, data } = await stopAllFaults(props.token)
+    if (status === 202 || data?.status === 'PENDING_CONFIRMATION') {
+      // The settled OperationView keeps the same afterSummary shape as the
+      // synchronous StopAllResult, so one renderer serves both paths.
+      const settled = await pollStopAll(data?.operationId)
+      stopAllResult.value = settled?.afterSummary || settled || null
+    } else {
+      stopAllResult.value = data
+    }
+    emit('changed')
+  } catch (err) {
+    stopAllError.value = describeError(err)
+  } finally {
+    stopAllBusy.value = false
+  }
+}
 
 const catalog = ref(null)
 const catalogLoading = ref(false)
@@ -229,9 +302,30 @@ function onTailChange(event) {
           type="button"
           class="btn ghost danger"
           data-testid="stop-all"
-          :disabled="Boolean(busy)"
-          @click="emit('stop-all')"
-        >{{ busy === 'stop-all' ? '还原中…' : '清除全部故障' }}</button>
+          :disabled="Boolean(busy) || stopAllBusy || !token"
+          @click="clearAllFaults"
+        >{{ stopAllBusy ? '还原中…' : '清除全部故障' }}</button>
+      </div>
+      <div v-if="stopAllError" class="error-banner" role="alert" data-testid="stop-all-error">{{ stopAllError }}</div>
+      <p v-if="stopAllPending" class="notice" role="status" data-testid="stop-all-pending">{{ stopAllPending }}</p>
+      <div v-if="stopAllResult" class="chaos-result" data-testid="stop-all-summary">
+        <span>
+          容器 已恢复 {{ stopAllResult.reverted ?? 0 }} ·
+          失败
+          <span class="badge" :class="containerFailed ? 'warn' : 'muted'" data-testid="stop-all-containers-failed">{{ containerFailed }}</span>
+          · 延迟
+          <span class="badge" :class="containerPending ? 'warn' : 'muted'" data-testid="stop-all-containers-pending">{{ containerPending }}</span>
+        </span>
+        <span>
+          toxiproxy
+          <span class="badge" :class="toxiproxyWarn ? 'warn' : 'muted'" data-testid="stop-all-toxiproxy">{{ toxiproxyStatus }}</span>
+          <span class="hint">{{ stopAllResult.toxiproxy?.proxiesReset ?? 0 }}/{{ stopAllResult.toxiproxy?.proxiesTotal ?? 0 }} 已复位</span>
+        </span>
+        <span class="badge" :class="trafficOutcome === 'failed' ? 'warn' : trafficOutcome === 'stopped' ? 'ok' : 'muted'" data-testid="stop-all-traffic">traffic={{ trafficOutcome }}</span>
+        <span class="badge" :class="threadFailed ? 'warn' : 'ok'" data-testid="stop-all-threads">threads={{ threadText }}</span>
+        <span class="badge" :class="k6Failed ? 'warn' : 'muted'" data-testid="stop-all-k6">
+          k6=stop {{ stopAllResult.k6Stopped ?? 0 }}/clean {{ stopAllResult.k6Cleaned ?? 0 }}/fail {{ k6Failed }}
+        </span>
       </div>
       <p class="hint" data-testid="bench-k6-hint">
         正式 k6 场景仍走 CLI：<code>bash code/lab/scripts/bench.sh smoke</code>（B2 才提供受控执行器）。
