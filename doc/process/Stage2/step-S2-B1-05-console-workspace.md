@@ -2,7 +2,7 @@
 
 > 任务/步骤：Stage2 **B1-05 控制台工作区重构（侧边导航一次性重写）+ 台账页**
 > 分支：`feature/stage2-workbench`（隔离 worktree `agent-general-purpose-dcf54829`，基线 `fda2af9`）
-> 最新 commit：`39e86bc`（代码+测试）；本文件单独一笔 `docs(B1-05)` 提交
+> 最新代码提交：`34470d4`（smoke 包装脚本补丁）；核心提交 `860e870`..`39e86bc`；本文件单独一笔 `docs(B1-05)` 提交
 > 测试：`cd code/lab/dashboard && npm ci && npm run build` → **BUILD 成功**；`node --check code/lab/scripts/console-smoke.mjs`、
 > `bash -n code/lab/scripts/console-smoke.sh` 均通过；额外用本地 mock（临时目录，未入库）跑通 Playwright 主链路：
 > 七个分区挂载、台账创建/预检查/启动/停止/刷新恢复、指标质量卡、故障页组合挂载，无页面异常。
@@ -126,6 +126,7 @@
 | `9501a74` | RunLedger 台账页 |
 | `f8dfb76` | App 壳 + 侧边导航 + 总览/Benchmark/Faults/Chaos 卡 + 样式 |
 | `39e86bc` | console-smoke.mjs/.sh 新基线（63 条） |
+| `34470d4` | 包装脚本透传 SMOKE_RUN_* / 卡片计数覆盖项 |
 | `docs(B1-05)` | 本文件 |
 
 ## B. 真机验收命令（主会话）
