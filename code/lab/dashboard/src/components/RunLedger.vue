@@ -153,11 +153,10 @@ const k6Pollable = computed(() => (
   ['RUNNING', 'STOPPING', 'VERIFYING', 'UNKNOWN'].includes(runStatus.value)
   || ['RUNNING', 'CREATED'].includes(k6Status.value)
 ))
-const k6LogText = computed(() => (
-  k6Logs.value?.text
-  || k6LogError.value
-  || (k6LogLoading.value ? '读取中…' : '')
-))
+const k6LogText = computed(() => {
+  if (k6Logs.value) return k6Logs.value.text || '（k6 暂无输出）'
+  return k6LogError.value || (k6LogLoading.value ? '读取中…' : '')
+})
 const k6LogTruncated = computed(() => Boolean(k6Logs.value?.truncated))
 const uiScenarioNames = computed(() => benchCatalog.value?.views?.ui || [])
 
