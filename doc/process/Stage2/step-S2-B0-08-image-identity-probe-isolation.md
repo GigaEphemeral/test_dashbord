@@ -83,7 +83,17 @@
   （注释 + `Stage1/step-47-probe-target.md:27` 记录在案）。任何按「受保护目标 = jl-mysql-1」做的演练编排
   都会打空：R2 首次按此口径对 `jl-mysql-1` 下 KILL 被正常受理（非缺陷），30s TTL 自动归队，
   集群与 Router 未受影响，`RESULT: ok` 复核通过。文档/javadoc/默认值三处口径不一致请主会话一并回写。
-- **db-failover 期间 `mysql_cluster_probe_up` 恒 1**：见 §R2-3（真机区间查询）。
+- **db-failover 期间 `mysql_cluster_probe_up` 恒 1 = PASS（真机）**：杀当前 PRIMARY `jl-mysql-2`（TTL 45s），
+  探针在 `jl-mysql-1`；`query_range` 01:20:30–01:25:30 / step 5s ⇒ `samples=61 min=1 max=1 non1=(none)`，
+  `mysql_cluster_probe_failure_total` 全程 0；同期 `member_count` 如实 3→2→3、`mysql_cluster_primary{member}`
+  mysql-2→mysql-1（无幻影序列），旧主 `mysql-2/SECONDARY/ONLINE` 复现。Router 6446 切主 12s、旧主归队 63.6s
+  （Stage1 基线 12.0s / 62.5s）。探针 self-primary 自检 WARN 亦真机触发一次（新主恰为探针容器）。
+  详见 `b0-live-verification.md` §R2-3。
+- **镜像身份在故障场景下的一次归档（B0-08a）= PASS**：`code/lab/k6/reports/r2-dbfo1/manifest.json`
+  含 `runId=r2-dbfo1` + 4 台 `imageTag/imageId`，与 `docker inspect` 逐台一致（app `5b18a49d504c…`、
+  控制器 `f83b32f914a6…`）；`bench-report.js` 判 `BENCH_VERDICT=PASS`。注意 **bench.sh 的 scenario 白名单不含
+  db-failover**（只有 smoke|load|stress|spike|soak），该归档走 `code/lab/k6/run.sh` 的
+  `K6_REPORT_DIR/K6_SUMMARY_EXPORT` + 手工调 `bench-report.js`，未改脚本。
 - **`failure-container-check-enabled` 三态分类文案 = unverified**：真机上 `grep -ac "cluster probe failed"` = 0，
   分类分支从未触发；而触发它需要杀探针容器，恰被本步 403 规则挡住 ⇒ 受保护拓扑下不可自然复现，
   绕开 API 直接停容器属演练禁区。已核到：键存在（`application.yml:170`）、默认 true、容器 env 未覆盖。

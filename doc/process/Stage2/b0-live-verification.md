@@ -640,3 +640,145 @@ CHAOS_MYSQL_CLUSTER_CONTAINER=jl-mysql-1 docker compose … up -d --no-deps --fo
 
 **结论：R2-2 PASS**（403/40302 三动作真机复现 + `start` 放行 + 容器未被触碰 + 拒绝计数）；
 `failure-container-check` 三态文案 = unverified（见 R2-2.4）。
+
+## R2-3. db-failover 演练（核心，兼 Stage1 遗留 P0①）
+
+### R2-3.0 前置：把 app 数据面临时切到 Router
+
+`code/lab/k6/README.md:188-205` 写明：**`MYSQL_MODE=standalone` 时两个池都指 dev `jl-mysql`，
+杀集群节点对请求路径毫无影响**。开工态正是 standalone（R1 §1 记录），所以本项必须先临时切 router、
+演练结束再切回。
+
+```bash
+# 走 compose 既有占位（compose.base.yml:67 `${MYSQL_MODE:-standalone}`），未编辑 .env / compose 文件
+MYSQL_MODE=router docker compose … up -d --no-deps --force-recreate --wait app-1 app-2 app-3
+docker exec jl-nginx sh -c 'nginx -t -q && nginx -s reload'      # R1 §5.0 口径
+# 三台日志：MySQL access mode: router (write endpoint jdbc:mysql://jl-mysql-router:6446/seckill,
+#                                          read endpoint jdbc:mysql://jl-mysql-router:6447/seckill)
+```
+
+`.env` 里 `DB_WRITE_URL/DB_READ_URL` 本就指 6446/6447（`.env:221-222`），只缺 `MYSQL_MODE` 一个开关
+（`/tmp/r2/recreate-app-router.log`，EXIT=0，三台 Healthy）。
+
+**选定击杀目标的三重确认**（绝不选探针节点）：
+1. `db-cluster-status.sh`（`/tmp/r2/db-status-pre-drill.log`，EXIT=0）：PRIMARY = **mysql-2**（容器 `jl-mysql-2`）、
+   6446→mysql-2、RESULT: ok；
+2. 探针容器 = `jl-mysql-1`（R2-2.3 移过来的，当前非主）⇒ 杀主不伤观测，正是 B0-08 要验的组合；
+3. `docker exec jl-mysql-1 mysql -h mysql-router -P 6446 -e "select @@hostname"` → `mysql-2`（`read_only=0`）。
+
+**k6 侧接线预检**（零副作用：故意打不存在的目标）返回 `403 / 40301`
+`target "jl-mysql-9" is a datastore and is refused by chaos.datastore.allowed-target-pattern="^jl-(redis|mysql)-[1-3]$"`
+⇒ 控制器侧白名单独立生效且已含 `jl-mysql-[1-3]`（k6 侧同名 env 只是客户端 schema 校验），无需重启控制器。
+预检同时**证伪一处任务口径**：bench.sh 的 scenario 白名单只收 `smoke|load|stress|spike|soak`（`bench.sh:174`），
+db-failover 不在其中 ⇒ 归档走 `code/lab/k6/run.sh` 的 `K6_REPORT_DIR/K6_SUMMARY_EXPORT`，
+manifest 由现成 `bench-report.js` 手工生成（未改任何脚本）。
+
+选 `PRODUCT_ID=3`：集群侧 product 1/2 只剩 17/16 库存，3m 演练约 83 次写会把商品卖光，
+业务 409 会伪装成选举窗失败（README 明确警告过该坑）；product 3 有 100。
+
+### R2-3.1 时间线（时刻全部取自控制器日志 / k6 日志 / Router 轮询，不以 POST 返回时刻为准）
+
+```
+01:21:29Z  k6 起跑（read 20 VU、write 1 VU、chaos 1 VU，duration 3m）
+01:21:49Z  chaos VU POST kill jl-mysql-2 ttl=45s
+01:21:52Z  探针 WARN：mysql-2 从成员视图消失（last PRIMARY/ONLINE）；成员 3 -> 2
+01:21:52Z  探针 WARN：mysql-1 SECONDARY/ONLINE -> PRIMARY/ONLINE
+01:21:52Z  探针自检 WARN：MySQL probe target jl-mysql-1 (mysql-1) is the current PRIMARY …
+01:21:58Z  Router 轮询最后一次仍见 6446 -> mysql-2
+01:21:59Z  控制器：Chaos kill applied to jl-mysql-2 (ttl=45s, expiresAt=01:22:34.428Z)
+01:22:00Z  k6：accepted action=kill status=202（POST→受理 11s = 同步 docker stop 耗时）
+01:22:01Z  Router 轮询首次见 6446 -> mysql-1（read_only=0）      ← 切主完成
+01:22:34Z  Reverted kill on jl-mysql-2（trigger=ttl, attempt=1）  ← TTL 自动归队
+01:22:39Z  start on jl-mysql-2 is ready (state=running, health=healthy)
+01:22:52Z  探针 WARN：MySQL cluster member appeared: mysql-2 (SECONDARY/ONLINE)
+01:22:51Z  Router 6447 首次见 mysql-2 参与读路由
+01:24:33Z  k6 teardown stop-all reverted=0 failed=0（无残留动作）
+```
+
+对照 Stage1 真机基线：
+
+| 指标 | 本次（R2） | Stage1 基线 | 判定 |
+|---|---|---|---|
+| Router 6446 切新主 | kill POST 01:21:49 → 6446 首次新主 01:22:01 = **12s** | 12.0s | 一致 |
+| 旧主 TTL 后归队（ONLINE SECONDARY） | kill POST 01:21:49 → 01:22:52 = **63.6s** | 62.5s | 一致 |
+| └ docker stop + 受理确认 | ≈11s（POST→202） | — | 同 R2-2.1 阻塞发现 |
+| └ GR 追赶（容器就绪→ONLINE） | 13s | — | — |
+
+### R2-3.2 探针全程恒 1（B0-08 关键真机项）
+
+`query_range` 窗口 01:20:30–01:25:30、step=5s（覆盖 kill 前 80s 至恢复后 180s）：
+
+```
+mysql_cluster_probe_up            samples=61  min=1  max=1  distinct=1  non1=(none)
+mysql_cluster_probe_failure_total samples=61  min=0  max=0                     ← 全程零次失败
+mysql_cluster_member_count        3 →(01:22:00 起) 2 →(01:23:00 起) 3          ← 报的是集群，不是探针
+mysql_cluster_primary{member}     mysql-2 序列 01:20:30..01:21:55（18 点）
+                                  mysql-1 序列 01:22:00..01:25:30（43 点）      ← MultiGauge 无幻影 =1
+mysql_cluster_member_state        mysql-2/PRIMARY/ONLINE   …01:21:55
+                                  mysql-1/PRIMARY/ONLINE   01:22:00…
+                                  mysql-2/SECONDARY/ONLINE 01:23:00…           ← 旧主以从节点归队
+                                  mysql-3/SECONDARY/ONLINE 全程 61 点未断
+```
+
+⇒ **探针恒 1 且零失败，同时成员/主信息如实报出 3→2→3 与 mysql-2→mysql-1**：
+「探针与被杀节点分离 ⇒ 观测不因演练而冻结」这条 B0-08 设计意图在真机成立
+（对照 R2-2.1 反面：被杀节点若恰是探针，series 会整体冻结）。
+探针的 self-primary 自检 WARN 也真机触发了一次（新主恰是探针容器），文案与
+`MysqlClusterMonitor.logSelfPrimary()` 一致，且按状态变化只出一条，未刷屏。
+
+### R2-3.3 业务面：读零失败、写错误只在选举窗、错误率 <1%
+
+k6 退出码 **0**，`checks_total 3684 / checks_succeeded 100.00% / checks_failed 0`：
+
+```
+✓ 'rate==0'   http_req_failed{flow:product}  rate=0.00%     （db_failover_reads = 3580，读全程 200）
+✓ p(95)<300   http_req_duration{flow:product} p(95)=6.49ms  p(99)=10.25ms  max=689.68ms
+✓ 'rate<0.01' flow_errors 0.00%（0/3684）；server_errors 0.02%（1/3684）← 唯一一次即选举窗 5xx
+✓ 'rate>0.85' db_failover_write_success rate=98.79%（82/83）
+  db_failover_writes = 83（created 82 / expected-election-error 1 / 真实失败 0：
+  db_failover_write_failures 序列根本未出现在 summary ⇒ 真失败计数 0）
+```
+
+app 侧硬证（唯一一次写失败落在选举窗内，01:21:59.68，写池 commit）：
+
+```
+jl-app-2 WARN Hikari ProxyConnection … marked as broken because of SQLSTATE(08S01)
+          CommunicationsException: Communications link failure … ConnectionImpl.commit
+          at OrderTransactionService.create <- OrderApplicationService.create <- OrderController.create
+jl-app-1 / jl-app-3 同窗口无任何写失败
+```
+
+⇒ Stage1 遗留 P0① 三条口径（读零失败、写错误限选举窗、错误率<1%）在 B0 后新镜像上真机成立。
+
+### R2-3.4 归档（顺带补 B0-08a 在故障场景下的一次归档）
+
+`code/lab/k6/reports/r2-dbfo1/`（gitignore 内，不入库）：`summary.json`、`k6.log`、
+`image-identity.json`、`manifest.json`、`report.html`。`bench-report.js` 输出 `BENCH_VERDICT=PASS`，
+manifest 关键字段：
+
+```
+runId = r2-dbfo1 | scenario = db-failover | verdict = PASS | duration = 184s
+git = { commit 4e039c2…, branch feature/stage2-workbench }
+images.containers[] = jl-app-1/2/3 java-learn-lab/seckill-app:jdk21            sha256:5b18a49d504c…4ab2e running
+                      jl-chaos-controller java-learn-lab/chaos-controller:jdk21 sha256:f83b32f914a6…ffcc3 running
+thresholds.results  = 5 条全 ok（write_success / flow_errors / p95 / p99 / http_req_failed{flow:product}）
+```
+
+与 `docker inspect jl-app-1 jl-chaos-controller --format '{{.Image}}'` 逐台一致
+（`5b18a49d504c…` / `f83b32f914a6…`）⇒ 归档记的镜像身份 = 演练实际所跑的 B0 后新镜像。
+`image-identity.json` 的 `resolvedBy` 仍全为 `labAlias`（与 R1 §6.1 结论一致，本栈命名使然）。
+
+一处**已知限制**（非缺陷）：k6 `--summary-export` 产出的 `summary.json` 不含 sub metric（按 tag 拆分值），
+故 manifest 的 keyMetrics 只有聚合值；按 tag 的判定证据在 `k6.log` 与本报告。
+
+### R2-3.5 现场复位（本步）
+
+- app 层：不带 `MYSQL_MODE` 覆盖 recreate 回 standalone（`/tmp/r2/recreate-app-standalone.log`，
+  三台 Healthy、日志 `MySQL access mode: standalone` ×3、容器 env `MYSQL_MODE=standalone`）+ `nginx -s reload`。
+- 演练写入（router 模式下约 83 单进集群 `seckill` 库、product 3 库存相应减少）**未回滚**：
+  真 `--yes` 会清演示数据（任务口径留到 B0 之后），此处如实记账。dev 单机面（app 实际读写的 `jl-mysql`）
+  未被演练触碰。
+- 集群成员态：演练后 PRIMARY = mysql-1、旧主 mysql-2 已以 SECONDARY 归队（3/3 ONLINE、RESULT: ok）。
+  开工态是 mysql-2 为主；是否/如何回正见 R2-5 收尾。
+
+**结论：R2-3 PASS**
