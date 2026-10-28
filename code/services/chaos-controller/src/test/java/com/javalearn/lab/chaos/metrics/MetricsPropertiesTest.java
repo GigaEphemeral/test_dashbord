@@ -37,7 +37,7 @@ class MetricsPropertiesTest {
         assertThat(properties.getMinStepSeconds()).isEqualTo(15);
         assertThat(properties.getMaxSeries()).isEqualTo(120);
         assertThat(properties.getMaxKeys()).isEqualTo(40);
-        assertThat(properties.getGrafanaUrl()).isEqualTo("http://grafana:3000");
+        assertThat(properties.getGrafanaUrl()).isEqualTo("http://localhost:3000");
         assertThat(properties.getTempoUrl()).isEqualTo("http://tempo:3200");
         assertThat(properties.getGrafanaDashboardUid()).isEmpty();
         assertThat(properties.getCatalogLocation()).isEqualTo("classpath:metrics/catalog.yml");

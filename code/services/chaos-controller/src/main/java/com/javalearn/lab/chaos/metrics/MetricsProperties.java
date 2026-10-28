@@ -49,7 +49,7 @@ public class MetricsProperties {
     private int maxKeys = 40;
 
     /** Grafana base address used for the deep link (externalized). */
-    private String grafanaUrl = "http://grafana:3000";
+    private String grafanaUrl = "http://localhost:3000";
 
     /** Tempo base address used for the deep link (externalized). */
     private String tempoUrl = "http://tempo:3200";
