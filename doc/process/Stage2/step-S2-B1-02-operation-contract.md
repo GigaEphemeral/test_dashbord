@@ -225,3 +225,71 @@ docker compose --env-file code/lab/docker/.env.example \
 - REST：`ledger/LedgerController.java`、`web/ChaosController.java`、`web/LabExceptionHandler.java`
 - 配置：`application.yml`、`code/lab/docker/compose.base.yml`、`code/lab/docker/.env.example`
 - 测试：`.../src/test/java/com/javalearn/lab/chaos/ledger/`、`ChaosControllerTest.java`
+
+## E. 补充：主会话真机演练（2026-10-28，合并 `e2feb6f` 后）
+
+本节关闭上文"主会话真机"清单中的四项（A19、A29、幂等、V2 迁移）；杀主暂存窗口仍只有单测证据。
+
+### E.1 镜像与迁移
+
+- 沿用 B1-01 的离线构建路径（容器内 Maven Central TLS 不通）：`mvn -o -B -pl services/chaos-controller -am -DskipTests package`
+  → 运行时镜像 `java-learn-lab/chaos-controller:jdk21`，imageId **`0a66c7db0769`**。
+- `up -d --no-deps --force-recreate chaos-controller` 后：`GET /lab/ledger/status → schemaVersion="2"`；
+  `flyway_schema_history` 为 `1 lab ledger`、`2 operation contract`；
+  `lab_operation` 出现 `idempotency_key(varchar128, MUL)` 与 `before_summary/after_summary(json)`。
+
+### E.2 A19 并发写 run（真机 PASS）
+
+| 步骤 | 结果 |
+|---|---|
+| 创建 `run-20261028-002`、`-003`（DRAFT） | 201 |
+| 并发 `POST /lab/runs/{id}/start` | 002 抢锁成功 → RUNNING；003 返回 **409 / 40902** |
+| 003 的 409 响应体 | `write-run lock env:write-run is held by run run-20261028-002 until ...; Release it with POST /lab/runs/run-20261028-002/stop ..., or wait for the TTL to expire` |
+| `lab_env_lock` | 单行 `env:write-run / run-20261028-002 / ttl 1800s` |
+| `POST run-002/stop` | 200，afterSummary `{"runStatus":"COMPLETED","lockReleased":true}`，锁行删除 |
+| 再 `POST run-003/start` | 200，afterSummary 含 `lockKey/lockExpiresAt/runStatus=RUNNING` |
+
+### E.3 幂等键（真机 PASS）
+
+| 场景 | 结果 |
+|---|---|
+| `freeze app-3`（未加 `jl-` 前缀）+ `Idempotency-Key: idem-drill-1` | 404/40401；operation 如实记 `FAILED` + `lastError` |
+| 同 key 重放 | **200**、`idempotentReplay=true`、同一 `operationId`，无第二次副作用 |
+| `freeze jl-app-3` + `Idempotency-Key: idem-drill-2` | **202**（动作已生效，响应体为 action view + operationId） |
+| 同 key 重放 | **200**、同 `operationId`、`status=APPLIED`、`idempotentReplay=true` |
+| `lab_operation` 按 key 计数 | `idem-drill-1`、`idem-drill-2` 各 **1 行** |
+
+### E.4 A29 超时待确认（真机 PASS）
+
+以 `LAB_LEDGER_OPERATION_SYNC_WAIT_MS=1` 覆盖重建控制器后注入 `freeze jl-app-2`：
+
+```
+POST /chaos/instances/jl-app-2/actions → HTTP 202
+  status=PENDING_CONFIRMATION，lastError="no confirmation within 1ms ... poll GET /lab/operations/op-7e05..."
+GET /lab/operations/op-7e05... （2s 后轮询）→ status=APPLIED，appliedAt=04:42:54.320
+```
+
+随后不带覆盖重建回 3000ms 默认预算（容器内 `LAB_LEDGER_OPERATION_SYNC_WAIT_MS=3000`）。
+
+### E.5 顺带复验 A21 与清理路径
+
+超时演练期间两次重建控制器，把仍在 RUNNING 的 `run-20261028-003` 标成 `UNKNOWN`；随后
+`POST run-003/stop` 走"UNKNOWN→ABORTED + 释放锁"路径（beforeSummary `runStatus=UNKNOWN`，
+afterSummary `{"runStatus":"ABORTED","lockReleased":true,"unknownCleanup":true}`），`lab_env_lock` 归零。
+
+### E.6 回归闸门（重建后）
+
+| 闸门 | 结果 |
+|---|---|
+| `mvn -pl services/chaos-controller -am test`（主树复跑） | **384 / 0 fail / 0 error / 0 skip** |
+| `smoke.sh` | 7/7，`SMOKE PASSED.` |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL**（WARN 仍为 cAdvisor/WSL2） |
+| `test-chaos-env-wiring.sh` | 8 chaos + 27 ledger 键全 PASS（新增 7 键自动纳入发现） |
+
+### E.7 遗留（有意保留）
+
+- 台账里留了三笔演练样本：`run-20261028-001`（UNKNOWN，B1-01 的 A21）、`-002`（COMPLETED，A19 holder）、
+  `-003`（ABORTED，A29/超时期间的恢复路径），供 B1-05 台账页实样。
+- chaos 动作的 TTL 自动撤销**不会**把 operation 从 APPLIED 改为 RESTORED（登记在交接"边界"，归 B2-04）；
+  `guide/traffic` 尚未写 operation 行。
+- 杀主写入窗口的真实时序仍未演练（同 B1-01 遗留）。
