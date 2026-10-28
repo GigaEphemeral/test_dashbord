@@ -165,6 +165,12 @@ docker compose --env-file code/lab/docker/.env.example \
 前置：重建控制器镜像并重建容器（当前 `jl-chaos-controller` 是旧镜像）；栈为当前 ha+db-ha（`jl-mysql-3` 在跑）。
 `BASE=http://localhost:8080/lab-api/chaos`，所有请求带 `X-Lab-Token: $LAB_TOKEN`。
 
+> 只读快照（2026-10-28 本步收尾时，未改栈）：`sum(up{job="seckill-app"})=3`、`sum(up{job="redis-exporter"})=1`、
+> `sum(mysql_cluster_probe_up)=1`；运行中 32 个 lab 容器 `mem_limit` 合计 8.28GiB，Docker `MemTotal` 15.24GiB
+> （+1GiB 预留 < 总量）；三台 app 运行镜像同为 `sha256:5b18a49d504c…`；`lab_operation` 无
+> REQUESTED/PENDING_CONFIRMATION/UNKNOWN，`lab_env_lock` 0 行。因此基线报告预期为 **WARN**（仅
+> `toxiproxy.clean`：控制面未起），没有阻断项。
+
 1. 建 DRAFT：`POST $BASE/lab/runs` body `{"scenario":"load"}`，记 `RUN`。
 2. 基线：`GET $BASE/lab/runs/$RUN/precheck` → 200，`verdict` 为 PASS 或 WARN（无 chaos-proxy overlay 时
    `toxiproxy.clean` 应为 WARN“enabled but unreachable”，这是预期）。
