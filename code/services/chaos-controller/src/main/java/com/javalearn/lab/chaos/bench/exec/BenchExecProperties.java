@@ -11,10 +11,12 @@ import org.springframework.stereotype.Component;
  * {@code application.yml}, {@code compose.base.yml} and {@code .env.example}.
  *
  * <p>{@code scripts-host-dir} intentionally defaults to blank: the controller
- * cannot guess the host directory behind the read-only {@code /scripts} mount.
- * The planner refuses with {@code 503/50303} instead of rendering a plan whose
- * bind source is empty; B2-02b resolves the real host path when it wires the
- * Docker client.</p>
+ * cannot guess the host directory behind the read-only {@code /app/k6} mount.
+ * {@link BenchScriptsHostDirResolver} (B2-02b-1) resolves it from the
+ * controller container's own mounts (or from this explicit override) and the
+ * planner still refuses with {@code 503/50303} instead of rendering a plan
+ * whose bind source is empty. The run lifecycle (B2-02b-2) is what feeds the
+ * resolved value into the planner.</p>
  *
  * <p>The image is a configuration value, never a request field: a launch
  * request cannot override it (see {@link BenchLaunchPlanner}).</p>
@@ -35,6 +37,18 @@ public class BenchExecProperties {
     private int maxVus = 1000;
     private int maxDurationSeconds = 3600;
     private String summaryFile = "summary.json";
+    /** Controller container inspected to discover the host k6 directory. */
+    private String controllerContainer = "jl-chaos-controller";
+    /** Container path that is bind-mounted from the host k6 directory. */
+    private String controllerK6Mount = "/app/k6";
+    /** Download cap for one summary report (bytes). */
+    private long reportMaxBytes = 4L * 1024 * 1024;
+    /** Byte cap for one logs answer (truncated, never buffered beyond this). */
+    private int logsMaxBytes = 64 * 1024;
+    /** Upper bound applied to a requested log tail. */
+    private int logsMaxTail = 1000;
+    /** Grace period for a manual k6 container stop (seconds). */
+    private int stopGraceSeconds = 10;
 
     public String getK6Image() {
         return k6Image;
@@ -130,5 +144,53 @@ public class BenchExecProperties {
 
     public void setSummaryFile(String summaryFile) {
         this.summaryFile = summaryFile;
+    }
+
+    public String getControllerContainer() {
+        return controllerContainer;
+    }
+
+    public void setControllerContainer(String controllerContainer) {
+        this.controllerContainer = controllerContainer;
+    }
+
+    public String getControllerK6Mount() {
+        return controllerK6Mount;
+    }
+
+    public void setControllerK6Mount(String controllerK6Mount) {
+        this.controllerK6Mount = controllerK6Mount;
+    }
+
+    public long getReportMaxBytes() {
+        return reportMaxBytes;
+    }
+
+    public void setReportMaxBytes(long reportMaxBytes) {
+        this.reportMaxBytes = reportMaxBytes;
+    }
+
+    public int getLogsMaxBytes() {
+        return logsMaxBytes;
+    }
+
+    public void setLogsMaxBytes(int logsMaxBytes) {
+        this.logsMaxBytes = logsMaxBytes;
+    }
+
+    public int getLogsMaxTail() {
+        return logsMaxTail;
+    }
+
+    public void setLogsMaxTail(int logsMaxTail) {
+        this.logsMaxTail = logsMaxTail;
+    }
+
+    public int getStopGraceSeconds() {
+        return stopGraceSeconds;
+    }
+
+    public void setStopGraceSeconds(int stopGraceSeconds) {
+        this.stopGraceSeconds = stopGraceSeconds;
     }
 }
