@@ -387,7 +387,7 @@ clock.instant() > deadline → 超时
 | 日志 | `k6-log-view`、`k6-log-truncated` | tail=100；`truncated` 显示「已截断」 |
 
 - 轮询：选中 run 立即读一次 `GET /lab/runs/{id}/k6`；DRAFT/终态读过一次后不再随 5s `syncTick` 轮询；RUNNING/STOPPING/VERIFYING/UNKNOWN 或 k6 仍 CREATED/RUNNING 时继续；start/stop 动作后强制刷新一次。
-- 日志：`k6-log-refresh` 调 `GET …/k6/logs?tail=100`；容器不存在（404）显示「尚未启动或已清理」提示，不当作告警。
+- 日志：`k6-log-refresh` 调 `GET …/k6/logs?tail=100`；容器不存在（404）显示「尚未启动或已清理」提示，不当作告警；200 但空文本显示「（k6 暂无输出）」，保证日志区始终可读。
 - 报告：`k6-report-download` 仅 `reportAvailable=true` 且不忙时可用；带 `X-Lab-Token` fetch → blob → 临时 `<a download>`；404（未生成）/413（超限）保留原状态语义并显示。
 - 失败隔离：503/50303 只在卡内显示「k6 执行层不可用」，不设置全局 DEGRADED、不使用 `role="alert"`，run 详情/预检查/操作/指标不受影响。
 - 新建表单：`fetchBenchScenarios` 的 `views.ui` 填 `run-create-scenario-options` datalist，并提示「其它场景 start 会被 400/40002 拒绝，params 只接受 manifest 声明的键」；目录 503 只退化为手动输入提示，不阻塞创建。
@@ -418,4 +418,4 @@ clock.instant() > deadline → 超时
 
 ### 最新 commit
 
-`f1813a1`（UI k6 卡 / views.ui 提示 / 常驻口径）、`199c343`（console-smoke）；本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log -1`）。
+`f1813a1`（UI k6 卡 / views.ui 提示 / 常驻口径）、`e31fa01`（空日志占位）、`199c343`（console-smoke）、`787e1a8`（基线注释）；本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log -1`）。
