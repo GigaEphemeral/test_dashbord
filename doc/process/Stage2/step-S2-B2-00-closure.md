@@ -62,6 +62,7 @@ B2 四个步骤全部合并并完成真机验证，批次闸门如下（2026-10-
 
 | 项 | 说明 | 归属 |
 |---|---|---|
+| stop-all 后的 run 行 | stop-all 停掉 RUNNING run 的 k6 容器后，run 行仍 RUNNING、写锁仍持有；看门狗对 ABSENT 有意不动，需操作员再 stop。行为安全但演示脚本应在 stop-all 后补一次 stop，或后续把 stop-all 纳入 run 收盘 | 专项/B5 |
 | A10 HA 切换 | B2 只补了故障时间线与 stop-all；Redis/MySQL 切换本身沿用 Stage1/B0 的 HA 验收证据，未在 B2 重跑完整切换 | B5 全量验收或专项 |
 | 线程实验室 UI 仍走旧代理 | `/chaos/app/{instance}/lab/thread/**` 继续用于 GET/lifecycle；线程故障的 operationId/事件只有新入口才有，UI 注入暂不带 runId | B5 UI 或专项 |
 | Toxiproxy 在默认 dev 栈不可达 | stop-all 的 toxiproxy 子项报 failed（无 chaos-proxy profile）；未在 chaos-proxy 栈复跑 A12 | B3-03 / 专项 |
@@ -72,6 +73,20 @@ B2 四个步骤全部合并并完成真机验证，批次闸门如下（2026-10-
 | console-smoke 未覆盖 UNKNOWN 关闭 | 需要制造 UNKNOWN，未加入冒烟 | B5 或专项 |
 | stress/soak UI | 已确认首期不进 UI，CLI 保留 | Future |
 | bandwidth 毒性 | 已确认首期隐藏 | Future |
+
+# 独立审核结论（2026-10-28，review-B2）
+
+- 范围：`3bee92b..3012120`（B2-01…04 + 收口 + claims），隔离 worktree，审核会话只跑单元/Testcontainers 与静态脚本，未碰共享栈。
+- 计数：**Critical 0 / High 0 / Medium 0 / Minor 5**；结论 **Approved，无修复提交**。
+- 审核侧复跑：chaos **676 / 0 / 0 / 0**、node **105 / 0**、claims **41 / 41**、env 接线 **93**、safety PASS、dashboard build 成功。
+- Minor（记录，不阻塞）：
+  - M1 防御性常量未外置：`DockerK6ContainerGateway.LOG_WAIT_SECONDS=15`、`BenchRunExecutor.DEFAULT_LOG_TAIL=200`、MAX_TAIL/4MiB 兜底；属实现内防御上限，是否入 `LAB_BENCH_EXEC_*` 待裁决。
+  - M2 报告目录 0777 无 Windows 单测，只有真机 A01 证据（scripts:ro/reports:rw、summary 4803 B）。
+  - M3 stop-all 停 k6 后 run 行仍 RUNNING、锁仍持有（见缺陷表），演示脚本需补 stop 或后续纳入 run 收盘。
+  - M4 文档小漂移：B2-04 交接“待定§1”建议 source=network，实现为 toxiproxy；`架构现状与功能清单.md` 流量面行仍引旧 `run.sh:49-57`。
+  - M5 `.gitattributes` 声明 `*.sh eol=lf`，但 `run.sh/bench.sh` 在 B2 前已是 CRLF；全仓 renormalize 超出本批范围，单独批次处理。
+- 亮点：planner 拒绝矩阵逐条钉住；`OperationContext` 按 id 排除自身不放宽门禁；网关停删前重查 lab+role；close 不碰 run 锁；LAB_BENCH 26 键四表默认一致；claims 升级为 shell 真校验。
+- 主会话关注：M3 的 stop-all 后 run 收盘口径；M5 行尾统一单独排期；verify/smoke/console-smoke 三个真栈闸门已由主会话当场复跑（109/1、7/7、74/0）。
 
 # 待定事项和注意事项
 
