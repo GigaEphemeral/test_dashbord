@@ -235,11 +235,40 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
             // Docker 304: already stopped, the desired state is reached.
             return false;
         } catch (DockerException e) {
+            // A paused container refuses stop; unpause once and retry. The
+            // timeout sweep is the one caller that must always reach EXITED.
+            if (unpauseIfPaused(containerName)) {
+                try {
+                    dockerClient.stopContainerCmd(containerName)
+                            .withTimeout(Math.max(1, graceSeconds))
+                            .exec();
+                    return true;
+                } catch (NotFoundException notFound) {
+                    return false;
+                } catch (NotModifiedException notModified) {
+                    return false;
+                }
+            }
             throw new DockerUnavailableException("Failed to stop k6 container '"
                     + containerName + "'", e);
         } catch (RuntimeException e) {
             throw new DockerUnavailableException("Failed to stop k6 container '"
                     + containerName + "'", e);
+        }
+    }
+
+    /** @return true when the container was paused and is now unpaused */
+    private boolean unpauseIfPaused(String containerName) {
+        try {
+            var state = dockerClient.inspectContainerCmd(containerName).exec().getState();
+            if (state == null || !Boolean.TRUE.equals(state.getPaused())) {
+                return false;
+            }
+            dockerClient.unpauseContainerCmd(containerName).exec();
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Could not unpause k6 container '{}': {}", containerName, e.toString());
+            return false;
         }
     }
 
@@ -251,7 +280,9 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
             return false;
         }
         try {
-            dockerClient.removeContainerCmd(containerName).withForce(false).exec();
+            // The run is over (exited/timeout/orphan): force is what makes the
+            // cleanup reach a removed state even if stop was refused.
+            dockerClient.removeContainerCmd(containerName).withForce(true).exec();
             return true;
         } catch (NotFoundException e) {
             return false;

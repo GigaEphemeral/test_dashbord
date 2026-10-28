@@ -253,7 +253,9 @@ public class BenchRunWatchdog {
             }
             return;
         }
-        if (K6ContainerGateway.STATUS_RUNNING.equals(status) && timedOut(run, state, snapshot)) {
+        if ((K6ContainerGateway.STATUS_RUNNING.equals(status)
+                || K6ContainerGateway.STATUS_PAUSED.equals(status))
+                && timedOut(run, state, snapshot)) {
             failAfterTimeout(run, state, snapshot);
             return;
         }

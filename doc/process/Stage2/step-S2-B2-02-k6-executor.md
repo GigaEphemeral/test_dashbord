@@ -450,3 +450,11 @@ clock.instant() > deadline → 超时
 - **问题**：`grafana/k6` 镜像以 uid **12345** 运行；控制器（root）在共享卷上创建的 `/reports/<runId>` 是 0755，k6 无法写 `summary.json`，且仍 exit 0（无日志报错），看门狗按上一条规则把 run 判 FAILED。
 - **修正**：`BenchRunExecutor.start` 创建 run 目录后显式 `setPosixFilePermissions(0777)`；k6 进程保持非 root，只有该 run 的专用目录可写。非 POSIX 文件系统（Windows 单测）忽略该调用。
 - **真机复验**：k6 容器 `scripts rw=false`、`reports rw=true`；修正后重跑 A01，确认 summary 落盘与下载。
+
+
+## 补充：PAUSED 超时清理（A20 演练，2026-10-28）
+
+- **问题**：用 `docker pause` 模拟卡死的 k6 时，容器状态是 `PAUSED`，看门狗只对 `RUNNING` 计算超时，run 会在 72s 后仍停在 RUNNING（请求 5s + grace 30s）。
+- **修正**：`PAUSED` 与 `RUNNING` 一样参与超时判定；`stop` 遇到 paused 容器先 `unpause` 再 stop（Docker 拒绝直接停 paused），`remove` 改为 `force=true`，保证超时/孤儿清理一定到达 removed。
+- **测试**：`BenchRunWatchdogTest` 新增 1 条 PAUSED 超时用例；全模块 **591 / 0 / 0 / 0**。
+- **真机复验**：保留一个 paused 的 run，重建控制器后由新看门狗在下一 tick 判 FAILED、停容器并删除、释放锁。

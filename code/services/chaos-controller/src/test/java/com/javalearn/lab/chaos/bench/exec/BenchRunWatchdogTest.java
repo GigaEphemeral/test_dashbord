@@ -127,6 +127,27 @@ class BenchRunWatchdogTest {
     }
 
     @Test
+    void aPausedOverrunIsFailedStoppedAndCleaned() {
+        when(executor.state(RUN_ID)).thenReturn(
+                state("PAUSED", null, NOW.minusSeconds(61).toString(), null));
+        when(repository.findParams(RUN_ID)).thenReturn(List.of(
+                new RunLedgerRepository.RunParamRow("request",
+                        "{\"SMOKE_DURATION\":\"30s\"}", NOW)));
+        when(executor.stop(RUN_ID)).thenReturn(true);
+        when(executor.cleanup(RUN_ID)).thenReturn(true);
+        when(writer.transition(anyString(), any(), any(), anyString(), any(), anyString()))
+                .thenReturn(true);
+
+        watchdog.tick();
+
+        verify(writer).transition(eq(RUN_ID), eq(RunStatus.RUNNING), eq(RunStatus.FAILED),
+                eq("k6-timeout"), any(), anyString());
+        verify(executor).stop(RUN_ID);
+        verify(executor).cleanup(RUN_ID);
+        verify(envLock).release(RUN_ID);
+    }
+
+    @Test
     void anOverrunRunIsFailsStoppedCleanedAndItsLockReleased() {
         RunRecord startedLongAgo = run(NOW.minusSeconds(61));
         when(repository.findRunsByStatuses(any())).thenReturn(List.of(startedLongAgo));
