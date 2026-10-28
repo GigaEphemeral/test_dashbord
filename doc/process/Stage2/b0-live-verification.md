@@ -548,3 +548,95 @@ Redis targets    : jl-redis-1 jl-redis-2 jl-redis-3 (FLUSHDB each; verify on jl-
 `--yes` 现在跑必失败在 Redis 步骤。留待 B0 之后按批次需要再做。
 
 **结论：PASS**（口径 (b) 即步骤文档「db-ha 栈上 `--dry-run` 打印 cluster 目标与 Router 路由」的真机闭环）
+
+## R2-2. B0-08 探针隔离真机：403 / 40302
+
+### R2-2.0 先纠一条前置事实（否则整个 403 验证会做错）
+
+任务口径给的是「`CHAOS_MYSQL_CLUSTER_CONTAINER` 默认 `jl-mysql-1` ⇒ 探针 = 受保护目标」。
+`application.yml:144` 的**代码默认**确实是 `jl-mysql-1`，但**现栈的运行态值不是它**：
+
+```
+docker exec jl-chaos-controller env | grep CHAOS_MYSQL_CLUSTER_CONTAINER
+  -> CHAOS_MYSQL_CLUSTER_CONTAINER=jl-mysql-3
+compose.base.yml:482  CHAOS_MYSQL_CLUSTER_CONTAINER: ${CHAOS_MYSQL_CLUSTER_CONTAINER:-jl-mysql-3}
+控制器启动日志：MySQL cluster probe scheduled every 10s against jl-mysql-3
+```
+
+即 compose 层**有意**把 lab 默认改成 `jl-mysql-3`（注释与 `doc/process/Stage1/step-47-probe-target.md:27`
+写明：`jl-mysql-1` 是惯用击杀目标，故 lab 默认让探针避开），护栏保护的是 **`jl-mysql-3`**。
+⇒ 本步结论必须按运行态值验；同时「代码默认 jl-mysql-1 vs lab compose 默认 jl-mysql-3」是口径落差，
+与 R1 记录的 `ProbeTargetGuard` javadoc 注释不一致同族，留主会话回写文档（本代理不改代码）。
+
+### R2-2.1 事故实录（不掩饰）：按任务口径对 `jl-mysql-1` POST KILL 没有被拒，真把容器杀了
+
+```
+POST /lab-api/chaos/instances/jl-mysql-1/actions  {"action":"kill","ttlSeconds":30}
+  -> curl 10s 超时（HTTP=000），控制器实际已受理
+控制器日志：Chaos kill applied to jl-mysql-1 (id=896c5650…, ttl=30s, expiresAt=00:52:47.855Z)
+          Reverted kill on jl-mysql-1 (trigger=ttl, attempt=1)   @00:52:48
+          start on jl-mysql-1 is ready (state=running, health=healthy) @00:53:03
+          MySQL cluster member disappeared: mysql-1 (last SECONDARY/ONLINE) @00:52:27
+          MySQL cluster membership has 2 member(s), expected 3
+          MySQL cluster member appeared: mysql-1 (SECONDARY/ONLINE) @00:53:07
+```
+
+- 护栏**行为正确**：`jl-mysql-1` 不在保护集（保护的是 jl-mysql-3），所以放行——不是实现缺陷，是前置事实不符。
+- 影响面：被杀的是**非主 SECONDARY**，PRIMARY 仍是 mysql-2，Router 6446 未切换、写路径未中断；
+  TTL 30s 自动归队，`docker ps` 复核 `jl-mysql-1 Up (healthy)`。
+- 归队后 `db-cluster-status.sh` 复跑（`/tmp/r2/db-status-after-accidental.log`，EXIT=0）：
+  `RESULT: ok - 3/3 node(s) answering, exactly one PRIMARY`，6446→mysql-2、6447→mysql-1（与开工态逐字一致）。
+- `mysql_cluster_probe_up` 在事故窗口（1500s 区间、5s 步进）`samples=301 min=1 max=1 non1=(none)`
+  （`/tmp/r2/probe-up-incident.json`）⇒ 反向证明「探针不在被杀节点上时，观测不因节点故障而冻结」，
+  正是 B0-08 分离规则要的效果。
+- 附带发现：**受理型 KILL 的 HTTP 响应同步阻塞**（容器停止期间不返回，客户端 10s 超时；拒绝路径 0.05s 即返回）。
+  演练时间线因此不能以 POST 返回时刻为准，须以控制器日志 / Prometheus 采样为准（本步即如此）。
+
+### R2-2.2 正做：按运行态保护集验 403/40302（目标 `jl-mysql-3`）
+
+```
+POST /lab-api/chaos/instances/jl-mysql-3/actions {"action":"kill","ttlSeconds":30}
+HTTP=403 TIME=0.045
+{"code":"40302","message":"target \"jl-mysql-3\" is the MySQL cluster probe container
+ (chaos.mysql-cluster.container / env CHAOS_MYSQL_CLUSTER_CONTAINER): kill/freeze/restart on it
+ stops the probe as well … Move the probe to another member first … start/resume on it stay
+ allowed, because they are what brings it back.","data":null,"success":false}
+```
+
+控制器同刻 WARN 两条（`ChaosActionService` + `LabExceptionHandler`）；`jl-mysql-3` 状态
+`Up 9 hours (healthy)` 未变（拒绝发生在任何 Docker 调用之前）；
+`sum(chaos_actions_total{result="rejected"})` = **1**（仅这一笔，计数纪律对得上）。
+
+### R2-2.3 把探针移到任务口径的 `jl-mysql-1` 后复验（shell 注入 compose 既有占位，未编辑任何文件）
+
+```
+CHAOS_MYSQL_CLUSTER_CONTAINER=jl-mysql-1 docker compose … up -d --no-deps --force-recreate --wait chaos-controller
+  -> Container jl-chaos-controller Healthy；容器 env 读回 CHAOS_MYSQL_CLUSTER_CONTAINER=jl-mysql-1
+  -> 启动日志：MySQL cluster probe scheduled every 10s against jl-mysql-1
+  -> docker exec jl-nginx nginx -t && nginx -s reload（R1 §5.0 操作口径，本步复现其必要性）
+```
+
+| 动作（目标 `jl-mysql-1`，经 Nginx `/lab-api`） | HTTP | code | 容器实况 |
+|---|---|---|---|
+| `kill` | **403** | **40302** | 未动（`Up 9 minutes (healthy)`） |
+| `freeze` | **403** | **40302** | 未动 |
+| `restart` | **403** | **40302** | 未动 |
+| `start`（恢复动作，必须永不受限） | **202** | 0（`status":"completed"`） | 仍 `Up (healthy)` |
+
+响应体：`/tmp/r2/guard-kill.json`、`guard-freeze.json`、`guard-restart.json`、`guard-start.json`。
+
+### R2-2.4 `failure-container-check-enabled` 真机口径
+
+代码口径（`MysqlClusterMonitor.classifyFailure()`）：仅当**探针 tick 失败**时才 inspect 探针容器，
+分类为 `RUNNING` / `NOT_RUNNING` / `UNKNOWN` 三态并各出一条 WARN；开关键
+`chaos.mysql-cluster.failure-container-check-enabled`（env `CHAOS_MYSQL_CLUSTER_FAILURE_CONTAINER_CHECK_ENABLED`，默认 true）。
+
+真机观测：控制器本轮起栈至今 `grep -ac "cluster probe failed" = 0` ⇒ **分类分支从未在真机触发**；
+而 B0-08 规则下触发它的唯一路径（对探针容器施加 kill/freeze）恰被 403 拒掉，所以「三态文案长什么样」
+在受保护拓扑下不可自然复现；绕开 API 直接 `docker stop` 探针容器属本任务禁区（不杀/冻结除演练 PRIMARY
+以外的数据层容器）。已在真机核到的相邻事实：开关在 `application.yml:170` 存在且默认 true、
+控制器容器 env 未覆盖它（env 清单里无 `FAILURE_CONTAINER_CHECK` 键 ⇒ 走 compose 占位默认值）。
+故本项如实记 **unverified**（分类日志文案），开关存在性与默认值 = 已核。
+
+**结论：R2-2 PASS**（403/40302 三动作真机复现 + `start` 放行 + 容器未被触碰 + 拒绝计数）；
+`failure-container-check` 三态文案 = unverified（见 R2-2.4）。

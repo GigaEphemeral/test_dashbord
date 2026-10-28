@@ -72,6 +72,24 @@
 - 记录形状有消费方，改字段前先确认三处：`bench-report.js`（读 `containers[*].imageTag/imageId/container/state/status`）、`tune.sh` 的镜像表格 sed（读 `container/imageTag/imageId/state`）、`test-image-identity.sh` 的 grep 断言（依赖 `"<key>": {"container": …, "requested": …, "resolvedBy": …` 的**字段顺序**）。
 - 本步禁改项实际未触碰：`compose*.yml`、`claims.yml`、Stage2 三份设计/计划文档正文、`seckill-app-jdk21`、`AppProxyService` 白名单；未执行任何 docker/compose 生命周期命令。
 
+## 补充（真机验证，R2 · 2026-10-28，详见 `b0-live-verification.md` §R2-2 / §R2-3）
+
+- **403 / 40302 真机复现 = PASS**：对运行态探针容器 `POST /chaos/instances/<probe>/actions {"action":"kill|freeze|restart"}`
+  一律 `HTTP=403` + `{"code":"40302", …}`，拒绝在任何 Docker 调用之前（容器状态逐字未变），
+  控制器出 `ChaosActionService` + `LabExceptionHandler` 两条 WARN，`chaos_actions_total{result="rejected"}` 计 1；
+  恢复动作 `start` 不被拦（`HTTP=202`、`status=completed`）。三种破坏动作 + start 四种组合均已留响应体。
+- **纠一条前置口径（重要）**：本步文档第 35 行写「`application.yml` 实际默认 `jl-mysql-1`」是对的，
+  但**现栈运行态是 `jl-mysql-3`** —— `compose.base.yml:482` 有意把 lab 默认覆盖为 `jl-mysql-3`
+  （注释 + `Stage1/step-47-probe-target.md:27` 记录在案）。任何按「受保护目标 = jl-mysql-1」做的演练编排
+  都会打空：R2 首次按此口径对 `jl-mysql-1` 下 KILL 被正常受理（非缺陷），30s TTL 自动归队，
+  集群与 Router 未受影响，`RESULT: ok` 复核通过。文档/javadoc/默认值三处口径不一致请主会话一并回写。
+- **db-failover 期间 `mysql_cluster_probe_up` 恒 1**：见 §R2-3（真机区间查询）。
+- **`failure-container-check-enabled` 三态分类文案 = unverified**：真机上 `grep -ac "cluster probe failed"` = 0，
+  分类分支从未触发；而触发它需要杀探针容器，恰被本步 403 规则挡住 ⇒ 受保护拓扑下不可自然复现，
+  绕开 API 直接停容器属演练禁区。已核到：键存在（`application.yml:170`）、默认 true、容器 env 未覆盖。
+- **受理型 KILL 的 HTTP 响应是同步阻塞的**（停止期间不返回，客户端超时；拒绝路径 0.05s 返回）
+  ⇒ 时间线断言必须以控制器日志 / Prometheus 采样为时刻基准，不能以 POST 返回为准。
+
 # 附录（可选）
 
 - 提交（本步累计，fork 点 `d07590c`）：
