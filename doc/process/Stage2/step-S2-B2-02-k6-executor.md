@@ -165,3 +165,98 @@ runId 空白/不安全/清洗；`scripts-host-dir` 空白 → `BenchUnavailableE
 
 `d1fecd9`（`feat(B2-02)` planner + 单测）、`4906c8a`（`feat(B2-02)` 配置三处 + 接线回归），本文件随
 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -3`）。
+
+# 补充：B2-02b-1（k6 容器执行层）
+
+> 任务/步骤：Stage2 **B2-02b-1 Docker 启停/状态/日志/报告端点 + 宿主脚本目录解析**
+> 分支：`feature/stage2-workbench`（隔离 worktree `agent-general-purpose-010140d1`，基线 `b6be7b7`）
+> 隔离自证：`git rev-parse --show-toplevel` → `D:/000CODE/JAVA-LEARN/.qoder/worktrees/agent-general-purpose-010140d1`，不等于主工作树 `D:/000CODE/JAVA-LEARN`
+> 最新代码提交：`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（yml/compose/.env.example 六个新键 + `jl-k6-reports` 卷挂载）；本文件随 `docs(B2-02)` 提交落盘
+> 测试：`mvn -f code/pom.xml -pl services/chaos-controller -am test` → **559 tests, 0 failures, 0 errors, 0 skipped；BUILD SUCCESS**（B2-02a 基线 516，本步 +43：`BenchExecutionControllerTest` 12、`BenchScriptsHostDirResolverTest` 7、`BenchRunExecutorTest` 24）
+> 接线：`bash code/lab/scripts/test-chaos-env-wiring.sh` → **86 PASS / 0 FAIL**，汇总行 `CHAOS ENV WIRING PASSED (8 chaos keys + 78 ledger/metrics/precheck/bench keys)`（B2-02a 后为 80，本步 +6）
+> 未执行任何 docker/compose 生命周期命令（无 build/up/down/restart/rm/pull），未启动真实 k6；真容器、卷与端点真机验证留给 B2-02b-2
+
+本步把 B2-02a 的 `BenchLaunchPlan` 接到 Docker：解析宿主机脚本目录、按计划创建/启动容器、读取有上限的状态/日志/报告，并暴露三个只读端点。**不接 run 生命周期、不调度看门狗、不改 run 状态、不读库、不改 UI**。
+
+## 1. 宿主脚本目录解析（`BenchScriptsHostDirResolver`）
+
+controller 在容器内运行，`/app/k6` 只是 bind 挂载点；Docker daemon 创建 k6 容器时需要宿主机绝对路径。解析顺序：
+
+1. `lab.bench.exec.scripts-host-dir`（`LAB_BENCH_EXEC_SCRIPTS_HOST_DIR`）非空 → 直接采用并 trim，**不再 inspect**；
+2. 否则 inspect `lab.bench.exec.controller-container`（默认 `jl-chaos-controller`），找到 `Mount.Destination` 等于 `lab.bench.exec.controller-k6-mount`（默认 `/app/k6`，比较时容忍一个尾部 `/`）的唯一挂载，返回其 `Mount.Source`。
+
+失败一律 `BenchUnavailableException`（503/50303），消息带补救动作：controller 容器不存在、无匹配挂载、多个匹配（要求显式配置消歧）、source 为空、配置键为空。**绝不回退到空路径或容器内路径**。`DockerControllerMountSource` 只读 `inspectContainerCmd`，不创建/启动任何东西；`lab.docker.enabled=false` 时解析器同样返回 503，而不是让 Spring 上下文启动失败。
+
+| 新增 yml 键 | env 键 | 默认值 | 用途 |
+|---|---|---|---|
+| `lab.bench.exec.controller-container` | `LAB_BENCH_EXEC_CONTROLLER_CONTAINER` | `jl-chaos-controller` | 被 inspect 的 controller 容器名 |
+| `controller-k6-mount` | `LAB_BENCH_EXEC_CONTROLLER_K6_MOUNT` | `/app/k6` | 要反查 source 的容器内挂载点 |
+| `report-max-bytes` | `LAB_BENCH_EXEC_REPORT_MAX_BYTES` | `4194304` | 单份 summary 下载上限 |
+| `logs-max-bytes` | `LAB_BENCH_EXEC_LOGS_MAX_BYTES` | `65536` | 单次日志字节上限 |
+| `logs-max-tail` | `LAB_BENCH_EXEC_LOGS_MAX_TAIL` | `1000` | 日志行数上限 |
+| `stop-grace-seconds` | `LAB_BENCH_EXEC_STOP_GRACE_SECONDS` | `10` | k6 容器 stop 宽限 |
+
+六个键三处默认一致（`application.yml` 占位 / `compose.base.yml` 转发 / `.env.example`），接线脚本的 `LAB_BENCH_*` 自动发现已覆盖，无需改脚本。B2-02b-2 的调用顺序应为：`resolver.resolve()` → 赋给 `scripts-host-dir`（或经参数传入 planner）→ `planner.plan(...)`；planner 对空值仍然拒绝，解析器是唯一合法来源。
+
+## 2. `K6ContainerGateway`（接口 + Docker 实现）
+
+接口位于 `bench/exec/K6ContainerGateway.java`，Docker 实现 `DockerK6ContainerGateway`；Spring 由 `BenchExecConfig` 装配（`ObjectProvider<DockerClient>`，禁用 Docker 时给 503 桩）。
+
+| 方法 | 契约 |
+|---|---|
+| `ensureImage(image)` | `inspectImageCmd` 验证本地存在；缺失 → 503/50303，消息给出 `docker pull <image>`；**绝不自动拉取** |
+| `createAndStart(plan)` | 只用 plan 的 image/argv/env/labels/network/binds；`autoRemove=false`、`RestartPolicy.noRestart()`、`tty=false`；同名容器 RUNNING/CREATED/RESTARTING/PAUSED → 409 语义，EXITED/DEAD → 先 remove 再创建；返回容器 id |
+| `inspect(runId)` | 先按 `lab.run-id` 标签查（`showAll`），再按 `containerPrefix + runId` 名字查；找不到 → `Snapshot(status=ABSENT)` 而不是异常；返回 status/containerId/exitCode/startedAt/finishedAt/image/scenario |
+| `logs(containerName, tail, maxBytes)` | tail 夹到 1..10000、字节预算夹到 1..4 MiB 硬上限；超限丢弃并返回 `truncated=true` + `originalBytes`；容器不存在 → `ContainerNotFoundException`（404） |
+| `stop(containerName, graceSeconds)` | 幂等：已停止/不存在返回 `false`，成功发出 stop 返回 `true` |
+| `remove(containerName)` | best-effort：不存在/仍在运行/daemon 失败均返回 `false`，不抛异常 |
+| `listK6Containers()` | 只列 `lab=java-learn` 且 `lab.role=k6` 的容器 → `ContainerSummary`，供 `sweepOrphans()` 使用 |
+
+安全边界：创建容器必须带 `lab=java-learn` 与 `lab.role=k6`（plan 已带 `lab.run-id`/`lab.scenario`），否则网关拒绝创建；logs/stop/remove 前重新检查这两个标签，非 k6 容器 → `ContainerNotAllowedException`（403）；**不会误删/误读其他 lab 容器**。
+
+## 3. `BenchRunExecutor`
+
+- `start(plan)`：校验 runId（`[A-Za-z0-9][A-Za-z0-9._-]*`，拒绝 `..`/分隔符/空白/超 128 字符）→ `ensureImage` → 创建 `<reports-mount>/<runId>/`（`normalize()+startsWith` 穿越防护）→ 同名 live 冲突 409、stale 先 remove → `createAndStart` → 返回 `BenchExecutionState`。
+- `state(runId)`：Docker 元数据 + 报告文件可用性/字节数；ABSENT 也返回正常状态，并给 `note`（未创建/运行中报告未生成/退出但缺报告/报告超限）。
+- `logs(runId, tail, maxBytes)`：先 `inspect`，ABSENT → 404；查询参数越界**夹取**到配置上限（不返回 400，除非法数字由 Spring 转 400）。
+- `report(runId)`：读本地 reports 目录（与 k6 通过命名卷共享）；缺失 → `BenchReportNotFoundException`（404）；超过 `report-max-bytes` → `BenchReportTooLargeException`（413/41301）；返回原始字节 + attachment 文件名 `<runId>-<summary-file>`。
+- `stop(runId)` / `cleanup(runId)`：best-effort stop + remove；报告目录保留，容器删除后仍可下载 summary。
+- `sweepOrphans()`：本步只做**只读清单**（`listK6Containers`），不删除、不调度；真正启动时清理由 B2-02b-2 决定。
+- 状态/日志路径不读库、不改 `lab_run` 状态。
+
+## 4. 只读端点（`BenchExecutionController`）
+
+`TokenFilter` 已覆盖 `/lab/**`，无新增鉴权。
+
+| 端点 | 响应 |
+|---|---|
+| `GET /lab/runs/{runId}/k6` | `Result<BenchExecutionState>`：`{code,message,data:{status, containerName, containerId, scenario, exitCode, startedAt, finishedAt, reportAvailable, reportBytes, note}}`；容器不存在 → **200 + status=ABSENT** |
+| `GET /lab/runs/{runId}/k6/logs?tail=&maxBytes=` | `Result<{text, truncated, bytes}>`；参数越界夹取，非数字 400/40001 |
+| `GET /lab/runs/{runId}/k6/report` | `application/json` 原始字节 + `Content-Disposition: attachment; filename="<runId>-summary.json"`；缺失 404，超限 413 |
+
+错误码：`40002 BENCH_REQUEST_REJECTED`（launch/runId 拒绝，400）、`40904 K6_CONTAINER_CONFLICT`（live 同名容器，409）、`50303 BENCH_UNAVAILABLE`（镜像缺失/目录不可用/daemon 不可用，503）、`40401`（报告或容器不存在）、`41301 PAYLOAD_TOO_LARGE`（报告超限）。`BenchLaunchRejectedException` 仍在 `bench.exec` 包，异常处理器已单独映射。
+
+## 5. 卷与挂载
+
+- 顶层 `volumes:` 新增 `jl-k6-reports`，实际 Docker 名 `name: ${LAB_BENCH_EXEC_REPORTS_VOLUME:-jl-k6-reports}`，与 planner 的 `reports-volume` 使用同一 env。
+- controller 增加读写挂载 `jl-k6-reports:/reports`（在 ledger stash 挂载之后）；k6 容器由 plan 绑定同一命名卷到 `/reports`，因此 summary 写入后 controller 可直接读取，无需 `docker cp`。
+- 脚本仍走 `../k6:/app/k6:ro`；解析器把这个挂载的 host source 交给 k6 容器绑定到 `/scripts:ro`。
+
+## 6. 单测
+
+- `BenchScriptsHostDirResolverTest`（7）：单挂载命中、显式覆盖优先且不 inspect、无匹配、多个匹配、空 source、controller 不存在传播 503、controller-k6-mount 空白提前拒绝。
+- `BenchRunExecutorTest`（24）：start 建目录+create/start、镜像缺失拒绝（不建目录/不创建）、RUNNING 冲突、EXITED 重建、状态映射、ABSENT/运行中提示、日志夹取与默认值、日志 404、报告读取/缺失/超限、runId 穿越（含手工 plan）、stop 幂等、cleanup stop+remove、sweepOrphans 只返回 k6 清单且不删除。
+- `BenchExecutionControllerTest`（12）：ABSENT 200、完整字段、logs 形状与无参默认、报告下载/404/413、40002/40904/50303、日志 404、非数字 tail 400。
+- 全部不启 Docker、不启 Spring 上下文、不读库；报告目录用 `@TempDir`。
+
+## 7. 未做项（B2-02b-2）
+
+- `RunLifecycleHook.launch` 接线：从 `lab_run` / `lab_run_param` 取场景与参数、调用 resolver + planner、在 run 进入 RUNNING 后 `start`，失败时更新 run 状态。
+- 超时看门狗/自动清理、`sweepOrphans()` 的启动调度与删除策略。
+- UI 启动/停止/日志/报告入口；A01（UI 启动 load 全程无终端）与 A20（停止/超时清理）真机验收；console-smoke 基线核对。
+- 真容器、命名卷、三个端点的真机验证：本步只跑单测与静态接线，未执行任何 docker/compose 命令。
+- `scripts-host-dir` 仍未回填到 `BenchExecProperties`：由 b-2 在调用 planner 前完成，planner 对空值继续 503。
+
+## 最新 commit
+
+`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（六个新键 + `jl-k6-reports` 卷）、本文件随 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -3`）。
