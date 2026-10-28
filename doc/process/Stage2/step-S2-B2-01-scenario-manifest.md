@@ -45,7 +45,7 @@ CLI：`validate`、`list run|bench|ui`、`check-run <name>`、`check-bench <name
 非 serviceOnly 必须在 `run`；`params` 键必须出现在 `env`；`env` 必须是被 `forwarding`/`runtimeEnv`
 转发的名字；每个转发名至少被一个场景或 `runtimeEnv` 消费（双向无孤儿）。
 
-## 3. `run.sh` 消费（`code/lab/k6/run.sh:46,58-83`）
+## 3. `run.sh` 消费（`code/lab/k6/run.sh:46,58-90`）
 
 - 删除 `smoke|load|...` 的 case 分支；`node lib/scenario-manifest.mjs check-run "$SCENARIO"` 返回
   `<chaos> <cache>` 两个 0/1 标志，驱动原有的 `IS_CHAOS`/`IS_CACHE` 分支（挂载与转发表不变）。
@@ -55,7 +55,7 @@ CLI：`validate`、`list run|bench|ui`、`check-run <name>`、`check-bench <name
 - 新增 node 依赖：manifest 读取在场景文件检查之前；缺 node/reader/manifest 都是退出码 2 + 明确提示。
 - `K6_DIR` 解析顺序保持“未知场景先于场景文件检查”，已支持场景的挂载、打印行、退出码不变。
 
-## 4. `bench.sh` 消费（`code/lab/scripts/bench.sh:30-92,214-234`）
+## 4. `bench.sh` 消费（`code/lab/scripts/bench.sh:30-92,217-234`）
 
 - 删除 `smoke|load|stress|spike|soak` 的 case 分支；`check-bench` 拒绝未知/非 bench/service-only，
   全部映射退出码 2，原因文本由读取器统一生成。
@@ -112,7 +112,7 @@ Layout 增补 manifest/reader/test，环境变量表增补 `LAB_SCENARIOS_MANIFE
 | smoke | true | `scenarios/smoke.js:36` `order({ replay: true });`、`:37` `seckill();`（每次 1 单 + 1 次秒杀） |
 | spike | true | `scenarios/spike.js:32` `seckill();`，文件头注明可能耗尽 `SECKILL_PRODUCT_ID` 余量 |
 | db-failover | true | `scenarios/db-failover.js:231` `exec: 'writeOrder'`，`:273` 起 `writeOrder()` 创建幂等订单；README 说明 3m ≈ 85 单 |
-| cache-lab | true | `scenarios/cache-lab.js:549-552` `setup()` `POST /lab/cache/seed`（写实验数据集） |
+| cache-lab | true | `scenarios/cache-lab.js:548-551` `setup()` `POST /lab/cache/seed`（写实验数据集） |
 | load/stress/soak/d7/traffic | false | `load.js:31-32`、`stress.js:25-26`、`soak.js:28-29`、`d7.js:45`、`traffic.js:31-32` 仅 `product()` 只读 |
 | ha-failover | false | `ha-failover.js:67-68` 负载仅 `product()`；chaos 只停/冻容器，不写业务库 |
 
