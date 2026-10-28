@@ -122,7 +122,6 @@
 | `step-49:204` 的「不要当成过期修掉」保护名单 | 列了 D8 面板、缓存控制台页、`/lab/cache/**` 代理 | 这三项**确实已落地**；名单里真正仍未做的只有 `/lab/cache/reset` 与「SIGSTOP 打主库」演练 |
 | `details/01:438`「仍未落地」 | D8 调优面板、缓存实验控制台页、`/lab/cache/**` 窄代理 | 三项均已落地（step-44/50/51）；该行后半段自己也说「其余旧缺口已合并」，只有这三项没跟着翻正。真正仍未做的只有 `/lab/cache/reset` 与「SIGSTOP 打主库」演练 |
 | `details/05:307`「Prometheus 未抓取」 | `prometheus/mysql-ha-scrape.yml` 未接进 `prometheus.yml` | 该文件**已删除**，`mysqld-exporter-ha` job 已内联在 `prometheus/prometheus.yml:96`（`c192a0a`），D11 有真机数据；`step-30`/`38` 为证据 |
-| `details/09:82` | `run.sh` 只接受 `smoke\|load\|stress\|spike\|soak\|ha-failover` | 现为九个：再加 `d7`、`db-failover`、`cache-lab`（白名单在 `code/lab/k6/run.sh:49-57`） |
 | `code/lab/scripts/verify.sh:931` 注释 | 「the 97 PASS / 1 WARN baseline」 | 真机基线已漂到 **109 PASS / 1 WARN / 0 FAIL**（2026-10-27；`8173821` 补 D6/D8/D10/D11 置备断言）。注释只影响阅读，不影响结果 |
 | `db-ha-up.sh:241` 内存提示 | 「The cluster costs roughly 1.8GB」 | 声明 2128MiB、实测 ≈1.87GB（`details/05` §内存、设计 §3.1）；脚本按旧口径写 |
 

@@ -243,3 +243,53 @@ Layout 增补 manifest/reader/test，环境变量表增补 `LAB_SCENARIOS_MANIFE
 ## 最新 commit
 
 `19cde4d`（API + compose/env 接线 + 后端测试）、`e0c9336`（控制台场景卡 + console-smoke 断言）；本补充节随 docs 提交落盘。
+
+
+# 补充：B2-01 真机核对、闸门与断言修正（主会话，2026-10-28）
+
+> 本节覆盖上文「B2-01b 未验证项」1–4：全部已在合并后真机执行。
+
+## 真机部署与 API
+
+- 控制器镜像按离线回退方案重建：宿主机 `mvn -f code/pom.xml -pl services/chaos-controller -am -DskipTests package`，再用只含运行时阶段的临时 Dockerfile（`tmp/b201b-image/`，`COPY` 本地 jar）打同名 tag `java-learn-lab/chaos-controller:jdk21`；仓库 Dockerfile 未改。重建后 `docker compose -f compose.base.yml -f compose.dev.yml up -d --no-deps --force-recreate chaos-controller`，容器 healthy。
+- 挂载实测：`D:/000CODE/JAVA-LEARN/code/lab/k6 -> /app/k6 (ro)`、`code/lab/scenarios -> /app/scenarios (ro)`、ledger 卷与 docker.sock 不变。
+- `GET /lab/bench/scenarios`（容器内自测，token 来自 `.env`）：
+  - `data.status=OK`、`version=1`、`views.ui=["smoke","load","spike"]`、`scenarios` 共 **10** 条；
+  - ui 三项 `scriptExists=true`、profile=`dev`、`smoke/writesData=true`、`spike/writesData=true`、`load/writesData=false`；
+  - `views.ui` 不含 `stress`/`soak`。
+- 503 语义实测：临时把 `code/lab/k6/scenarios/manifest.json` 改名后请求，返回
+  `HTTP/1.1 503` + `{"code":"50303","message":"scenario manifest not found: file:/app/k6/scenarios/manifest.json; …"}`；
+  恢复后 `node code/lab/k6/lib/scenario-manifest.mjs validate` 输出 `manifest ok: 10 scenarios (run=9 bench=5 ui=3)`。
+
+## 控制台真机
+
+- 主工作树 `cd code/lab/dashboard && npm run build` 成功（dist 30.08 kB CSS / 189.15 kB JS）；`bash code/lab/scripts/console-smoke.sh --no-build` → **67 PASS / 0 FAIL**（B1 基线 63 + 本步 4 条场景目录断言）。
+- 断言覆盖：场景卡可见、状态 `OK`、恰好 smoke/load/spike 三行、stress/soak 行不存在。
+
+## 闸门（合并后主树实测）
+
+| 闸门 | 结果 |
+|---|---|
+| Java 单测（reactor） | **1046 / 0 fail / 0 error / 0 skip**（B1 基线 1029 + 本步 17；chaos **491**、app 469、jdk8 59、core 13、platform 10+4） |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL** |
+| `smoke.sh` | 7/7 |
+| `console-smoke.sh` | **67 PASS / 0 FAIL** |
+| k6 脚本回归 | **100 pass / 0 fail**（基线 79 + 21） |
+| 文档断言 | **37 PASS / 0 FAIL**（断言总数不变，改的是内容，见下） |
+| env 接线回归 | **68 PASS / 0 FAIL**（`LAB_BENCH_SCENARIOS_LOCATION` 三处一致） |
+| 安全静态检查 | PASS |
+
+## 断言修正（B2-01 导致旧断言失真）
+
+- 旧断言 `k6-runner-accepts-nine-scenarios` 用 `file_contains` 查 `run.sh` 里的字面量
+  `ha-failover|db-failover|cache-lab`；B2-01 删除硬编码 case 后该断言必然 FAIL（首次全量 claims 36/37）。
+- 改为 `shell` 断言：`views.run` 含三个场景、恰好 9 个，且 `run.sh` 出现 `check-run`、`bench.sh` 出现 `check-bench`；
+  `last_verified` 更新为 2026-10-28。claims 总数仍为 37。
+- 同步修正文档口径（字节级 CRLF 编辑）：`details/09` §3 的「只接受六场景」与代码对照表的 `case` 行改为 manifest `views.run`；
+  `details/README` §3.3 删除已修复的 `details/09:82` 行。
+
+## 遗留
+
+- `stress`/`soak` 的真实 k6 启动仍由 CLI（`bench.sh`）承担，受控执行器在 B2-02；真机只验证了目录与白名单，不验证执行。
+- `classpath:` manifest 下 `scriptExists` 恒为 false（已文档化）；manifest 每请求重读、无缓存（有意，便于挂载修正即时生效）。
+- 控制器镜像本次来自本地 jar（Maven Central TLS 不可用）；网络恢复后可按仓库 Dockerfile 重建一次恢复溯源。

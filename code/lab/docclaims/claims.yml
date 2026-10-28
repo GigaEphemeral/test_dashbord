@@ -414,13 +414,13 @@
     - code/lab/k6/README.md
     - doc/design/Stage1/details/09-压测与观测.md
     - doc/design/安装与打包手册.md
-  statement: "k6 run.sh 的白名单含 ha-failover / db-failover / cache-lab（details/09 的六场景说法已过期，登记在 details/README §3.3）"
+  statement: "k6 场景白名单的唯一事实源是 scenarios/manifest.json：run.sh/bench.sh 经 lib/scenario-manifest.mjs 读取；views.run 含 ha-failover / db-failover / cache-lab 共九个（B2-01）"
   verify:
-    kind: file_contains
-    path: code/lab/k6/run.sh
-    pattern: "ha-failover\\|db-failover\\|cache-lab"
+    kind: shell
+    command: "node code/lab/k6/lib/scenario-manifest.mjs list run | grep -qx ha-failover && node code/lab/k6/lib/scenario-manifest.mjs list run | grep -qx db-failover && node code/lab/k6/lib/scenario-manifest.mjs list run | grep -qx cache-lab && test $(node code/lab/k6/lib/scenario-manifest.mjs list run | wc -l) -eq 9 && grep -q check-run code/lab/k6/run.sh && grep -q check-bench code/lab/scripts/bench.sh"
+    timeout_ms: 20000
   expect: true
-  last_verified: 2026-10-27
+  last_verified: 2026-10-28
 
 - id: readme-does-not-cite-stale-verify-baseline
   polarity: negative
