@@ -20,13 +20,13 @@
 | k6 脚本回归 | `node --test "code/lab/k6/test/*.test.mjs"` | 79 pass / 0 fail | 79 pass / 0 fail（未变） |
 | 全栈验收 | `bash code/lab/scripts/verify.sh` | 109 PASS / 1 WARN / 0 FAIL（唯一 WARN = cAdvisor/WSL2） | 109 PASS / 1 WARN / 0 FAIL（未变） |
 | HTTP 冒烟 | `bash code/lab/scripts/smoke.sh` | 7/7，末行 `SMOKE PASSED.` | 7/7（未变） |
-| 控制台冒烟 | `bash code/lab/scripts/console-smoke.sh`（Playwright） | 42 断言 / 0 失败 | 42 断言 / 0 失败（B0 未动 dashboard，收口时**未重跑**；B1 控制台重构起一次性重写） |
+| 控制台冒烟 | `bash code/lab/scripts/console-smoke.sh`（Playwright） | 42 断言 / 0 失败 | **63 断言 / 0 失败**（B1-05 侧边导航重写后的新基线；B0 阶段 42 未重跑） |
 | 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | 32/32 PASS（B0 未新增断言；指标字典抽样断言归 B1 起补） |
 | 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 | 通过 |
 
 > **B1 现行基线（2026-10-28，B1-04 后）**：reactor **1029 tests**（chaos-controller **474**，含 Testcontainers
 > `LedgerSchemaIT`/`EnvLockIT`/`RunLifecycleIT`/`OperationServiceIT`/`MetricWindowLedgerIT` 与 precheck 全套；app 469 / jdk8 59 / core 13 /
-> platform 分别 10+4），其余闸门不变（verify 109 PASS/1 WARN、smoke 7/7、k6 79、claims 32、console-smoke 42 未重跑）。
+> platform 分别 10+4），闸门：verify 109 PASS/1 WARN、smoke 7/7、k6 79、claims 32、console-smoke **63/0**（B1-05 重写后基线）。
 > 真机证据见 `step-S2-B1-01-ledger-persistence.md` 附录 F、`step-S2-B1-02-operation-contract.md` 附录 E、
 > `step-S2-B1-03-metrics-aggregation.md` 与 `step-S2-B1-04-run-precheck.md` 的补充节。
 > 历史：B1-03 后 990/435；B1-02 后 939/384；B1-01 后 888/333；B0 收口 851/296。

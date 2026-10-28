@@ -160,3 +160,45 @@ curl -s -H "X-Lab-Token: $LAB_TOKEN" "http://127.0.0.1:8080/lab-api/lab/runs?lim
 - `code/lab/dashboard/src/components/RunLedger.vue`
 - `code/lab/dashboard/src/api.js`、`style.css`
 - `code/lab/scripts/console-smoke.mjs`、`console-smoke.sh`
+
+## 补充：主会话真机 console-smoke（2026-10-28，合并 `f2e47cb` 后）
+
+nginx 只读挂载主工作树的 `code/lab/dashboard/dist`，所以真机验证只能在合并后由主会话执行：
+
+```bash
+cd code/lab/dashboard && npm run build        # 28 modules，JS 185.5 kB / CSS 29.45 kB
+bash code/lab/scripts/console-smoke.sh --no-build
+# console smoke: 63 PASS, 0 FAIL
+```
+
+### 1. 首轮失败与修正（真实缺口）
+
+首轮 63 条在 `observe: unwired executor.rejected ...` 处超时崩溃：
+`metric-quality-executor.rejected` 不存在——该 key 未进 `ObservePanel` 的 12 个默认 KPI，
+而 smoke 明确用它验证"未接线指标不显示 0"。修正：把 `executor.rejected` 加入默认 KPI（**13 卡**），
+`console-smoke.mjs` 的 `SMOKE_KPI_COUNT` 默认值与 `console-smoke.sh` 用法文本同步改 13，重建 dist 后全绿。
+这是一条真实缺口（smoke 与页面 KPI 清单不一致），不是 flaky。
+
+### 2. 覆盖到的关键行为（摘录）
+
+- 七分区导航：overview / wizard / instances / bench / observe / faults / runs 全部可达；
+- instances：线程实验室六态展示、cpu-burn 注入后 ACTIVE、停止后清空、代理无残留；
+- faults：缓存模式切换/播种/预热、动画视图拓扑、`freeze jl-app-2` 徽标与 stop-all 清除、粒子暂停/减动效；
+- observe：每张卡带质量徽标与更新时间，`jvm.heap.used` 为 OK 真实值，`cache.l2.keys` 遵守质量契约，`executor.rejected` 为"无数据"；
+- runs：页面创建 DRAFT → 详情选中 → pre-check 展示 → start/stop 产生 operation 并轮询到终态 → 时间线含 DRAFT→RUNNING → operation 台账 → run 指标卡 → **浏览器刷新后仍选中该 run**；
+- 收尾：无可见错误横幅、无未捕获页面异常、无失败的 `/lab-api` 或 `/prom` 请求。
+
+### 3. 闸门
+
+| 闸门 | 结果 |
+|---|---|
+| `console-smoke.sh` | **63 PASS / 0 FAIL**（新基线，旧 42 作废） |
+| `smoke.sh` | 7/7 |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL** |
+| Java（无改动） | reactor 1029 / chaos 474（B1-04 基线不变） |
+
+### 4. 遗留
+
+- `DEGRADED` 台账分支未自动化（需先造台账不可用），留 B1 收口后的补测或 B5；
+- `CacheFlow` 挂在动画视图的第三个标签内（未单列导航项），符合"组件原样迁移"口径；
+- 真机 smoke 会在台账里留下 `console-smoke-*` 记录；脚本启动时会把上次遗留的未结束 run（前缀 `SMOKE_RUN_SCENARIO_PREFIX`）stop 掉（不删除审计行，清理失败只 WARN）。
