@@ -489,3 +489,62 @@ FAIL  计数：0
 | 4. B0-05 query string 经 Nginx | PASS | app span `url.query` 逐字节相同；413/41301（8192）；400/40001 且不出网；404/40401、405/40501 |
 | 5. B0-08a 镜像身份 + bench 归档 | PASS | 脚本与 `docker inspect` 4/4 一致；`manifest.images` 含 tag+id；smoke BENCH_VERDICT=PASS |
 | 6. 全量闸门 verify.sh | PASS | 109 PASS / 1 WARN（cadvisor WSL2）/ 0 FAIL，EXIT=0 |
+
+---
+
+# R2 增补 · 杀节点演练类真机验证
+
+> 执行代理：R2（Stage2 B0 收口真机验证 R2，负责 R1 让路的杀节点演练项）
+> 日期：2026-10-28
+> 分支 / 开工 HEAD：`feature/stage2-workbench` @ `f9902eb`（`git status --short` 干净，34 容器在跑）
+> 范围：B0-06 真机 `--dry-run`、B0-08 探针隔离真机（403/40302 + 自检开关口径）、db-failover 演练（含
+> `mysql_cluster_probe_up` 全程恒 1、Router 6446 切主耗时、旧主 TTL 归队、k6 归档）、R1 deferred 快项（B0-03
+> 总开关 / B0-04 前缀）、收尾闸门。
+> 证据目录：`/tmp/r2/`。
+
+## R2-0. 开工自检
+
+| 检查 | 结果 |
+|---|---|
+| 分支 / HEAD | `feature/stage2-workbench` / `f9902eb` |
+| 工作树 | `git status --short` 空 |
+| 容器数 | 34（与 R1 收尾一致） |
+| `db-cluster-status.sh`（`/tmp/r2/db-cluster-status-initial.log`，EXIT=0） | 3/3 ONLINE，**PRIMARY = `mysql-2`（容器 `jl-mysql-2`）**；6446→mysql-2、6447→mysql-1；`RESULT: ok` |
+
+## R2-1. B0-06 真机：`reset-lab.sh --dry-run`（未执行任何真实复位）
+
+两次 dry-run，均 EXIT=0，尾行 `DRY RUN: no data was changed.`，日志内无任何 stop/start/TRUNCATE 执行行。
+
+**（a）现栈声明口径**（`/tmp/r2/b006-dryrun.log`）——app 层当前起在 base+dev，`MYSQL_MODE=standalone`：
+
+```
+declared modes : MYSQL_MODE=standalone REDIS_MODE=standalone (source: .env + RESET_* overrides)
+MySQL target   : container=jl-mysql db=seckill route=[container-local socket in jl-mysql (standalone dev MySQL)]
+```
+
+⇒ 解析结果与 app 实际读写目标**同源**（standalone 栈就该复位单机），这正是 B0-06「声明开关 × 活体探测」的
+设计口径，不是缺陷。
+
+**（b）集群口径**（`RESET_MYSQL_MODE=router RESET_REDIS_MODE=sentinel bash code/lab/scripts/reset-lab.sh --dry-run`，
+`/tmp/r2/b006-dryrun-router.log`，EXIT=0）——**这才是步骤文档登记的那条 unverified**：
+
+```
+declared modes : MYSQL_MODE=router REDIS_MODE=sentinel (source: .env + RESET_* overrides)
+MySQL topology : cluster
+MySQL target   : container=jl-mysql-1 db=seckill
+                 route=[MySQL Router mysql-router:6446 (follows the PRIMARY), client exec in jl-mysql-1]
+MySQL nodes seen : jl-mysql-1 jl-mysql-2 jl-mysql-3 router=running
+Redis targets    : jl-redis-1 jl-redis-2 jl-redis-3 (FLUSHDB each; verify on jl-redis-1)
+```
+
+- 目标解析打印指向集群：经 **Router 6446（跟随 PRIMARY）**、客户端 exec 在 `jl-mysql-1`、三节点 + router 活体全命中。
+- 旁证「跟随 PRIMARY」真实有效：dry-run 的 `Current state` 行读到的集群侧数字
+  （`inventory_rows=20 available_min=16 orders=167`）与 dev 单机面（rows=1020、orders=4）明显不同 ⇒ 探针确实连在集群上。
+- preflight WARN（不阻断 dry-run）：`redis-cli ping on jl-redis-{1,2,3} returned "NOAUTH Authentication required."`
+  ⇒ 新发现：sentinel 拓扑下 reset 的 Redis 探针没带鉴权（app 侧 `REDIS_MODE` 本就未切 sentinel，
+  属 M3-1b 前瞻路径）。真 `--yes` 走 router 口径时 MySQL 侧可用、Redis 侧需先补鉴权口径。
+
+**未做（有意）**：真 `--yes` 的集群复位。原因如任务口径——会清演示数据；且（b）已暴露 Redis NOAUTH 缺口，
+`--yes` 现在跑必失败在 Redis 步骤。留待 B0 之后按批次需要再做。
+
+**结论：PASS**（口径 (b) 即步骤文档「db-ha 栈上 `--dry-run` 打印 cluster 目标与 Router 路由」的真机闭环）

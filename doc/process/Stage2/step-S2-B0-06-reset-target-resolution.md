@@ -62,7 +62,15 @@
 
 ## 补充
 
-（留白：主会话真机验证结果、评审意见后补于此。）
+- **真机 `--dry-run` 已验（R2，2026-10-28，见 `b0-live-verification.md` §R2-1）**：
+  - 现栈声明口径 `MYSQL_MODE=standalone` → 解析到 `jl-mysql`（本地 socket），与 app 实际读写目标同源，符合设计。
+  - `RESET_MYSQL_MODE=router RESET_REDIS_MODE=sentinel --dry-run` → `MySQL topology: cluster`、
+    `route=[MySQL Router mysql-router:6446 (follows the PRIMARY), client exec in jl-mysql-1]`、
+    三节点 + router 活体全命中 ⇒ 本步登记的「db-ha 栈上 --dry-run 打印 cluster 目标与 Router 路由」= **真机 PASS**。
+  - 未执行真 `--yes`（会清演示数据，留到 B0 之后按批次需要）。新发现：sentinel 口径下 dry-run preflight 报
+    `redis-cli ping ... NOAUTH Authentication required.`（jl-redis-1/2/3），即集群 Redis 复位路径的鉴权口径
+    在真机尚未打通 —— 与本步「Redis 集群路径为前瞻支持」的登记一致，真 `--yes` 前需先补该口径。
+  - 旁证「跟随 PRIMARY」有效：`Current state` 行读到的集群侧数字（rows=20/orders=167）与 dev 单机面（rows=1020/orders=4）不同。
 
 # 附录
 
