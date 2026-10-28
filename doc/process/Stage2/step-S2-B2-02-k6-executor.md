@@ -458,3 +458,39 @@ clock.instant() > deadline → 超时
 - **修正**：`PAUSED` 与 `RUNNING` 一样参与超时判定；`stop` 遇到 paused 容器先 `unpause` 再 stop（Docker 拒绝直接停 paused），`remove` 改为 `force=true`，保证超时/孤儿清理一定到达 removed。
 - **测试**：`BenchRunWatchdogTest` 新增 1 条 PAUSED 超时用例；全模块 **591 / 0 / 0 / 0**。
 - **真机复验**：保留一个 paused 的 run，重建控制器后由新看门狗在下一 tick 判 FAILED、停容器并删除、释放锁。
+
+
+## 真机 A01/A20 与最终闸门（B2-02 收口，2026-10-28）
+
+### A01：UI 启动 load，全程无终端
+
+- 控制器镜像按本地 jar 离线重建，compose 重建后 healthy；`GET /lab/bench/scenarios` 正常。
+- `console-smoke.sh --no-build` 在真栈 **71 PASS / 0 FAIL**（B2-01 基线 67 + 4 条 k6 卡断言）；其中 run 块由页面创建 `load` DRAFT、start 到 RUNNING、k6 卡显示 RUNNING/`jl-k6-` 容器、日志 tail 非空、报告按钮在退出前禁用，stop 后 run COMPLETED 且 k6 离开 RUNNING。
+- 后端独立复验（run-20261028-010）：`RUNNING → 自然退出 → COMPLETED`；k6 容器 `scripts rw=false`、`reports rw=true`；`summary.json` **4803 B**，`GET /lab/runs/{id}/k6/report` 返回完整 k6 JSON。
+- 孤儿清理：控制器重启时自动删除上一轮 EXITED 的 `jl-k6-run-20261028-008`；收口前手工清理最后一台退出容器后，`jl-k6-*` 残留为 **0**。
+
+### A20：停止与超时清理
+
+- 手动 stop（run-20261028-012，60s load）：operation **APPLIED**，afterSummary `k6Stopped=true`、`k6Status=EXITED`、`k6ExitCode=105`、`k6ReportAvailable=true`、`lockReleased=true`；run **COMPLETED**，容器 EXITED（保留日志/报告）。
+- 超时（run-20261028-014，5s load + `docker pause` 模拟卡死）：约 **33s** 后 run **FAILED**，step `k6-timeout` 记录 `requestedSeconds=5`、`timeoutGraceSeconds=30`、deadline；看门狗先 unpause 再 stop，`remove(force=true)` 删除容器；`jl-k6-run-20261028-014` 已不存在。
+- 锁释放：超时后新 run-20261028-015 能正常 start 到 RUNNING（无 409/40902），随后手动 stop 并清理。
+- 说明：控制器重启发生在 RUNNING 期间时，仍按 B1 规则先标 `UNKNOWN` 并释放清理建议，不冒充超时；这是既有恢复语义。
+
+### 闸门（合并后主树与真栈实测）
+
+| 闸门 | 结果 |
+|---|---|
+| Java 单测（reactor） | **1146 / 0 fail / 0 error / 0 skip**（chaos **591**、app 469、jdk8 59、core 13、platform 10+4） |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL** |
+| `smoke.sh` | 7/7 |
+| `console-smoke.sh` | **71 PASS / 0 FAIL** |
+| k6 脚本回归 | **100 pass / 0 fail** |
+| 文档断言 | **37 / 37 PASS** |
+| env 接线回归 | **91 PASS / 0 FAIL**（8 chaos + 83 ledger/metrics/precheck/bench/exec） |
+| 安全静态检查 | PASS |
+
+### 已知边界（不阻塞 B2-02 收口）
+
+- EXITED 容器保留到下一次控制器启动的孤儿清扫；演示期间可在执行记录页查看日志/报告。
+- k6 退出 0 但报告缺失时现在判 FAILED（`k6-report-missing`）；`thresholdsExpected=false` 的场景不受影响。
+- 控制器重启会把 RUNNING 转 UNKNOWN（B1 语义），清理需操作员 stop 关闭。
