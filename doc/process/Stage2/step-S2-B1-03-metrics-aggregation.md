@@ -134,7 +134,7 @@
 | `mysql.cluster.probe.up` | `max(mysql_cluster_probe_up{job="chaos-controller"})` | bool | `mysql_cluster_probe_up` | false |
 | `targets.up` | `up{job=~"seckill-app\|...\|cadvisor"}` | bool | `up` | true |
 
-- 25 项已在运行中的 Prometheus 上逐条做**只读 instant query**：24 项有序列；`executor.*` 3 项为 0 序列（如实 NO_DATA）。
+- 25 项已在运行中的 Prometheus 上逐条做**只读 instant query**：24 项有序列；`executor.rejected` 1 项为 0 序列（如实 NO_DATA，导出名待 B4-01 接线）。
 - `targets.up` 当前 19 条序列，`http.status.rps` 13 条，合计约 92 条，低于 `max-series=120`。
 
 ## 5. 深链格式
