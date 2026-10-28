@@ -34,6 +34,8 @@ const ROLE_RULES = [
   { role: 'toxiproxy', test: /^jl-toxiproxy$/ },
   { role: 'toxiproxy-init', test: /^jl-toxiproxy-init$/ },
   { role: 'traffic', test: /^jl-traffic$/ },
+  // One container per run started from the ledger: jl-k6-<runId>.
+  { role: 'k6', test: /^jl-k6-/ },
 ]
 
 const ROLE_META = {
@@ -58,6 +60,7 @@ const ROLE_META = {
   toxiproxy: { label: '网络故障代理', group: 'control' },
   'toxiproxy-init': { label: '一次性初始化任务', group: 'control' },
   traffic: { label: 'k6 背景流量', group: 'load' },
+  k6: { label: '按需压测', group: 'load' },
 }
 
 /** Role + group + display label for one container name. */

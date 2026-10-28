@@ -258,6 +258,50 @@ export function stopRun(token, runId, idempotencyKey) {
   )
 }
 
+// ---------------------------------------------------------------- k6 execution
+// Read-only view of the k6 container a run start launched. An absent container
+// is a normal 200 with status=ABSENT (the console polls before launch), so only
+// the report download has meaningful 404/413 failures.
+
+export function fetchK6State(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}/k6`, token)
+}
+
+/** Bounded tail; the controller clamps tail/maxBytes instead of rejecting them. */
+export function fetchK6Logs(token, runId, { tail, maxBytes } = {}) {
+  return getJson(
+    withQuery(`/lab/runs/${encodeURIComponent(runId)}/k6/logs`, { tail, maxBytes }),
+    token
+  )
+}
+
+/**
+ * Raw summary.json as an attachment. A missing report is 404 and an oversized
+ * one is 413; both keep their ApiError status/code so the card can explain why
+ * the download is unavailable without re-requesting the state.
+ */
+export async function downloadK6Report(token, runId) {
+  const response = await fetch(
+    `${API_BASE}/lab/runs/${encodeURIComponent(runId)}/k6/report`,
+    { headers: authHeaders(token) }
+  )
+  if (!response.ok) {
+    throw await toApiError(response)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  let filename = `k6-summary-${runId}.json`
+  if (match) {
+    try {
+      filename = decodeURIComponent(match[1])
+    } catch {
+      filename = match[1]
+    }
+  }
+  return { blob, filename, bytes: blob.size }
+}
+
 /** Always answerable (also while DEGRADED): the diagnosis surface for 503/50302. */
 export function fetchLedgerStatus(token) {
   return getJson('/lab/ledger/status', token)

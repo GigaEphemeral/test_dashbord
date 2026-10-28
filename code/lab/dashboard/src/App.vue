@@ -111,7 +111,12 @@ const onDemandContainerNames = computed(() => {
   return names
 })
 const steadyContainers = computed(() =>
-  containers.value.filter((item) => !onDemandContainerNames.value.has(item.name))
+  containers.value.filter((item) => (
+    !onDemandContainerNames.value.has(item.name)
+    // Per-run k6 containers (jl-k6-<runId>) are ephemeral and must never
+    // inflate the always-on count, even when the exclusion list is configured.
+    && !String(item.name).startsWith('jl-k6-')
+  ))
 )
 const healthyContainers = computed(
   () => steadyContainers.value.filter((item) => item.state === 'running').length

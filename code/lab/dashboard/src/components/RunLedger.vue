@@ -4,6 +4,10 @@ import MetricCards from './MetricCards.vue'
 import {
   createRun,
   describeError,
+  downloadK6Report,
+  fetchBenchScenarios,
+  fetchK6Logs,
+  fetchK6State,
   fetchLedgerStatus,
   fetchOperation,
   fetchOperations,
@@ -97,9 +101,24 @@ const createBusy = ref(false)
 const createError = ref('')
 const createResult = ref(null)
 
+// k6 execution card. Every failure stays local to this card: a 503 here must
+// never blank the run detail, pre-check, operations or metric windows.
+const k6 = ref(null)
+const k6Error = ref('')
+const k6Unavailable = ref(false)
+const k6Logs = ref(null)
+const k6LogError = ref('')
+const k6LogLoading = ref(false)
+const k6ReportError = ref('')
+const k6ReportBusy = ref(false)
+const benchCatalog = ref(null)
+const benchCatalogError = ref('')
+let benchCatalogLoaded = false
+
 let listSeq = 0
 let detailSeq = 0
 let pollSeq = 0
+let k6Seq = 0
 let initialised = false
 
 const selectedRun = computed(() => detail.value?.run || null)
@@ -121,6 +140,40 @@ const startEnabled = computed(() => (
 const stopEnabled = computed(() => ['RUNNING', 'UNKNOWN'].includes(runStatus.value) && !actionBusy.value)
 const metricsOverall = computed(() => runMetrics.value?.quality || '')
 const metricsReason = computed(() => runMetrics.value?.reason || '')
+
+// k6 status vocabulary is the backend's: ABSENT/CREATED/RUNNING/EXITED.
+// ABSENT is a normal 200 (never started or already cleaned up), not an error.
+const k6Status = computed(() => k6.value?.status || '')
+const k6StatusLabel = computed(() => {
+  if (!k6Status.value) return '—'
+  if (k6Status.value === 'ABSENT') return '未启动/已清理'
+  return k6Status.value
+})
+const k6Pollable = computed(() => (
+  ['RUNNING', 'STOPPING', 'VERIFYING', 'UNKNOWN'].includes(runStatus.value)
+  || ['RUNNING', 'CREATED'].includes(k6Status.value)
+))
+const k6LogText = computed(() => (
+  k6Logs.value?.text
+  || k6LogError.value
+  || (k6LogLoading.value ? '读取中…' : '')
+))
+const k6LogTruncated = computed(() => Boolean(k6Logs.value?.truncated))
+const uiScenarioNames = computed(() => benchCatalog.value?.views?.ui || [])
+
+function k6Tone(status, exitCode) {
+  if (status === 'RUNNING') return 'run-running'
+  if (status === 'CREATED') return 'run-pending'
+  if (status === 'EXITED') return exitCode === 0 ? 'run-completed' : 'run-failed'
+  return 'muted'
+}
+
+function byteLabel(bytes) {
+  if (!Number.isFinite(bytes)) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
 
 function statusTone(status) {
   const value = String(status || '').toLowerCase()
@@ -298,6 +351,121 @@ async function loadRunMetrics(runId) {
   }
 }
 
+function isK6Unavailable(err) {
+  return err?.status === 503 || err?.code === '50303'
+}
+
+function resetK6() {
+  k6Seq += 1
+  k6.value = null
+  k6Error.value = ''
+  k6Unavailable.value = false
+  k6Logs.value = null
+  k6LogError.value = ''
+  k6LogLoading.value = false
+  k6ReportError.value = ''
+}
+
+/**
+ * State poll for the selected run. Terminal runs (COMPLETED/FAILED/...) are
+ * read once and then skipped: the container cannot change after the watchdog
+ * settled the run, so the 5s sync must not keep requesting it.
+ */
+async function loadK6(runId, { force = false } = {}) {
+  if (!runId) return
+  const terminal = ['COMPLETED', 'FAILED', 'ABORTED', 'INVALID'].includes(runStatus.value)
+  // A DRAFT/terminal run has nothing to poll once the state was read once.
+  if (!force && k6.value && (terminal || !k6Pollable.value)) return
+  const seq = ++k6Seq
+  try {
+    const value = await fetchK6State(props.token, runId)
+    if (seq !== k6Seq || runId !== selectedRunId.value) return
+    k6.value = value
+    k6Error.value = ''
+    k6Unavailable.value = false
+  } catch (err) {
+    if (seq !== k6Seq || runId !== selectedRunId.value) return
+    k6.value = null
+    k6Unavailable.value = isK6Unavailable(err)
+    k6Error.value = k6Unavailable.value
+      ? `k6 执行层不可用：${describeError(err)}`
+      : describeError(err)
+  }
+}
+
+async function loadK6Logs() {
+  const runId = selectedRunId.value
+  if (!runId) return
+  k6LogLoading.value = true
+  k6LogError.value = ''
+  try {
+    const value = await fetchK6Logs(props.token, runId, { tail: 100 })
+    if (runId !== selectedRunId.value) return
+    k6Logs.value = value
+  } catch (err) {
+    if (runId !== selectedRunId.value) return
+    k6Logs.value = null
+    if (err?.status === 404) {
+      k6LogError.value = 'k6 容器不存在（尚未启动或已清理），暂无日志。'
+    } else if (isK6Unavailable(err)) {
+      k6LogError.value = `k6 执行层不可用：${describeError(err)}`
+    } else {
+      k6LogError.value = describeError(err)
+    }
+  } finally {
+    k6LogLoading.value = false
+  }
+}
+
+async function downloadReport() {
+  const runId = selectedRunId.value
+  if (!runId || !k6.value?.reportAvailable) return
+  k6ReportBusy.value = true
+  k6ReportError.value = ''
+  try {
+    const { blob, filename } = await downloadK6Report(props.token, runId)
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  } catch (err) {
+    if (err?.status === 413) {
+      k6ReportError.value = `报告超过下载上限（413）：${err.message}`
+    } else if (err?.status === 404) {
+      k6ReportError.value = '报告尚未生成：k6 退出时才会写出 summary.json。'
+    } else if (isK6Unavailable(err)) {
+      k6ReportError.value = `k6 执行层不可用：${describeError(err)}`
+    } else {
+      k6ReportError.value = describeError(err)
+    }
+  } finally {
+    k6ReportBusy.value = false
+  }
+}
+
+/**
+ * The create form's scenario hint comes from the same manifest the start gate
+ * uses. A catalog failure only degrades the hint (plain text input still works):
+ * creation writes a DRAFT and never needs the catalog.
+ */
+async function loadBenchScenarios() {
+  if (benchCatalogLoaded) return
+  try {
+    benchCatalog.value = await fetchBenchScenarios(props.token)
+    benchCatalogLoaded = true
+    benchCatalogError.value = ''
+  } catch (err) {
+    benchCatalog.value = null
+    benchCatalogError.value = isK6Unavailable(err)
+      ? `场景目录不可用（503/50303），仍可手动输入 scenario：${describeError(err)}`
+      : `场景目录读取失败，仍可手动输入 scenario：${describeError(err)}`
+  }
+}
+
 async function selectRun(runId) {
   if (!runId) return
   selectedRunId.value = runId
@@ -306,13 +474,21 @@ async function selectRun(runId) {
   pendingNote.value = ''
   actionError.value = ''
   operation.value = null
-  await Promise.all([loadDetail(runId), loadOperations(runId)])
+  resetK6()
+  await Promise.all([
+    loadDetail(runId),
+    loadOperations(runId),
+    loadK6(runId),
+    loadBenchScenarios()
+  ])
   await Promise.all([loadPrecheck(runId), loadRunMetrics(runId)])
 }
+
 
 async function restoreSelection() {
   await loadStatus()
   await loadRuns()
+  await loadBenchScenarios()
   if (selectedRunId.value) {
     await selectRun(selectedRunId.value)
   } else if (runs.value.length) {
@@ -324,6 +500,7 @@ async function refreshSelected() {
   const runId = selectedRunId.value
   if (!runId) return
   await Promise.all([loadDetail(runId), loadOperations(runId)])
+  await loadK6(runId)
 }
 
 function applyFilters() {
@@ -425,7 +602,9 @@ async function refreshAfterAction() {
   await loadRuns()
   const runId = selectedRunId.value
   if (!runId) return
-  await Promise.all([loadDetail(runId), loadOperations(runId)])
+  // start/stop changes the container state even when the detail read lags, so
+  // this refresh bypasses the terminal-run short-circuit of the 5s poller.
+  await Promise.all([loadDetail(runId), loadOperations(runId), loadK6(runId, { force: true })])
   await Promise.all([loadPrecheck(runId), loadRunMetrics(runId)])
 }
 
@@ -488,6 +667,7 @@ watch(
     const tokenChanged = previous && previous[1] !== token
     if (!initialised || tokenChanged) {
       initialised = true
+      if (tokenChanged) benchCatalogLoaded = false
       restoreSelection()
     } else {
       loadStatus()
@@ -613,8 +793,11 @@ onBeforeUnmount(() => {
       <form class="ledger-create" @submit.prevent="submitCreate">
         <label class="form-label">
           scenario
-          <input v-model="createForm.scenario" class="input" data-testid="run-create-scenario" placeholder="例如 smoke-console-20261028" />
+          <input v-model="createForm.scenario" class="input" data-testid="run-create-scenario" list="run-create-scenario-options" placeholder="例如 smoke / load / spike" />
         </label>
+        <datalist id="run-create-scenario-options" data-testid="run-create-scenario-options">
+          <option v-for="name in uiScenarioNames" :key="name" :value="name">{{ name }}</option>
+        </datalist>
         <label class="form-label">
           params (JSON)
           <textarea v-model="createForm.paramsText" class="input ledger-params-input" rows="3" data-testid="run-create-params" spellcheck="false"></textarea>
@@ -624,6 +807,12 @@ onBeforeUnmount(() => {
         </button>
       </form>
       <div v-if="createError" class="error-banner" role="alert" data-testid="run-create-error">{{ createError }}</div>
+      <p class="hint" data-testid="run-create-scenario-hint">
+        可执行场景来自后端 manifest 的 <code>views.ui</code>
+        <template v-if="uiScenarioNames.length">：{{ uiScenarioNames.join(' / ') }}</template>
+        ；其它场景 start 会被 400/40002 拒绝。params 只接受该场景 manifest 声明的键。
+      </p>
+      <p v-if="benchCatalogError" class="hint" data-testid="run-create-catalog-error">{{ benchCatalogError }}</p>
       <p v-if="createResult" class="notice" data-testid="run-create-result">
         已创建 <code data-testid="run-created-id">{{ createResult.runId }}</code>
         · 状态 <strong>{{ createResult.status }}</strong>
@@ -755,6 +944,66 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p v-else class="hint">该 run 还没有检查项。</p>
+      </section>
+
+      <section class="card" data-testid="k6-run-card">
+        <div class="card-head">
+          <h2>
+            k6 执行
+            <span
+              class="badge"
+              :class="k6Tone(k6Status, k6?.exitCode)"
+              data-testid="k6-status"
+            >{{ k6StatusLabel }}</span>
+          </h2>
+          <div class="bench-actions">
+            <button type="button" class="btn ghost" data-testid="k6-refresh" :disabled="!selectedRunId" @click="loadK6(selectedRunId, { force: true })">
+              刷新状态
+            </button>
+            <button type="button" class="btn ghost" data-testid="k6-log-refresh" :disabled="k6LogLoading || !selectedRunId" @click="loadK6Logs">
+              {{ k6LogLoading ? '读取中…' : '刷新日志' }}
+            </button>
+            <button type="button" class="btn ghost" data-testid="k6-report-download" :disabled="!k6?.reportAvailable || k6ReportBusy" @click="downloadReport">
+              {{ k6ReportBusy ? '下载中…' : '下载报告' }}
+            </button>
+          </div>
+        </div>
+        <p class="hint">
+          GET /lab-api/lab/runs/{id}/k6 · ABSENT 表示未启动/已清理（200，不是 404）；日志 tail=100；
+          报告由 k6 退出时写出的 summary.json 提供。
+        </p>
+        <div v-if="k6Unavailable" class="notice" data-testid="k6-unavailable">
+          k6 执行层不可用：{{ k6Error }}
+        </div>
+        <p v-else-if="k6Error" class="hint" data-testid="k6-error">{{ k6Error }}</p>
+        <dl class="ledger-facts" data-testid="k6-facts">
+          <dt>container</dt>
+          <dd><code data-testid="k6-container">{{ k6?.containerName || '—' }}</code></dd>
+          <dt>scenario</dt>
+          <dd data-testid="k6-scenario">{{ k6?.scenario || '—' }}</dd>
+          <dt>exitCode</dt>
+          <dd data-testid="k6-exit-code">{{ k6?.exitCode ?? '—' }}</dd>
+          <dt>startedAt</dt>
+          <dd data-testid="k6-started">{{ timeLabel(k6?.startedAt) }}</dd>
+          <dt>finishedAt</dt>
+          <dd data-testid="k6-finished">{{ timeLabel(k6?.finishedAt) }}</dd>
+          <dt>report</dt>
+          <dd>
+            <span data-testid="k6-report-available">{{ k6?.reportAvailable ? '可用' : '未生成' }}</span>
+            · <span data-testid="k6-report-bytes">{{ byteLabel(k6?.reportBytes) }}</span>
+          </dd>
+          <dt>note</dt>
+          <dd data-testid="k6-note">{{ k6?.note || '—' }}</dd>
+        </dl>
+        <div class="k6-log-head">
+          <span class="hint">
+            日志 tail=100
+            <template v-if="k6Logs"> · {{ byteLabel(k6Logs.bytes) }}</template>
+          </span>
+          <span v-if="k6LogTruncated" class="badge warn" data-testid="k6-log-truncated">已截断</span>
+        </div>
+        <pre class="ledger-json k6-log-view" data-testid="k6-log-view">{{ k6LogText }}</pre>
+        <p v-if="k6ReportError" class="hint" data-testid="k6-report-error">{{ k6ReportError }}</p>
       </section>
 
       <section class="card" data-testid="run-precheck">

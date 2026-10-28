@@ -2176,6 +2176,19 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+/* k6 card: the log pane keeps a stable height so the 5s state poll does not
+   make the ledger jump when the tail grows. */
+.k6-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.k6-log-view {
+  min-height: 84px;
+}
+
 .ledger-table {
   display: flex;
   flex-direction: column;
