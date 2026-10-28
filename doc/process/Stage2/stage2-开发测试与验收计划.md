@@ -21,7 +21,7 @@
 | 全栈验收 | `bash code/lab/scripts/verify.sh` | 109 PASS / 1 WARN / 0 FAIL（唯一 WARN = cAdvisor/WSL2） | 109 PASS / 1 WARN / 0 FAIL（未变） |
 | HTTP 冒烟 | `bash code/lab/scripts/smoke.sh` | 7/7，末行 `SMOKE PASSED.` | 7/7（未变） |
 | 控制台冒烟 | `bash code/lab/scripts/console-smoke.sh`（Playwright） | 42 断言 / 0 失败 | **63 断言 / 0 失败**（B1-05 侧边导航重写后的新基线；B0 阶段 42 未重跑） |
-| 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | 32/32 PASS（B0 未新增断言；指标字典抽样断言归 B1 起补） |
+| 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | **37/37 PASS**（B1 新增 5 条：台账 V2/操作契约/指标目录/预检查/侧边导航） |
 | 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 | 通过 |
 
 > **B1 现行基线（2026-10-28，B1-04 后）**：reactor **1029 tests**（chaos-controller **474**，含 Testcontainers
@@ -133,6 +133,9 @@ B3 依赖 B0 的 stats/代理/TTL 修复；B4 依赖 B1 台账 + B2 执行层；
 ---
 
 ## 2. B1 · 持久化台账、状态机、观测底座与环境锁
+
+> **收口状态（2026-10-28）：已收口。** 5 个步骤全部合并并通过真机验证（A19/A21/A22/A26/A29 + console-smoke 63/0），
+> 批次闸门与遗留清单见 `step-S2-B1-00-closure.md` 与 §0 现行基线。
 
 **收口标准**：浏览器刷新或控制器重启后状态可恢复；冲突 run 被拒绝；无数据不会显示成 0。
 
