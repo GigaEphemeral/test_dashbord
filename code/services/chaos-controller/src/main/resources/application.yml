@@ -162,6 +162,22 @@ lab:
   # answers 503/50303 - never an empty catalog that pretends to be OK.
   bench:
     scenarios-location: ${LAB_BENCH_SCENARIOS_LOCATION:file:/app/k6/scenarios/manifest.json}
+    # Stage2 B2-02a: controlled k6 executor plan. All keys are externalized;
+    # scripts-host-dir stays blank until B2-02b resolves the real host path and
+    # the planner refuses a blank value (503/50303) instead of mounting "".
+    exec:
+      k6-image: ${LAB_BENCH_EXEC_K6_IMAGE:grafana/k6:1.3.0}
+      network: ${LAB_BENCH_EXEC_NETWORK:jl-net}
+      scripts-host-dir: ${LAB_BENCH_EXEC_SCRIPTS_HOST_DIR:}
+      scripts-mount: ${LAB_BENCH_EXEC_SCRIPTS_MOUNT:/scripts}
+      reports-mount: ${LAB_BENCH_EXEC_REPORTS_MOUNT:/reports}
+      reports-volume: ${LAB_BENCH_EXEC_REPORTS_VOLUME:jl-k6-reports}
+      prometheus-rw-url: ${LAB_BENCH_EXEC_PROMETHEUS_RW_URL:http://prometheus:9090/api/v1/write}
+      base-url: ${LAB_BENCH_EXEC_BASE_URL:http://nginx}
+      container-prefix: ${LAB_BENCH_EXEC_CONTAINER_PREFIX:jl-k6-}
+      max-vus: ${LAB_BENCH_EXEC_MAX_VUS:1000}
+      max-duration-seconds: ${LAB_BENCH_EXEC_MAX_DURATION_SECONDS:3600}
+      summary-file: ${LAB_BENCH_EXEC_SUMMARY_FILE:summary.json}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.

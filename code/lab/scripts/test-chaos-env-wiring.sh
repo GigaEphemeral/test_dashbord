@@ -74,9 +74,11 @@ for key in "${KEYS[@]}"; do
   pass "$key: yml placeholder + compose forwarding + .env.example entry, defaults match ('$ydef')"
 done
 
-# Stage2 B1-01 ledger / B1-03 metrics / B1-04 pre-check / B2-01b bench keys are
-# discovered instead of listed: every ${LAB_LEDGER_*:...} / ${LAB_METRICS_*:...} /
-# ${LAB_PRECHECK_*:...} / ${LAB_BENCH_*:...} / ${LAB_SOURCE_COMMIT:...}
+# Stage2 B1-01 ledger / B1-03 metrics / B1-04 pre-check / B2-01b bench /
+# B2-02a k6 executor keys are discovered instead of listed: every
+# ${LAB_LEDGER_*:...} / ${LAB_METRICS_*:...} / ${LAB_PRECHECK_*:...} /
+# ${LAB_BENCH_*:...} (this prefix also covers LAB_BENCH_EXEC_*) /
+# ${LAB_SOURCE_COMMIT:...}
 # placeholder in the controller yml must reach the container and be documented in
 # .env.example. Defaults are not compared here because several intentionally nest
 # another placeholder (e.g. ${LAB_LEDGER_MYSQL_MODE:${MYSQL_MODE:standalone}}),
