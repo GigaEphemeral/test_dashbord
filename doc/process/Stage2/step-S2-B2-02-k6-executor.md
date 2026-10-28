@@ -368,3 +368,54 @@ clock.instant() > deadline → 超时
 - **配置**：`LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS` 三处同默认 30（yml/compose/.env.example），env 接线自动发现。
 - **测试**：`BenchRunWatchdogTest` 新增 4 条（STOPPING 过宽限完成、宽限内不动、容器仍活不动、第二跳暂存后下一 tick 补完成）；全模块 **584 / 0 / 0 / 0**，env 接线 **91 PASS**。
 - **仍未验证**：真实台账暂存窗口下的 STOPPING 恢复（真机 A20 会覆盖常规 stop/超时路径，台账故障注入不在本步）。
+
+## 补充：B2-02b-2b 控制台 k6 卡与 console-smoke（2026-10-28）
+
+### UI（run 详情「k6 执行」卡）
+
+- 位置：`RunLedger.vue` 的 run 详情之后、预检查之前；根节点 `data-testid="k6-run-card"`。
+
+| 字段 | testid | 说明 |
+|---|---|---|
+| 状态徽标 | `k6-status` | `ABSENT` 渲染「未启动/已清理」，其余原样 `CREATED/RUNNING/EXITED`，颜色按 exitCode 区分 |
+| 容器名 | `k6-container` | 计划容器名（ABSENT 时也有，`jl-k6-<runId>`） |
+| scenario | `k6-scenario` | `lab.scenario` 标签 |
+| exitCode | `k6-exit-code` | 运行中/ABSENT 为 — |
+| started/finished | `k6-started`、`k6-finished` | Docker ISO 时间转本地 |
+| 报告 | `k6-report-available`、`k6-report-bytes` | 可用/未生成 + B/KB/MB |
+| note | `k6-note` | 后端提示（无容器/报告未生成/超限） |
+| 日志 | `k6-log-view`、`k6-log-truncated` | tail=100；`truncated` 显示「已截断」 |
+
+- 轮询：选中 run 立即读一次 `GET /lab/runs/{id}/k6`；DRAFT/终态读过一次后不再随 5s `syncTick` 轮询；RUNNING/STOPPING/VERIFYING/UNKNOWN 或 k6 仍 CREATED/RUNNING 时继续；start/stop 动作后强制刷新一次。
+- 日志：`k6-log-refresh` 调 `GET …/k6/logs?tail=100`；容器不存在（404）显示「尚未启动或已清理」提示，不当作告警。
+- 报告：`k6-report-download` 仅 `reportAvailable=true` 且不忙时可用；带 `X-Lab-Token` fetch → blob → 临时 `<a download>`；404（未生成）/413（超限）保留原状态语义并显示。
+- 失败隔离：503/50303 只在卡内显示「k6 执行层不可用」，不设置全局 DEGRADED、不使用 `role="alert"`，run 详情/预检查/操作/指标不受影响。
+- 新建表单：`fetchBenchScenarios` 的 `views.ui` 填 `run-create-scenario-options` datalist，并提示「其它场景 start 会被 400/40002 拒绝，params 只接受 manifest 声明的键」；目录 503 只退化为手动输入提示，不阻塞创建。
+- 常驻口径：`App.vue` 的 `steadyContainers` 无条件排除 `jl-k6-` 前缀（即使 `VITE_LAB_ON_DEMAND_CONTAINERS` 显式配置）；`labModel.js` 新增 role `k6`（label「按需压测」、group `load`），`GET /containers` 里的按需 k6 不会抬高常驻计数。
+
+### console-smoke
+
+- 默认 `SMOKE_RUN_SCENARIO=load`；默认 `SMOKE_RUN_PARAMS={"note":"console-smoke","source":"playwright","LOAD_START_VUS":1,"LOAD_VUS":5,"LOAD_DURATION":"30s"}`（均可 env 覆盖）。30s 保证断言期间 run 仍 RUNNING，不被看门狗抢先完成。
+- `stopActiveRuns()`：保留旧 scenario 前缀清理；另对 RUNNING/UNKNOWN run 读详情，若 `params` 中 group=request 的 `payload.note` 等于本次 `RUN_PARAMS.note` 且 scenario ∈ `views.ui`（目录不可用时回退 smoke/load/spike）才 stop。只关闭明确带 marker 的 run，用户 run 不动。
+- `!blocked` 分支 start 后新增 4 条断言：k6 卡可见且 `RUNNING`、容器名 `jl-k6-` 前缀、刷新后 `k6-log-view` 非空、报告按钮此时禁用（不把 ABSENT 当失败）。stop 后的「k6 不再 RUNNING（EXITED/ABSENT）」并入既有 stop/COMPLETED 断言，保持 67→71 的计数；blocked 环境仍是原来的 4 条（67）。
+- 本步未跑 console-smoke（需要真栈 + 重建 dist）；预计非 blocked **71 PASS / 0 FAIL**，真机数字由主会话回写。
+
+### 构建与静态检查
+
+- `code/lab/dashboard`：`npm ci` + `npm run build` 成功（28 modules；JS 196.00 kB / gzip 69.34 kB，CSS 30.18 kB / gzip 5.90 kB）。
+- `node --check code/lab/scripts/console-smoke.mjs` 通过；未改 shell。
+
+### 风险（静态推断，真机待确认）
+
+- `BenchLaunchPlanner.effectiveParams` 会拒绝 manifest 未声明的参数（[BenchLaunchPlanner.java:268](../../../code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchLaunchPlanner.java)），而默认 `RUN_PARAMS` 里的 `note`/`source` 只是清理 marker，不在 `load` 的 `params` 白名单内。据此推断真机 start 会 400/40002 → run FAILED，k6 断言失败。
+- 解决方向（均超出本步「不改 Java」约束，留给主会话决策）：后端在 planner 之前剥离 `note`/`source` 元数据键；或 smoke 改用 manifest 已声明的 marker 并同步改清理条件。
+
+### 未验证真机项
+
+- console-smoke 的实际 PASS 数、真实 k6 容器 RUNNING→EXITED、日志 tail 与 `summary.json` 下载（含 413）。
+- A01（UI 启动 load 全程无终端）与 A20（stop/超时清理）。
+- 无 Docker 时 503/50303 的卡内呈现，以及 k6 容器在 `GET /containers` 下不抬高常驻计数。
+
+### 最新 commit
+
+`f1813a1`（UI k6 卡 / views.ui 提示 / 常驻口径）、`199c343`（console-smoke）；本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log -1`）。
