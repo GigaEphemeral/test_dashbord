@@ -158,7 +158,7 @@ function localTime(value) {
     </p>
 
     <div v-if="!nodes.length" class="empty" data-testid="topology-empty">
-      没有容器数据：先确认访问令牌（在「实验操作台」页填写）与 jl-chaos-controller 是否在线。
+      没有容器数据：先确认访问令牌（在任意分区顶部的输入框填写）与 jl-chaos-controller 是否在线。
     </div>
 
     <template v-else>
