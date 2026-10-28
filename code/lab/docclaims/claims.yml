@@ -444,3 +444,65 @@
     timeout_ms: 10000
   expect: true
   last_verified: 2026-10-27
+
+
+# ---------------------------------------------------------------------------
+# Stage2 B1 claims (2026-10-28): capability exists, so docs must not call it
+# missing. These are file-level samples of the ledger, operation contract,
+# metric catalog, start gate and the sidebar workspace.
+# ---------------------------------------------------------------------------
+
+- id: b1-ledger-operation-schema
+  doc:
+    - doc/process/Stage2/step-S2-B1-02-operation-contract.md
+  statement: "lab_ledger 的 Flyway V2 已提供 operation 幂等键与审计列"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/resources/db/ledger/V2__operation_contract.sql
+    pattern: 'idempotency_key'
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b1-operation-contract-service
+  doc:
+    - doc/process/Stage2/step-S2-B1-02-operation-contract.md
+  statement: "环境变更通过 OperationService 写入 lab_operation 并区分 PENDING_CONFIRMATION"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/OperationService.java
+    pattern: 'PENDING_CONFIRMATION'
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b1-metric-catalog-app-rps
+  doc:
+    - doc/process/Stage2/step-S2-B1-03-metrics-aggregation.md
+  statement: "指标聚合层的版本化目录登记了 http.rps，并以 seckill-app job 取数"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/resources/metrics/catalog.yml
+    pattern: 'key: http\.rps'
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b1-start-gate-monitoring-check
+  doc:
+    - doc/process/Stage2/step-S2-B1-04-run-precheck.md
+  statement: "run 前预检查包含 monitoring.ready 阻断项"
+  verify:
+    kind: file_contains
+    path: code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/precheck/RunPrecheckService.java
+    pattern: 'KEY_MONITORING'
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b1-sidebar-workspace
+  doc:
+    - doc/process/Stage2/step-S2-B1-05-console-workspace.md
+  statement: "控制台已重构为侧边导航工作区，含实验记录（台账）分区"
+  verify:
+    kind: file_contains
+    path: code/lab/dashboard/src/App.vue
+    pattern: "id: 'runs'"
+  expect: true
+  last_verified: 2026-10-28
