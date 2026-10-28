@@ -15,6 +15,11 @@ manufacturing the penetration, breakdown and avalanche traffic those defenses
 exist to catch). Both are **opt-in**: they change cluster or cache state and are
 not part of the bench baseline.
 
+Stage2 B2-01 adds `scenarios/manifest.json` as the **single source of truth for
+the scenario whitelist**: `run.sh` and `bench.sh` no longer keep their own case
+lists, and the manifest also records the required profile, env forwarding,
+whether a scenario writes business data and the documented parameter defaults.
+
 ## Layout
 
 ```
@@ -25,6 +30,8 @@ code/lab/
 │   ├── lib/flow.js            # login, product, order(+replay), seckill(+poll)
 │   ├── lib/chaos-schema.js    # pure scenario schema v1 validation (Node-runnable)
 │   ├── lib/chaos.js           # controller client, chaos_events counter, loader
+│   ├── lib/scenario-manifest.mjs  # manifest reader/validator (B2-01, plain node)
+│   ├── scenarios/manifest.json    # single source of truth: views/requires/env/params
 │   ├── scenarios/{smoke,load,stress,spike,soak}.js
 │   ├── scenarios/ha-failover.js  # product load + chaos timeline + teardown
 │   ├── scenarios/db-failover.js  # reads + idempotent writes + MySQL kill
@@ -33,6 +40,7 @@ code/lab/
 │   ├── test/chaos-schema.test.mjs  # node --test schema regression suite
 │   ├── test/db-failover-scenario.test.mjs
 │   ├── test/cache-lab-scenario.test.mjs
+│   ├── test/scenario-manifest.test.mjs  # views/env/params + script-level mock
 │   ├── run.sh                 # dockerized scenario runner (+ summary export)
 │   ├── reports/<run_id>/      # generated archives (gitignored)
 │   └── README.md
@@ -631,6 +639,10 @@ run manifest are deferred to Task 21/22 (chaos).
 
 ## Scenarios
 
+The table below is descriptive. The machine-checked whitelist — who may run a
+script and with which environment — is `scenarios/manifest.json`
+(see [Scenario whitelist](#scenario-whitelist-single-source-of-truth-stage2-b2-01)).
+
 | Script | Default profile | Traffic | Verdict |
 |---|---|---|---|
 | `smoke.js` | 1 VU, 1 iteration, capped by `SMOKE_DURATION=30s` | login → product → order → repeat key → seckill → poll | errors < 1%, checks > 99% |
@@ -676,6 +688,37 @@ BASE_URL=http://seckill-app-jdk8:8080 LOAD_DURATION=2m \
 `smoke` creates one order and one seckill attempt. `spike` may consume the
 remaining stock of product 20; after the acceptance spike product 20 is sold
 out and a smoke seckill legitimately returns 409.
+
+### Scenario whitelist (single source of truth, Stage2 B2-01)
+
+`scenarios/manifest.json` is the only place that decides which script may run
+where. `run.sh` and `bench.sh` read it through `lib/scenario-manifest.mjs`
+(plain node, no jq and no npm dependency); neither script keeps a case list.
+
+| View | Members | Consumer |
+|---|---|---|
+| `run` | 9 scripts: `smoke`, `load`, `stress`, `spike`, `soak`, `d7`, `ha-failover`, `db-failover`, `cache-lab` | `run.sh`; `requires.chaos` / `requires.cache` select the extra scenario mount and env group |
+| `bench` | 5 scripts: `smoke`, `load`, `stress`, `spike`, `soak` | `bench.sh` (preflight -> reset -> k6 -> verdict -> archive); `thresholdsExpected=false` for `stress`, which has no k6 threshold by design |
+| `ui` | 3 scripts: `smoke`, `load`, `spike` | Stage2 B2-02 executor / console whitelist |
+
+- `traffic` is `serviceOnly: true`: it is started by the compose `traffic`
+  service (profile `traffic`), never by `run.sh` or `bench.sh`, and is in no
+  view. `bash code/lab/k6/run.sh traffic` refuses with an explicit message.
+- `stress` and `soak` stay in `run` + `bench` (the CLI keeps them) but are
+  deliberately **not** in `ui`: neither has been run for its full design
+  duration (14m / 30m), and the confirmed decision moves them to the Future
+  list (design doc §7.1/§15). `ui` therefore means "verified and
+  UI-launchable", not "every CLI scenario".
+- `d7`, `ha-failover`, `db-failover` and `cache-lab` are not in `ui` either:
+  they are triggered from the instance/topology panels or from the CLI.
+- Every entry also records `requires.profile` (`dev` = the default 16-container
+  stack, plus `db-ha` / `traffic`), `writesData` (orders/stock or seeded rows),
+  `env` (accepted variable names) and `params` (documented defaults). The
+  defaults are pinned to `lib/config.js` and the scenario modules by
+  `test/scenario-manifest.test.mjs`, so a default cannot drift silently.
+- Override the manifest location with
+  `LAB_SCENARIOS_MANIFEST=/path/to/manifest.json`; both scripts default to
+  `code/lab/k6/scenarios/manifest.json`.
 
 ## Environment variables
 
@@ -753,6 +796,8 @@ Every runtime value is environment-overridable. Defaults below live in
 | `K6_NETWORK` | `jl-net` | Docker network; `host` switches the default base URL to `http://127.0.0.1:8080`. |
 | `K6_DIR` | `code/lab/k6` | Directory mounted at `/scripts`; must contain `scenarios/`. |
 | `SCENARIO` | `smoke` | Scenario selected when no positional argument is given. |
+| `LAB_SCENARIOS_MANIFEST` | `code/lab/k6/scenarios/manifest.json` | Scenario whitelist/defaults read by `run.sh` and `bench.sh`. |
+| `K6_MANIFEST_TOOL` | `code/lab/k6/lib/scenario-manifest.mjs` | Manifest reader used by `run.sh`. |
 | `PROM_URL` | `http://127.0.0.1:8080/prom` | Prometheus UI/API prefix used in the printed link. |
 | `K6_PROMETHEUS_RW_SERVER_URL` | `http://prometheus:9090/api/v1/write` | Remote-write endpoint. |
 | `K6_PROMETHEUS_RW_TREND_STATS` | `p(95),p(99),max` | Trend statistics exported by the remote-write output. |
@@ -764,6 +809,10 @@ Every runtime value is environment-overridable. Defaults below live in
 Validation is fail-fast: a malformed duration, non-integer VU/id, fraction
 outside `[0,1)`, or invalid status list stops k6 during init with a
 `[k6/config] ...` message.
+
+`run.sh` needs node: the accepted scenario names come from the manifest reader
+(view `run`), not from a case list. `bench.sh` accepts the manifest view
+`bench` and generates its usage line from the same file.
 
 ## Commands
 

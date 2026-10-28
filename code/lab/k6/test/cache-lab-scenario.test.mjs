@@ -191,11 +191,24 @@ test('teardown always resets the app to mode=off', () => {
   assert.equal(request.params.headers['X-Lab-Token'], 'test-token');
 });
 
-test('run.sh whitelists both opt-in scenarios and their env branches', () => {
+test('run.sh derives both opt-in branches from the manifest and keeps their env', () => {
   const script = fs.readFileSync(new URL('../run.sh', import.meta.url), 'utf8');
-  assert.match(script, /ha-failover\|db-failover\) IS_CHAOS=1/);
-  assert.match(script, /cache-lab\) IS_CACHE=1/);
-  assert.match(script, /expected smoke\|load\|stress\|spike\|soak\|d7\|ha-failover\|db-failover\|cache-lab/);
+  // B2-01: the hardcoded case list is gone; the manifest reader decides.
+  assert.match(script, /lib\/scenario-manifest\.mjs/);
+  assert.match(script, /check-run "\$SCENARIO"/);
+  assert.doesNotMatch(script, /ha-failover\|db-failover\) IS_CHAOS=1/);
+  assert.doesNotMatch(script, /cache-lab\) IS_CACHE=1/);
+  const manifest = JSON.parse(
+    fs.readFileSync(new URL('../scenarios/manifest.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(manifest.scenarios['ha-failover'].requires.chaos, true);
+  assert.equal(manifest.scenarios['db-failover'].requires.chaos, true);
+  assert.equal(manifest.scenarios['cache-lab'].requires.cache, true);
+  assert.ok(manifest.views.run.includes('ha-failover'));
+  assert.ok(manifest.views.run.includes('db-failover'));
+  assert.ok(manifest.views.run.includes('cache-lab'));
+  // The forwarding arrays stay static and are pinned against the manifest by
+  // scenario-manifest.test.mjs.
   assert.match(script, /CACHE_LAB_APP_URLS/);
   assert.match(script, /DB_FAILOVER_TARGET/);
 });
