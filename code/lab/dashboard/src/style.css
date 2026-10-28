@@ -2215,6 +2215,26 @@ h2 {
   text-transform: uppercase;
 }
 
+/* B2-04c: one shared note input for closing UNKNOWN operations; the row
+   buttons only appear on UNKNOWN rows so the table keeps its 7 columns. */
+.operation-close-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.operation-close-note {
+  min-width: 220px;
+}
+
+.operation-close-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .ledger-cell-json {
   max-height: 90px;
   overflow: auto;

@@ -17,6 +17,10 @@
  * assertions and folds the "container no longer RUNNING" condition into the
  * existing stop/COMPLETED check (67 -> 71).
  *
+ * B2-04c adds two assertions (72 -> 74): the active-fault row must show the
+ * frozen remaining TTL with the 已冻结 badge (the guide is paused first), and
+ * the Benchmark stop-all reply must render the traffic/threads/k6 sub-results.
+ *
  * Cleanup: traffic stop, guide reset, chaos stop-all, thread stop-all, cache
  * mode off and any RUNNING/UNKNOWN run this tool created. Ownership is proven
  * by the legacy scenario prefix or by the request-param note marker
@@ -445,6 +449,21 @@ async function main() {
       'bench: stop-all is available as the global clear action',
       await page.getByTestId('stop-all').isEnabled(),
     );
+    // B2-04b1/c: the reply names every layer, even when nothing was running.
+    // The card renders the synchronous StopAllResult (or the settled operation
+    // afterSummary) instead of an unqualified "all clear".
+    await page.getByTestId('stop-all').click();
+    await expectCondition('bench: stop-all summary reports traffic/threads/k6 sub-results', async () => {
+      const summary = page.getByTestId('stop-all-summary');
+      if ((await summary.count()) === 0) {
+        return { ok: false, detail: 'summary not rendered' };
+      }
+      const text = ((await summary.textContent()) || '').trim();
+      return {
+        ok: text.includes('traffic=') && text.includes('threads=') && text.includes('k6='),
+        detail: text,
+      };
+    });
 
     // B2-01b: the scenario catalog renders the manifest's views.ui only. The
     // card polls its own 5s sync tick through the same token/active props as
@@ -644,6 +663,27 @@ async function main() {
       return { ok: nodes === list.length, detail: `nodes=${nodes} api=${list.length}` };
     });
 
+    // B2-04a/c: hold the guide in PAUSED so the injected freeze is frozen with
+    // its full TTL. This is the only way to get paused=true on the action list
+    // without a second fault source, and stop-all still reverts while paused.
+    await gotoSection(page, 'wizard');
+    const pauseStatus = page.getByTestId('wizard-status');
+    await page.getByTestId('scenario-select').selectOption(SCENARIO_ID);
+    await page.getByTestId('scenario-start').click();
+    const pauseReady = await waitForCondition(async () => ({
+      ok: ((await pauseStatus.textContent()) || '').trim() === 'running'
+        && (await page.getByTestId('action-pause').isEnabled()),
+      detail: ((await pauseStatus.textContent()) || '').trim(),
+    }));
+    if (pauseReady.ok) {
+      await page.getByTestId('action-pause').click();
+      await waitForCondition(async () => ({
+        ok: ((await pauseStatus.textContent()) || '').trim() === 'paused',
+        detail: ((await pauseStatus.textContent()) || '').trim(),
+      }));
+    }
+    await gotoSection(page, 'faults');
+
     // One short container fault proves the badge wiring. freeze is a paused
     // JVM (harmless, auto-resumed by TTL even if stop-all were lost); stop-all
     // is the documented clear path and also restores app-2's health.
@@ -663,7 +703,30 @@ async function main() {
         const text = ((await badge.textContent()) || '').trim();
         return { ok: text.includes('freeze'), detail: text };
       });
+      // B2-04a: the row must carry the frozen remainder, not a dash, plus the
+      // explicit 已冻结 badge while the guide is parked on the pending step.
+      const pausedRow = await waitForCondition(async () => {
+        const rows = page.locator('[data-testid^="chaos-fault-row-"]');
+        if ((await rows.count()) === 0) {
+          return { ok: false, detail: 'no active fault row yet' };
+        }
+        const row = rows.first();
+        const remaining = ((await row.getByTestId('chaos-fault-remaining').textContent()) || '').trim();
+        const paused = await row.getByTestId('chaos-fault-paused').count();
+        return {
+          ok: paused === 1 && remaining !== '' && remaining !== '—' && remaining !== '不过期/一次性',
+          detail: `remaining=${remaining} paused=${paused}`,
+        };
+      });
+      check(
+        'faults: active action row shows remaining TTL and the frozen badge',
+        pausedRow.ok,
+        pausedRow.detail,
+      );
       await apiPost('/chaos/stop-all');
+      // stop-all keeps the paused flag by design; reset returns the guide (and
+      // the watchdog) to idle before the ledger section.
+      await apiPost('/lab/guide/reset');
       await refreshAnimation(page);
       const cleared = await waitForCondition(async () => {
         const badge = await page.getByTestId('topology-faults-jl-app-2').count();

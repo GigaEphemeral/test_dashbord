@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import MetricCards from './MetricCards.vue'
 import {
+  closeOperation,
   createRun,
   describeError,
   downloadK6Report,
@@ -100,6 +101,14 @@ const createForm = reactive({ scenario: '', paramsText: '{}' })
 const createBusy = ref(false)
 const createError = ref('')
 const createResult = ref(null)
+
+// B2-04c: UNKNOWN operations can only be closed by an operator verdict. The
+// optional note is shared by every row (one input, no new dependency); errors
+// stay inside the operations card instead of the global error banner.
+const closeNote = ref('')
+const closeBusy = ref('')
+const closeError = ref('')
+const closeInfo = ref('')
 
 // k6 execution card. Every failure stays local to this card: a 503 here must
 // never blank the run detail, pre-check, operations or metric windows.
@@ -316,6 +325,31 @@ async function loadOperations(runId) {
   }
 }
 
+/**
+ * Close an UNKNOWN operation with an operator verdict. Success refreshes both
+ * the operation list and the run detail (the fault timeline may gain rows);
+ * 400/404/409 stay in this card with their code from describeError.
+ */
+async function closeUnknown(item, status) {
+  if (!item?.operationId) return
+  closeBusy.value = `${item.operationId}:${status}`
+  closeError.value = ''
+  closeInfo.value = ''
+  try {
+    const note = closeNote.value.trim()
+    const updated = await closeOperation(props.token, item.operationId, status, note || undefined)
+    closeInfo.value = `operation ${item.operationId} 已关闭为 ${updated?.status || status}。`
+    const runId = selectedRunId.value
+    if (runId) {
+      await Promise.all([loadDetail(runId), loadOperations(runId)])
+    }
+  } catch (err) {
+    closeError.value = describeError(err)
+  } finally {
+    closeBusy.value = ''
+  }
+}
+
 async function loadPrecheck(runId) {
   precheckError.value = ''
   try {
@@ -477,6 +511,8 @@ async function selectRun(runId) {
   conflict.value = null
   pendingNote.value = ''
   actionError.value = ''
+  closeError.value = ''
+  closeInfo.value = ''
   operation.value = null
   resetK6()
   await Promise.all([
@@ -908,6 +944,18 @@ onBeforeUnmount(() => {
           暂无状态转移（DRAFT 创建不写 steps）；启动 run 后会记录 from→to / occurredAt / dwell / detail。
         </p>
 
+        <h3>故障事件</h3>
+        <ul v-if="detail?.faults?.length" class="fault-tags" data-testid="run-faults">
+          <li v-for="(fault, index) in detail.faults" :key="`${fault.operationId}-${index}`" :data-testid="`run-fault-${index}`">
+            <span class="hint">{{ timeLabel(fault.occurredAt) }}</span>
+            <span class="badge muted" data-testid="run-fault-source">{{ fault.source }}</span>
+            <code>{{ fault.target }}</code>
+            <span>{{ fault.event }}</span>
+            <code class="run-commit">{{ fault.operationId || '—' }}</code>
+          </li>
+        </ul>
+        <p v-else class="empty" data-testid="run-faults-empty">暂无故障事件</p>
+
         <h3>环境快照</h3>
         <div v-if="detail?.env?.length" class="ledger-table" data-testid="run-env">
           <div class="ledger-tr ledger-th">
@@ -1070,17 +1118,51 @@ onBeforeUnmount(() => {
           <button type="button" class="btn ghost" :disabled="!selectedRunId" @click="loadOperations(selectedRunId)">刷新操作</button>
         </div>
         <div v-if="operationsError" class="error-banner" role="alert" data-testid="run-operations-error">{{ operationsError }}</div>
+        <div class="operation-close-bar">
+          <label class="form-label">
+            关闭 note（可选，≤512）
+            <input
+              v-model="closeNote"
+              class="input operation-close-note"
+              maxlength="512"
+              data-testid="operation-close-note"
+              placeholder="人工核验说明，写入 lastError"
+            />
+          </label>
+          <span class="hint">仅 UNKNOWN 可关闭：RESTORED 或 FAILED，同终态幂等，异终态 409。</span>
+        </div>
+        <div v-if="closeError" class="error-banner" role="alert" data-testid="operation-close-error">{{ closeError }}</div>
+        <p v-if="closeInfo" class="notice" role="status" data-testid="operation-close-result">{{ closeInfo }}</p>
         <div v-if="operations.length" class="ledger-table" data-testid="run-operations">
           <div class="ledger-tr ledger-th">
-            <span>operationId</span><span>action</span><span>status</span><span>requestedAt</span><span>applied/restored</span><span>lastError</span>
+            <span>operationId</span><span>action</span><span>status</span><span>requestedAt</span><span>applied/restored</span><span>lastError</span><span>关闭 UNKNOWN</span>
           </div>
           <div v-for="item in operations" :key="item.operationId" class="ledger-tr" :data-testid="`run-operation-row-${item.operationId}`">
             <code>{{ item.operationId }}</code>
             <span>{{ item.action }}</span>
-            <span class="badge" :class="item.status === 'FAILED' ? 'down' : item.status === 'PENDING_CONFIRMATION' ? 'warn' : 'ok'">{{ item.status }}</span>
+            <span class="badge" :class="item.status === 'FAILED' ? 'down' : item.status === 'UNKNOWN' ? 'run-unknown' : item.status === 'PENDING_CONFIRMATION' ? 'warn' : 'ok'">{{ item.status }}</span>
             <span>{{ timeLabel(item.requestedAt) }}</span>
             <span>{{ timeLabel(item.appliedAt || item.restoredAt) }}</span>
             <span>{{ item.lastError || '—' }}</span>
+            <span class="operation-close-actions">
+              <template v-if="item.status === 'UNKNOWN'">
+                <button
+                  type="button"
+                  class="btn ghost"
+                  :data-testid="`operation-close-restored-${item.operationId}`"
+                  :disabled="Boolean(closeBusy)"
+                  @click="closeUnknown(item, 'RESTORED')"
+                >{{ closeBusy === `${item.operationId}:RESTORED` ? '提交中…' : '关闭→RESTORED' }}</button>
+                <button
+                  type="button"
+                  class="btn ghost danger"
+                  :data-testid="`operation-close-failed-${item.operationId}`"
+                  :disabled="Boolean(closeBusy)"
+                  @click="closeUnknown(item, 'FAILED')"
+                >{{ closeBusy === `${item.operationId}:FAILED` ? '提交中…' : '关闭→FAILED' }}</button>
+              </template>
+              <span v-else class="hint">—</span>
+            </span>
           </div>
         </div>
         <p v-else class="hint" data-testid="run-operations-empty">该 run 还没有操作记录。</p>

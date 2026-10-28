@@ -280,3 +280,70 @@ Body：`{"status":"RESTORED"|"FAILED","note":"..."}`
 
 - `44e8fa9` `feat(B2-04): unify toxiproxy and thread faults under the operation contract`
 - docs（本文件）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
+
+
+## 补充：B2-04c 控制台故障闭环展示与 UNKNOWN 操作关闭
+
+> 范围：只改 `code/lab/dashboard/**` 与 `code/lab/scripts/console-smoke.mjs`；不跑真机，不改 Java/compose/claims/k6。基线 `dcfd83`，分支 `feature/stage2-workbench` 的隔离 worktree。
+
+### 1. 动作暂停 / 剩余 TTL（`ChaosActions.vue`，FaultsPanel 内）
+
+- 数据仍来自 `GET /chaos/actions` 的现有 `faults` 同步（`App.vue` 每 5s 的 `syncEnvironment`），未新增轮询通道。
+- 每行字段：`action · target · status`、剩余 TTL 徽标、暂停徽标、`expiresAt` 到期时间（有则显示）。
+- `remainingMs` 格式化：`<1s` → `800ms`；`<10s` → `1.2s`；`<60s` → `45s`；`>=60s` → `2m`（10 分钟内保留一位小数，如 `1.5m`）。
+- `paused=true` → 额外渲染 `已冻结` warn 徽标；倒计时读冻结值，不自行估算。
+- `remainingMs=null` 且状态非终态 → `不过期/一次性`；`REVERTED/FAILED` → 只显示状态（不再显示倒计时）。
+- testid：行 `chaos-fault-row-<index>`、TTL `chaos-fault-remaining`、暂停徽标 `chaos-fault-paused`；原有 `chaos-active-faults` 保留。
+
+### 2. stop-all 结果汇总（`BenchmarkPanel.vue`）
+
+- 「清除全部故障」不再上抛事件，改由卡片自己调用 `stopAllFaults`（`postJsonDetailed`，保留 HTTP 202）。
+- 202 → 复用 operation 轮询（`GET /lab/operations/{id}`，1s/30s 超时）到终态，再读 `afterSummary`；200 → 直接读 `StopAllResult`。两条路径共用同一渲染。
+- 一行汇总 `data-testid="stop-all-summary"`：
+  - 容器：`已恢复 reverted / 失败 failed / 延迟 pending`；failed、pending 非 0 用 warn 徽标，不渲染「全部成功」。
+  - toxiproxy：`toxiproxy.status`（reset/partial/failed/disabled/not-configured）+ `proxiesReset/proxiesTotal`；partial/failed 用 warn。
+  - `traffic=stopped|not-running|failed`：stopped 绿、failed warn、not-running muted。
+  - `threads=<instance>:ok|failed`（空格分隔；无实例显示 `未配置实例`），任一非 ok 用 warn。
+  - `k6=stop N/clean N/fail N`，fail>0 用 warn。
+- 子项 testid：`stop-all-containers-failed`、`stop-all-containers-pending`、`stop-all-toxiproxy`、`stop-all-traffic`、`stop-all-threads`、`stop-all-k6`；pending 提示 `stop-all-pending`，错误 `stop-all-error`（只在卡片内，不触发全局错误/DEGRADED）。
+
+### 3. run 详情故障时间线（`RunLedger.vue`）
+
+- `GET /lab/runs/{runId}` 的 `faults` 独立成「故障事件」块，放在「状态时间线」之后、「环境快照」之前，不混入 `steps` 状态迁移。
+- 每行显示 `occurredAt`、`source`（container/toxiproxy/thread）、`target`、`event`、`operationId`。
+- testid：容器 `run-faults`，行 `run-fault-<index>`；空数组显示 `run-faults-empty`「暂无故障事件」。
+
+### 4. UNKNOWN 操作关闭（`RunLedger.vue` 操作记录卡）
+
+- 仅 `status=UNKNOWN` 行渲染两个按钮：`operation-close-restored-<id>`、`operation-close-failed-<id>`；其它状态显示 `—`。
+- 共享可选 note 输入 `operation-close-note`（`maxlength=512`），请求体 `{status, note?}`；`api.js` 新增 `closeOperation(token, operationId, status, note)`。
+- 成功：卡内 `operation-close-result` 提示并并行刷新 run 详情 + 操作列表。
+- 400/404/409（含 40905 异终态）：`describeError` 写入卡内 `operation-close-error`，不弹全局错误。
+- 表格新增第 7 列「关闭 UNKNOWN」，与既有 7 列网格对齐；样式 `.operation-close-bar / -note / -actions`。
+
+### 5. console-smoke（72 → 74，未跑真机）
+
+- Benchmark：原有 stop-all 可用性断言后点击按钮，等待汇总含 `traffic=`、`threads=`、`k6=`（1 条）。
+- Faults：注入 freeze 前把场景向导置为 PAUSED（重启 quick-failover → pause），断言活动动作行 TTL 非 `—/不过期/一次性` 且存在 `已冻结` 徽标（1 条）；stop-all 后调用 `/lab/guide/reset` 解除暂停。
+- 未新增任何依赖 UNKNOWN 的断言（真机由主会话做）。
+
+### 6. 验证
+
+| 命令 | 结果 |
+|---|---|
+| `cd code/lab/dashboard && npm ci` | `added 31 packages` |
+| `npm run build` | `vite v5.4.11`，28 modules，`✓ built in 2.59s`（dist 产物未入库） |
+| `node --check code/lab/scripts/console-smoke.mjs` | 通过 |
+
+### 7. 未验证项
+
+- **真机 console-smoke 未运行**：PAUSED 编排、`stop-all-summary` 文案与 74 条计数需主会话在真栈复核。
+- **真机 A09/A10/A12/A29**：故障事件时间线、暂停/剩余 TTL、UNKNOWN 关闭、stop-all 四层汇总均未做真机验收。
+- **202 pending 路径**：仅在代码层复用 operation 轮询，未用真 MySQL 触发 stop-all 同步预算超时。
+- **UNKNOWN 关闭按钮**：无真机 UNKNOWN 行可点，409/404/400 分支只由 `describeError` 静态保证。
+
+### 最新 commit
+
+- `cdc2a45` `feat(B2-04): show fault liveness, stop-all layers and UNKNOWN closure in console`
+- `a94110b` `test(B2-04c): assert frozen TTL row and stop-all layer summary in console smoke`
+- 本文件（补充：B2-04c）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
