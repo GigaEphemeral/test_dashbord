@@ -260,3 +260,111 @@ controller 在容器内运行，`/app/k6` 只是 bind 挂载点；Docker daemon 
 ## 最新 commit
 
 `5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（六个新键 + `jl-k6-reports` 卷）、`db3b31c`（summary 路径约束）、本文件随 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -5`）。
+
+
+# 补充：B2-02b-2a（run 生命周期接线 + 退出/超时看门狗 + 孤儿清理）
+
+> 任务/步骤：Stage2 **B2-02b-2a k6 执行层接入 run 生命周期**
+> 分支：`feature/stage2-workbench`（隔离 worktree `agent-general-purpose-2e156591`，基线 `2644b93`）
+> 隔离自证：`git rev-parse --show-toplevel` → `D:/000CODE/JAVA-LEARN/.qoder/worktrees/agent-general-purpose-2e156591`，不等于主工作树 `D:/000CODE/JAVA-LEARN`
+> 最新代码提交：`60ea3a6`（hook 契约 / 真实 hook / watchdog / planner 重载 / 单测）、`045d650`（四个配置键三处外置）；本文件随 `docs(B2-02)` 提交落盘
+> 测试：`mvn -f code/pom.xml -pl services/chaos-controller -am test` → **580 tests, 0 failures, 0 errors, 0 skipped；BUILD SUCCESS**（基线 560，本步 +20：`BenchRunLifecycleHookTest` 6、`BenchRunWatchdogTest` 11、`RunLifecycleIT` +3）
+> 接线：`bash code/lab/scripts/test-chaos-env-wiring.sh` → **90 PASS / 0 FAIL**，汇总行 `CHAOS ENV WIRING PASSED (8 chaos keys + 82 ledger/metrics/precheck/bench keys)`（B2-02b-1 后为 86，本步 +4）
+> 未执行任何 docker/compose 生命周期命令（无 build/up/down/restart/rm/pull），未启动真实 k6，未改 UI / console-smoke；真机验收留给 B2-02b-2b 与主会话
+
+本步把 B2-02b-1 的容器执行层接到 run 状态机：启动时真正创建 k6 容器，操作员停止时停容器，自然退出/非零退出/超时由看门狗收口，控制器重启后的孤儿 k6 容器在台账就绪后清理。**不做 UI、不加端点、不跑真机。**
+
+## 1. Hook 契约与 afterSummary
+
+`RunLifecycleHook` 的两个方法都改为返回 `LaunchResult`（`Map<String,Object> details()` + `static none()`；默认实现仍返回空结果，`RunLifecycleHook.none()` 行为不变）：
+
+| 方法 | 调用位置 | 返回 details（真实 hook） |
+|---|---|---|
+| `LaunchResult launch(runId)` | `RunLifecycleService.doStart`：READY 之后、RUNNING 之前 | `k6Container`、`k6ContainerId`（非空时）、`k6Scenario`、`k6ReportPath`、`k6Status` |
+| `LaunchResult stop(runId)` | `doStop`：RUNNING→STOPPING 之后；`closeFailedStart`：READY/VALIDATING 收尾为 FAILED 之前 | `k6Stopped`、`k6Status`、`k6Container`、`k6ExitCode`（非空时）、`k6ReportAvailable`；状态读取失败时附 `k6StateError` |
+
+- start operation 的 afterSummary 在原有 `runStatus/lockKey/lockExpiresAt/precheckVerdict/precheckWarnings` 之后合并 launch details。
+- stop operation 的 afterSummary 先合并 stop details；`hook.stop` 抛异常时写 `k6StopError`（`AuditSanitizer.describe`），**仍完成 STOPPING→COMPLETED 并释放锁**，不把操作员关闭 run 的请求卡在 RUNNING。
+- `closeFailedStart` 在 run 处于 READY/VALIDATING 时先 best-effort `hook.stop` 再写 FAILED，防止“容器已创建、READY→RUNNING 失败”留下运行中的 k6；若竞争路径已把 run 推进到 RUNNING，则不动容器也不抢锁。
+- 真实 hook `BenchRunLifecycleHook` 只依赖 repository / catalog / planner / resolver / executor / ObjectMapper：读 `lab_run.scenario` 与 `lab_run_param` 的 `request` 组（缺失按空 Map，JSON 损坏按 503 语义），`resolver.resolve()` 得到宿主 k6 目录，再走新增重载 `planner.plan(snapshot, runId, scenario, params, hostDir)`；planner 原有校验顺序与拒绝语义不变，空 hostDir 仍是 503/50303。`BenchUnavailableException` 会补上 run/scenario/hostDir 上下文后原类型抛出；`BenchLaunchRejectedException` 原样向上抛，由既有 FAILED + 释放锁路径收口。
+- Bean 接线：`LedgerConfig.runLifecycleHook()` 不再是 `none()`，改为注入 `BenchRunLifecycleHook`；依赖方向只有 hook → executor，不存在回环。
+
+## 2. 状态迁移路径（为何不经 VERIFYING）
+
+看门狗与操作员 stop 使用同一套边：
+
+| 判定 | 迁移 | stepKey | 锁 |
+|---|---|---|---|
+| 容器 `EXITED` 且 exitCode == 0 | RUNNING→STOPPING→COMPLETED | `k6-exit` → `complete` | 第二跳成功且 ledger 已写后释放 |
+| 容器 `EXITED` 且 exitCode != 0（含 exitCode 缺失） | RUNNING→FAILED | `k6-exit-failed` | 写成功后释放 |
+| 容器 `RUNNING` 且超过截止时间 | RUNNING→FAILED | `k6-timeout` | 写成功后释放 |
+| 容器 `ABSENT` | 不迁移 | — | 不动（legacy/契约先行 run 无容器，不能误杀） |
+| 其它状态（CREATED/DEAD/…） | 不迁移，仅 debug 日志 | — | 不动 |
+
+RUNNING→COMPLETED 不是合法边，因此自然结束必须经过 STOPPING；VERIFYING 留给 B3 的指标/质量判定，本步不在 VERIFYING 写任何东西。看门狗不读取也不改写 operation 记录：状态迁移与锁仍是 `LedgerWriter` + `EnvLockService` 的唯一职责。
+
+## 3. 超时公式
+
+```
+requestedSeconds = Σ value(k)
+  k ∈ scenario params 的键，且 k 以 _DURATION / _RAMP_UP / _RAMP_DOWN 结尾
+  value = manifest 默认值被 lab_run_param(request) 覆盖后的值
+  解析复用 BenchLaunchPlanner.parseDurationSeconds（k6 duration 语法）
+无法计算（场景未知/值为空/语法非法/总和 <= 0）→ max-duration-seconds
+
+deadline = (容器 startedAt，缺失时用 lab_run.started_at)
+         + ceil(requestedSeconds + timeout-grace-seconds) 秒
+clock.instant() > deadline → 超时
+```
+
+- load：`LOAD_DURATION` 本身就是总时长（默认 600s）。
+- spike：`SPIKE_BASELINE_DURATION + SPIKE_RAMP_UP + SPIKE_DURATION + SPIKE_RAMP_DOWN`（默认 30+10+60+10 = 110s）。
+- smoke：`SMOKE_DURATION`（默认 30s）。
+- 无 startedAt 时不猜截止时间（不超时），等容器退出或操作员停止。
+
+超时路径的顺序是**先做 RUNNING→FAILED 的 compare-and-set，成功后才 stop+cleanup**。这样若操作员 stop/另一 tick 已推进该 run，本 tick 直接放弃，绝不会先停掉一个已被别人接管的容器；若写入被 ledger 暂存（返回 false），容器也不会被清理，下一 tick 还能重试。迁移失败时容器留给孤儿清理兜底。
+
+## 4. 看门狗调度与孤儿清理时机
+
+- 调度：`BenchExecConfig` 创建 `BenchRunWatchdog`（`@Bean(destroyMethod="stop")`），`start()` 自建单线程 daemon `ScheduledExecutorService`，首 tick 立即执行、之后 `watchdog-interval-seconds` 固定延迟；**没有新增 `@EnableScheduling` / `@Scheduled`**。单测只调 `tick()`，不启线程。
+- tick 先检查 ledger 就绪（`lab.ledger.enabled && LedgerBootstrap.isReady()`）；未就绪直接返回并 debug 日志，不读 run 表、不扫孤儿，下一 tick 再试。
+- 每个 RUNNING run 独立 try/catch：一个 run 的 Docker/台账异常不会终止整轮，更不会让调度线程死掉。
+- 孤儿清理：**台账就绪后的首个成功 tick**（等价于 ApplicationReadyEvent 语义，首 tick 立即执行，未就绪自然顺延）执行一次；`lab.bench.exec.orphan-cleanup-enabled=false` 时跳过。列出 `lab.role=k6` 容器，对每个 `lab.run-id`：run 不存在或状态不是 RUNNING → `stop` + `remove`；run 仍 RUNNING → 保留。单个容器失败（含 ledger 查询失败）不置完成标记，下一 tick 重试；整轮成功（含 0 个容器）后置 `orphanSweepDone`，不再重复扫描。
+- **first-verdict-wins**：`LedgerWriter.transition` 抛 `LedgerConflictException` 时记 info 并跳过，不重试、不改锁；返回 false（ledger 暂存）时保留锁，下一 tick 重试。
+
+## 5. 新增配置（三处默认一致）
+
+| yml 键（`lab.bench.exec.*`） | env 键 | 默认 | 用途 |
+|---|---|---|---|
+| `watchdog-enabled` | `LAB_BENCH_EXEC_WATCHDOG_ENABLED` | `true` | 是否启动看门狗调度线程 |
+| `watchdog-interval-seconds` | `LAB_BENCH_EXEC_WATCHDOG_INTERVAL_SECONDS` | `5` | tick 间隔（秒，最小 1） |
+| `timeout-grace-seconds` | `LAB_BENCH_EXEC_TIMEOUT_GRACE_SECONDS` | `30` | 请求时长之外的宽限 |
+| `orphan-cleanup-enabled` | `LAB_BENCH_EXEC_ORPHAN_CLEANUP_ENABLED` | `true` | 是否在首个成功 tick 清理孤儿 k6 容器 |
+
+四个键同时写入 `application.yml` 占位、`compose.base.yml` 转发、`.env.example` 文档；`test-chaos-env-wiring.sh` 的 `LAB_BENCH_*` 自动发现已覆盖，无需改脚本。三个配置文件保持 CRLF，文档保持 LF。
+
+## 6. 单测
+
+- `BenchRunLifecycleHookTest`（6，无 Spring/DB/Docker）：launch 走真实 resolver+planner，断言 planner 收到宿主目录、`LOAD_DURATION` 被 request 参数覆盖、details 各键；request 组缺失回落 manifest 默认；planner 拒绝（stress CLI-only）原样上抛且不启动容器；宿主目录不可解析时 503 消息含 run/scenario/hostDir；stop 对 ABSENT 幂等；stop 后状态读取失败仍保留 `k6Stopped` 并给 `k6StateError`。
+- `BenchRunWatchdogTest`（11，mock 台账/执行器 + 固定时钟）：exit 0 → `k6-exit`+`complete`+释放锁；exit 2 → `k6-exit-failed`+释放锁且不 stop；超时 → `k6-timeout`+stop+cleanup+释放锁；未到期不动；`LedgerConflictException` 跳过且不释放锁；transition false 不释放锁、下一 tick 重试成功；ABSENT 跳过；孤儿清理只 remove 非 RUNNING/不存在 run 的容器且只扫一轮；ledger 未就绪延迟到下一 tick；duration 求和覆盖 load 600s、spike 110s、spike 覆盖 170s、smoke 30s/45s、未知场景与非法值回落。
+- `RunLifecycleIT` +3（真实 MySQL）：launch details 进入 start afterSummary；stop details 进入 stop afterSummary；stop 抛异常时 afterSummary 有 `k6StopError` 且 run 仍 COMPLETED/锁已释放；并强化既有失败 launch 用例，断言收尾会调用 `hook.stop`。
+
+## 7. 未做项
+
+- UI 启动/停止/日志/报告入口、`console-smoke.mjs` 与 console 基线核对：B2-02b-2b。
+- A01（UI 启动 load 全程无终端）与 A20（停止/超时清理）真机验收：B2-02b-2b 或主会话。
+- 真容器退出码、真实超时触发、真实孤儿容器清理、命名卷写入与报告读取均未在真机验证；本步只跑单测与静态接线，未执行任何 docker/compose 命令。
+- 控制器重启恢复（RUNNING→UNKNOWN）后的容器处理依赖孤儿清理；未新增“UNKNOWN run 自动关闭”逻辑（沿用 B1 既有操作员路径）。
+
+## 最新 commit
+
+`60ea3a6`（hook 契约 / 真实 hook / watchdog / planner 重载 / 单测）、`045d650`（四个配置键三处外置），本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -4`）。
+
+
+## 补充：STOPPING 卡死修正（主会话抽查，2026-10-28）
+
+- **问题**：自然结束走 `RUNNING→STOPPING→COMPLETED` 两跳。若第二跳遇到台账暂存（`transition` 返回 false）或停容器 hook 后进程异常，run 会停在 STOPPING 且继续持有写 run 锁；原看门狗只扫 RUNNING，下一 tick 不会重试，只能等控制器重启标 UNKNOWN。
+- **修正**：看门狗新增 STOPPING 扫描。run 在 STOPPING 超过 `LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS`（默认 30s）后，若 k6 容器 ABSENT/EXITED，则 `STOPPING→COMPLETED`（step `complete`，detail 记 `settledFromStopping`/`stoppingAgeSeconds`）并释放锁；容器仍 RUNNING/CREATED 时留给操作员 stop，不抢判。宽限期用于避开正常 stop 窗口（STOPPING 先于停容器写入）。`settle()` 增加 status 守卫，STOPPING 只走新路径。
+- **配置**：`LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS` 三处同默认 30（yml/compose/.env.example），env 接线自动发现。
+- **测试**：`BenchRunWatchdogTest` 新增 4 条（STOPPING 过宽限完成、宽限内不动、容器仍活不动、第二跳暂存后下一 tick 补完成）；全模块 **584 / 0 / 0 / 0**，env 接线 **91 PASS**。
+- **仍未验证**：真实台账暂存窗口下的 STOPPING 恢复（真机 A20 会覆盖常规 stop/超时路径，台账故障注入不在本步）。

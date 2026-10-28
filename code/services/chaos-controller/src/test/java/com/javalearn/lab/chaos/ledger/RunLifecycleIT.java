@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -200,12 +201,13 @@ class RunLifecycleIT {
                         clock), new ObjectMapper(), clock), envLock, operations, passGate(),
                 new RunLifecycleHook() {
                     @Override
-                    public void launch(String runId) {
+                    public RunLifecycleHook.LaunchResult launch(String runId) {
                         try {
                             Thread.sleep(300);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
+                        return RunLifecycleHook.LaunchResult.none();
                     }
                 }, clock);
 
@@ -221,13 +223,20 @@ class RunLifecycleIT {
 
     @Test
     void aFailedLaunchClosesTheRunAsFailedAndReleasesTheLock() {
+        AtomicInteger stopCalls = new AtomicInteger();
         RunLifecycleService failing = new RunLifecycleService(properties, readyBootstrap(), repository,
                 new LedgerWriter(repository, new LedgerStash(properties, repository, new ObjectMapper(),
                         clock), new ObjectMapper(), clock), envLock, operations, passGate(),
                 new RunLifecycleHook() {
                     @Override
-                    public void launch(String runId) {
+                    public RunLifecycleHook.LaunchResult launch(String runId) {
                         throw new IllegalStateException("k6 launcher is unavailable");
+                    }
+
+                    @Override
+                    public RunLifecycleHook.LaunchResult stop(String runId) {
+                        stopCalls.incrementAndGet();
+                        return RunLifecycleHook.LaunchResult.none();
                     }
                 }, clock);
 
@@ -237,10 +246,83 @@ class RunLifecycleIT {
 
         assertThat(runStatus(RUN_A)).isEqualTo(RunStatus.FAILED);
         assertThat(repository.listEnvLocks()).isEmpty();
+        // The half-started container is stopped before the run is failed.
+        assertThat(stopCalls).hasValue(1);
         OperationRecord failed = repository.listOperations(RUN_A, OperationStatus.FAILED, 10, 0).get(0);
         assertThat(failed.lastError()).contains("k6 launcher");
         // The environment is free for the next run.
         assertThat(envLock.acquire(RUN_B).runId()).isEqualTo(RUN_B);
+    }
+
+    @Test
+    void launchDetailsAreMergedIntoTheStartSummary() {
+        RunLifecycleService detailed = new RunLifecycleService(properties, readyBootstrap(),
+                repository, new LedgerWriter(repository, new LedgerStash(properties, repository,
+                new ObjectMapper(), clock), new ObjectMapper(), clock), envLock, operations,
+                passGate(), new RunLifecycleHook() {
+                    @Override
+                    public RunLifecycleHook.LaunchResult launch(String runId) {
+                        return new RunLifecycleHook.LaunchResult(Map.of(
+                                "k6Container", "jl-k6-" + runId,
+                                "k6Scenario", "smoke",
+                                "k6ReportPath", "/reports/" + runId + "/summary.json"));
+                    }
+                }, clock);
+
+        OperationExecution execution = detailed.start(RUN_A, null);
+
+        var after = summary(execution.operation().afterSummaryJson());
+        assertThat(after.path("k6Container").asText()).isEqualTo("jl-k6-" + RUN_A);
+        assertThat(after.path("k6Scenario").asText()).isEqualTo("smoke");
+        assertThat(after.path("k6ReportPath").asText())
+                .isEqualTo("/reports/" + RUN_A + "/summary.json");
+        assertThat(after.path("runStatus").asText()).isEqualTo("RUNNING");
+    }
+
+    @Test
+    void stopDetailsAreMergedIntoTheStopSummary() {
+        RunLifecycleService detailed = new RunLifecycleService(properties, readyBootstrap(),
+                repository, new LedgerWriter(repository, new LedgerStash(properties, repository,
+                new ObjectMapper(), clock), new ObjectMapper(), clock), envLock, operations,
+                passGate(), new RunLifecycleHook() {
+                    @Override
+                    public RunLifecycleHook.LaunchResult stop(String runId) {
+                        return new RunLifecycleHook.LaunchResult(Map.of(
+                                "k6Stopped", true, "k6ExitCode", 143));
+                    }
+                }, clock);
+        detailed.start(RUN_A, null);
+
+        OperationExecution stopped = detailed.stop(RUN_A, null);
+
+        var after = summary(stopped.operation().afterSummaryJson());
+        assertThat(after.path("k6Stopped").asBoolean()).isTrue();
+        assertThat(after.path("k6ExitCode").asInt()).isEqualTo(143);
+        assertThat(after.path("runStatus").asText()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void stopDetailsAreMergedAndAFailedStopStillCompletes() {
+        RunLifecycleService detailed = new RunLifecycleService(properties, readyBootstrap(),
+                repository, new LedgerWriter(repository, new LedgerStash(properties, repository,
+                new ObjectMapper(), clock), new ObjectMapper(), clock), envLock, operations,
+                passGate(), new RunLifecycleHook() {
+                    @Override
+                    public RunLifecycleHook.LaunchResult stop(String runId) {
+                        throw new IllegalStateException("docker daemon is gone");
+                    }
+                }, clock);
+        detailed.start(RUN_A, null);
+
+        OperationExecution stopped = detailed.stop(RUN_A, null);
+
+        assertThat(stopped.operation().status()).isEqualTo(OperationStatus.APPLIED);
+        var after = summary(stopped.operation().afterSummaryJson());
+        assertThat(after.path("runStatus").asText()).isEqualTo("COMPLETED");
+        assertThat(after.path("k6StopError").asText()).contains("docker daemon is gone");
+        assertThat(after.path("lockReleased").asBoolean()).isTrue();
+        assertThat(runStatus(RUN_A)).isEqualTo(RunStatus.COMPLETED);
+        assertThat(repository.listEnvLocks()).isEmpty();
     }
 
     @Test

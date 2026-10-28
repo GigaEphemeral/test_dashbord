@@ -190,6 +190,15 @@ lab:
       logs-max-bytes: ${LAB_BENCH_EXEC_LOGS_MAX_BYTES:65536}
       logs-max-tail: ${LAB_BENCH_EXEC_LOGS_MAX_TAIL:1000}
       stop-grace-seconds: ${LAB_BENCH_EXEC_STOP_GRACE_SECONDS:10}
+      # Stage2 B2-02b-2a: exit/timeout watchdog and startup orphan cleanup.
+      # The watchdog settles EXITED runs and fails overrun runs; the first
+      # tick after ledger readiness removes lab.role=k6 containers whose run
+      # is missing or no longer RUNNING. Same defaults in compose/.env.example.
+      watchdog-enabled: ${LAB_BENCH_EXEC_WATCHDOG_ENABLED:true}
+      watchdog-interval-seconds: ${LAB_BENCH_EXEC_WATCHDOG_INTERVAL_SECONDS:5}
+      timeout-grace-seconds: ${LAB_BENCH_EXEC_TIMEOUT_GRACE_SECONDS:30}
+      stopping-settle-grace-seconds: ${LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS:30}
+      orphan-cleanup-enabled: ${LAB_BENCH_EXEC_ORPHAN_CLEANUP_ENABLED:true}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.

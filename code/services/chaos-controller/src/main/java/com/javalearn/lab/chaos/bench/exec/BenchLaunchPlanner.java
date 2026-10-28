@@ -89,6 +89,22 @@ public class BenchLaunchPlanner {
      */
     public BenchLaunchPlan plan(Snapshot snapshot, String runId, String scenarioName,
                                 Map<String, Object> params) {
+        return plan(snapshot, runId, scenarioName, params, properties.getScriptsHostDir());
+    }
+
+    /**
+     * Plans with an already resolved host scripts directory (B2-02b-2a). The
+     * run lifecycle resolves the real host path first
+     * ({@link BenchScriptsHostDirResolver}) and passes it here, so a launch
+     * never depends on {@code scripts-host-dir} being filled in by an operator.
+     *
+     * <p>Validation semantics are unchanged: the scenario whitelist, run id and
+     * parameter gates run in the same order, and a blank host directory is still
+     * {@link BenchUnavailableException} (503/50303) - this overload only supplies
+     * the value the resolver already found.</p>
+     */
+    public BenchLaunchPlan plan(Snapshot snapshot, String runId, String scenarioName,
+                                Map<String, Object> params, String scriptsHostDir) {
         if (snapshot == null) {
             throw new BenchLaunchRejectedException("scenario snapshot is required to plan a k6 launch");
         }
@@ -97,8 +113,8 @@ public class BenchLaunchPlanner {
         String safeRunId = sanitizeRunId(runId);
         Map<String, Object> effective = effectiveParams(scenario, definition, params);
 
-        String hostDir = properties.getScriptsHostDir();
-        if (hostDir == null || hostDir.isBlank()) {
+        String hostDir = scriptsHostDir == null ? "" : scriptsHostDir.trim();
+        if (hostDir.isEmpty()) {
             throw new BenchUnavailableException("lab.bench.exec.scripts-host-dir is blank: the host "
                     + "directory mounted at " + properties.getScriptsMount() + " is unknown, so the "
                     + "plan is refused instead of mounting an empty source; set env "
@@ -356,7 +372,7 @@ public class BenchLaunchPlanner {
         return null;
     }
 
-    private static boolean isDurationKey(String key) {
+    static boolean isDurationKey(String key) {
         return key.endsWith("_DURATION") || key.endsWith("_RAMP_UP") || key.endsWith("_RAMP_DOWN");
     }
 

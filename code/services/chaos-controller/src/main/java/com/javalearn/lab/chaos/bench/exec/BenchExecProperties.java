@@ -49,6 +49,21 @@ public class BenchExecProperties {
     private int logsMaxTail = 1000;
     /** Grace period for a manual k6 container stop (seconds). */
     private int stopGraceSeconds = 10;
+    /** Stage2 B2-02b-2a: run the exit/timeout watchdog scheduler. */
+    private boolean watchdogEnabled = true;
+    /** Seconds between two watchdog ticks. */
+    private int watchdogIntervalSeconds = 5;
+    /** Extra time a k6 run may overrun its requested duration before FAILED. */
+    private int timeoutGraceSeconds = 30;
+    /**
+     * How long a run may stay in STOPPING before the watchdog closes it. The
+     * grace keeps the watchdog out of the operator's stop window (STOPPING is
+     * written before the container stop); a stashed second transition or a
+     * crashed stop is recovered once the grace expires.
+     */
+    private int stoppingSettleGraceSeconds = 30;
+    /** Remove lab.role=k6 containers without a live RUNNING run at startup. */
+    private boolean orphanCleanupEnabled = true;
 
     public String getK6Image() {
         return k6Image;
@@ -192,5 +207,45 @@ public class BenchExecProperties {
 
     public void setStopGraceSeconds(int stopGraceSeconds) {
         this.stopGraceSeconds = stopGraceSeconds;
+    }
+
+    public boolean isWatchdogEnabled() {
+        return watchdogEnabled;
+    }
+
+    public void setWatchdogEnabled(boolean watchdogEnabled) {
+        this.watchdogEnabled = watchdogEnabled;
+    }
+
+    public int getWatchdogIntervalSeconds() {
+        return watchdogIntervalSeconds;
+    }
+
+    public void setWatchdogIntervalSeconds(int watchdogIntervalSeconds) {
+        this.watchdogIntervalSeconds = watchdogIntervalSeconds;
+    }
+
+    public int getTimeoutGraceSeconds() {
+        return timeoutGraceSeconds;
+    }
+
+    public void setTimeoutGraceSeconds(int timeoutGraceSeconds) {
+        this.timeoutGraceSeconds = timeoutGraceSeconds;
+    }
+
+    public int getStoppingSettleGraceSeconds() {
+        return stoppingSettleGraceSeconds;
+    }
+
+    public void setStoppingSettleGraceSeconds(int stoppingSettleGraceSeconds) {
+        this.stoppingSettleGraceSeconds = stoppingSettleGraceSeconds;
+    }
+
+    public boolean isOrphanCleanupEnabled() {
+        return orphanCleanupEnabled;
+    }
+
+    public void setOrphanCleanupEnabled(boolean orphanCleanupEnabled) {
+        this.orphanCleanupEnabled = orphanCleanupEnabled;
     }
 }
