@@ -19,6 +19,10 @@ Stage2 B2-01 adds `scenarios/manifest.json` as the **single source of truth for
 the scenario whitelist**: `run.sh` and `bench.sh` no longer keep their own case
 lists, and the manifest also records the required profile, env forwarding,
 whether a scenario writes business data and the documented parameter defaults.
+B2-01b makes the controller read the same file through
+`LAB_BENCH_SCENARIOS_LOCATION` (default `file:/app/k6/scenarios/manifest.json`;
+compose mounts `code/lab/k6` read-only at `/app/k6`) and serve it at
+`GET /lab/bench/scenarios`.
 
 ## Layout
 
