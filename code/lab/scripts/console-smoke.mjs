@@ -12,9 +12,9 @@
  *
  * A BLOCKED pre-check is a valid outcome (the controller refuses the start with
  * 409/40903); in that branch the script asserts the blocking evidence and the
- * disabled start button instead of forcing the run. Both branches keep the same
- * number of assertions so the baseline is stable. The !blocked branch adds four
- * k6 assertions and folds the "container no longer RUNNING" condition into the
+ * disabled start button instead of forcing the run. The blocked branch keeps
+ * the pre-existing four assertions; the expected !blocked branch adds four k6
+ * assertions and folds the "container no longer RUNNING" condition into the
  * existing stop/COMPLETED check (67 -> 71).
  *
  * Cleanup: traffic stop, guide reset, chaos stop-all, thread stop-all, cache
