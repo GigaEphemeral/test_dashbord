@@ -26,6 +26,7 @@ import com.javalearn.lab.chaos.error.LabErrorCode;
 import com.javalearn.lab.chaos.error.LedgerConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.error.OperationCloseConflictException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
 import com.javalearn.lab.chaos.error.PrecheckBlockedException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
@@ -308,6 +309,18 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleOperationNotFound(OperationNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    /**
+     * B2-04a: only UNKNOWN operations can be closed. 409 with its own code
+     * (40905) so the console can explain "already settled / other verdict" and
+     * point at {@code GET /lab/ledger/recovery}.
+     */
+    @ExceptionHandler(OperationCloseConflictException.class)
+    public ResponseEntity<Result<Void>> handleOperationCloseConflict(OperationCloseConflictException ex) {
+        log.warn("Operation close refused: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.OPERATION_NOT_CLOSEABLE, ex.getMessage()));
     }
 
     /**

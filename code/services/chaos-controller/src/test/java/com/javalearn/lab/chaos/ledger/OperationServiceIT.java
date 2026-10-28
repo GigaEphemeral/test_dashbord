@@ -206,6 +206,41 @@ class OperationServiceIT {
                 .containsExactlyInAnyOrder("APPLIED", "FAILED");
     }
 
+    @Test
+    void closingUnknownIsCompareAndSetIdempotentAndKeepsTheRecoveryReasonWithoutANote() {
+        repository.insertOperation(new OperationRecord("op-close-restored", null, "container",
+                "jl-app-3", "kill", OperationStatus.UNKNOWN, 30, NOW, null, null,
+                "unconfirmed after controller restart", "local", null, null));
+        repository.insertOperation(new OperationRecord("op-close-failed", null, "container",
+                "jl-app-4", "kill", OperationStatus.UNKNOWN, 30, NOW, null, null,
+                "unconfirmed after controller restart", "local", null, null));
+
+        var restored = operations.closeUnknown("op-close-restored",
+                new LedgerViews.OperationCloseRequest("RESTORED", "target verified running"));
+        assertThat(restored.status()).isEqualTo("RESTORED");
+        assertThat(restored.lastError()).isEqualTo("target verified running");
+        assertThat(restored.restoredAt()).isEqualTo(NOW.toString());
+
+        // Same verdict again: no second write, the first note/timestamp stay.
+        var repeated = operations.closeUnknown("op-close-restored",
+                new LedgerViews.OperationCloseRequest("RESTORED", "a later note"));
+        assertThat(repeated.lastError()).isEqualTo("target verified running");
+        assertThat(repeated.restoredAt()).isEqualTo(NOW.toString());
+
+        // The other verdict is a conflict, never a rewrite.
+        assertThatThrownBy(() -> operations.closeUnknown("op-close-restored",
+                new LedgerViews.OperationCloseRequest("FAILED", null)))
+                .isInstanceOf(com.javalearn.lab.chaos.error.OperationCloseConflictException.class);
+
+        // Omitted note: FAILED is written but the recovery reason is preserved
+        // and no restored_at is invented.
+        var failed = operations.closeUnknown("op-close-failed",
+                new LedgerViews.OperationCloseRequest("FAILED", null));
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.lastError()).isEqualTo("unconfirmed after controller restart");
+        assertThat(failed.restoredAt()).isNull();
+    }
+
     private OperationWork counting(AtomicInteger executions) {
         return () -> {
             executions.incrementAndGet();

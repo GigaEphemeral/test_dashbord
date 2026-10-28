@@ -341,6 +341,24 @@ public class RunLedgerRepository {
                 OperationStatus.REQUESTED.name(), OperationStatus.PENDING_CONFIRMATION.name());
     }
 
+    /**
+     * B2-04a: operator closure of an UNKNOWN operation. Compare-and-set on
+     * UNKNOWN so the row can only leave UNKNOWN once; {@code note} (when given)
+     * replaces last_error, otherwise the recovery reason is kept. Only
+     * {@code RESTORED} / {@code FAILED} are valid here - enforcement lives in
+     * {@code OperationService}. The run row and the environment lock are not
+     * touched: this closes the operation verdict only.
+     */
+    public int closeUnknownOperation(String operationId, OperationStatus status, String note,
+                                     Instant restoredAt) {
+        return jdbc.update("UPDATE lab_operation SET status = ?, "
+                        + "last_error = COALESCE(?, last_error), "
+                        + "restored_at = COALESCE(?, restored_at) "
+                        + "WHERE operation_id = ? AND status = ?",
+                status.name(), truncate(note, 1024), timestamp(restoredAt), operationId,
+                OperationStatus.UNKNOWN.name());
+    }
+
     // --------------------------------------------------------- fault events
 
     public void insertFaultEvent(String runId, String operationId, String source, String target,

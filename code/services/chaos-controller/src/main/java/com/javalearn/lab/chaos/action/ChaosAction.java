@@ -176,6 +176,26 @@ final class ChaosAction {
         return remainingMillis;
     }
 
+    /**
+     * B2-04a API countdown. Returns {@code null} when the countdown is no longer
+     * meaningful: the action failed (the watchdog owns the retry) or was
+     * reverted. While paused the frozen remainder is authoritative - the live
+     * expiry has deliberately not moved yet - otherwise the expiry decides.
+     * Callers pass the service's monitor state and injected clock, never
+     * {@code System.currentTimeMillis()}.
+     */
+    Long remainingViewMillis(Instant now, boolean paused) {
+        ChaosActionStatus current = status();
+        if (current == ChaosActionStatus.REVERTED || current == ChaosActionStatus.FAILED) {
+            return null;
+        }
+        if (paused) {
+            long frozen = remainingMillis;
+            return frozen < 0 ? null : frozen;
+        }
+        return Math.max(0L, Duration.between(now, expiresAt).toMillis());
+    }
+
     /** Moves the expiry to {@code now + remaining} and returns the new expiry. */
     Instant resumeAt(Instant now, long ttlMillis) {
         expiresAt = now.plusMillis(Math.max(0L, ttlMillis));

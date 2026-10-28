@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 
 import static com.javalearn.lab.chaos.ledger.LedgerViews.CheckView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.EnvView;
+import static com.javalearn.lab.chaos.ledger.LedgerViews.FaultEventView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerRecoveryView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerStatusView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
@@ -153,7 +154,12 @@ public class RunLedgerService {
                     .map(row -> new CheckView(row.checkKey(), row.expected(), row.actual(),
                             row.verdict(), text(row.checkedAt())))
                     .toList();
-            return new RunDetailView(view(run), steps, env, params, checks);
+            // B2-04a: fault actions with this runId, oldest first. Never null.
+            var faults = repository.findFaultEvents(runId).stream()
+                    .map(row -> new FaultEventView(row.operationId(), row.source(), row.target(),
+                            row.event(), text(row.occurredAt()), json(row.detailJson())))
+                    .toList();
+            return new RunDetailView(view(run), steps, env, params, checks, faults);
         } catch (DataAccessException e) {
             throw unavailable(e);
         }

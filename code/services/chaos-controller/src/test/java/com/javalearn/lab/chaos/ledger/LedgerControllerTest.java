@@ -1,8 +1,10 @@
 package com.javalearn.lab.chaos.ledger;
 
 import com.javalearn.lab.chaos.error.EnvLockConflictException;
+import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.error.OperationCloseConflictException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
 import com.javalearn.lab.chaos.error.PrecheckBlockedException;
 import com.javalearn.lab.chaos.precheck.PrecheckItem;
@@ -17,8 +19,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.Instant;
 import java.util.List;
 
+import static com.javalearn.lab.chaos.ledger.LedgerViews.FaultEventView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerRecoveryView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerStatusView;
+import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationCloseRequest;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationPageView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunCreateView;
@@ -111,7 +115,31 @@ class LedgerControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.run.runId").value("run-20261028-001"))
                 .andExpect(jsonPath("$.data.steps[0].stepKey").value("create"))
-                .andExpect(jsonPath("$.data.steps[0].toStatus").value("DRAFT"));
+                .andExpect(jsonPath("$.data.steps[0].toStatus").value("DRAFT"))
+                // B2-04a: no faults is an empty array, never null.
+                .andExpect(jsonPath("$.data.faults").isArray())
+                .andExpect(jsonPath("$.data.faults.length()").value(0));
+    }
+
+    @Test
+    void detailReturnsTheFaultTimeline() throws Exception {
+        var detail = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("ttlSeconds", 30).put("status", "active").put("operationId", "op-1")
+                .put("expiresAt", "2026-10-28T10:16:00Z").put("runStatus", "RUNNING");
+        when(service.get("run-20261028-001")).thenReturn(new RunDetailView(run("RUNNING"),
+                List.of(), List.of(), List.of(), List.of(),
+                List.of(new FaultEventView("op-1", "container", "jl-app-3", "kill", STARTED_AT,
+                        detail))));
+
+        mvc.perform(get("/lab/runs/run-20261028-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.faults.length()").value(1))
+                .andExpect(jsonPath("$.data.faults[0].operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.faults[0].source").value("container"))
+                .andExpect(jsonPath("$.data.faults[0].target").value("jl-app-3"))
+                .andExpect(jsonPath("$.data.faults[0].event").value("kill"))
+                .andExpect(jsonPath("$.data.faults[0].occurredAt").value(STARTED_AT))
+                .andExpect(jsonPath("$.data.faults[0].detail.status").value("active"));
     }
 
     @Test
@@ -294,6 +322,65 @@ class LedgerControllerTest {
         mvc.perform(get("/lab/operations/missing"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("40401"));
+    }
+
+    // ------------------------------------------------ B2-04a UNKNOWN closure
+
+    @Test
+    void closingUnknownReturnsTheClosedOperationView() throws Exception {
+        OperationCloseRequest request = new OperationCloseRequest("RESTORED", "target verified");
+        when(operations.closeUnknown("op-1", request))
+                .thenReturn(operation("op-1", OperationStatus.RESTORED, false));
+
+        mvc.perform(post("/lab/operations/op-1/close")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"RESTORED\",\"note\":\"target verified\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.status").value("RESTORED"));
+
+        verify(operations).closeUnknown("op-1", request);
+    }
+
+    @Test
+    void closingASettledOperationAnswers409With40905() throws Exception {
+        when(operations.closeUnknown("op-1", new OperationCloseRequest("RESTORED", null)))
+                .thenThrow(new OperationCloseConflictException(
+                        "operation op-1 is APPLIED; only UNKNOWN operations can be closed as RESTORED"));
+
+        mvc.perform(post("/lab/operations/op-1/close")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"RESTORED\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("40905"))
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("APPLIED")));
+    }
+
+    @Test
+    void closingAMissingOperationAnswers404() throws Exception {
+        when(operations.closeUnknown("missing", new OperationCloseRequest("FAILED", null)))
+                .thenThrow(new OperationNotFoundException("operation not found: missing"));
+
+        mvc.perform(post("/lab/operations/missing/close")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"FAILED\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("40401"));
+    }
+
+    @Test
+    void anInvalidCloseStatusOrNoteAnswers400() throws Exception {
+        when(operations.closeUnknown(any(), any())).thenThrow(new InvalidLedgerRequestException(
+                "status must be RESTORED or FAILED"));
+
+        mvc.perform(post("/lab/operations/op-1/close")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"APPLIED\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("40001"));
     }
 
     @Test

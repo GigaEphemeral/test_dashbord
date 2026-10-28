@@ -39,6 +39,13 @@ public enum LabErrorCode implements ErrorCode {
      * stop it or wait for it to finish.
      */
     K6_CONTAINER_CONFLICT("40904", "k6 run container conflict"),
+    /**
+     * Stage2 B2-04a: an operation close was refused because the row is not
+     * UNKNOWN anymore (already settled, or closed with the other terminal
+     * verdict). Distinct from 40901 so the console can explain that only
+     * UNKNOWN operations can be closed.
+     */
+    OPERATION_NOT_CLOSEABLE("40905", "Operation is not UNKNOWN and cannot be closed"),
     BAD_GATEWAY("50201", "Bad gateway"),
     RESPONSE_TOO_LARGE("50202", "Upstream response too large"),
     /**

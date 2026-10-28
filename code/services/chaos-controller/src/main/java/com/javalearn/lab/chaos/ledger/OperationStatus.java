@@ -21,6 +21,12 @@ import java.util.Set;
  * APPLIED / RESTORED / FAILED / UNKNOWN are terminal here: a fault that is
  * reverted by its TTL is a new contract revision in B2-04, not an in-place
  * rewrite of the original APPLIED row.
+ *
+ * <p>B2-04a exception: an operator may explicitly close an UNKNOWN operation as
+ * RESTORED or FAILED ({@code POST /lab/operations/{id}/close}). That is a
+ * separate, audited verdict written by compare-and-set on UNKNOWN - not a
+ * transition of the automatic table above, which still never leaves UNKNOWN on
+ * its own.
  * </pre>
  */
 public enum OperationStatus {
