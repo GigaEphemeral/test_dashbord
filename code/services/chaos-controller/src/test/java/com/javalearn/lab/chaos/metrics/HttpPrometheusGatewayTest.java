@@ -153,6 +153,61 @@ class HttpPrometheusGatewayTest {
                 .hasMessageContaining("1s");
     }
 
+    @Test
+    void sendsTheInstantQueryPathAndParsesTheVector() throws Exception {
+        startServer(exchange -> respond(exchange, 200,
+                "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":["
+                        + "{\"metric\":{\"job\":\"seckill-app\"},\"value\":[1793140800,\"3\"]}]}}"));
+
+        PrometheusMatrix matrix = gateway(1, 2).queryInstant("sum(up{job=\"seckill-app\"})", 1793140800L);
+
+        assertThat(seenPath.get()).isEqualTo("/api/v1/query");
+        assertThat(seenParams.get())
+                .containsEntry("time", "1793140800")
+                .containsEntry("query", "sum(up{job=\"seckill-app\"})");
+        assertThat(matrix.series()).hasSize(1);
+        assertThat(matrix.series().get(0).labels()).containsEntry("job", "seckill-app");
+        assertThat(matrix.series().get(0).points()).hasSize(1);
+        assertThat(matrix.series().get(0).points().get(0).value()).isEqualTo(3.0);
+    }
+
+    @Test
+    void anInstantQueryWithoutSeriesIsAnEmptyMatrixNotAnError() throws Exception {
+        startServer(exchange -> respond(exchange, 200,
+                "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[]}}"));
+
+        assertThat(gateway(1, 2).queryInstant("x", 1L).series()).isEmpty();
+    }
+
+    @Test
+    void anInstantQueryWithTheWrongResultTypeIsRefused() throws Exception {
+        startServer(exchange -> respond(exchange, 200,
+                "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[]}}"));
+
+        assertThatThrownBy(() -> gateway(1, 2).queryInstant("x", 1L))
+                .isInstanceOf(PrometheusQueryException.class)
+                .hasMessageContaining("expected 'vector'");
+    }
+
+    @Test
+    void thePrecheckTimeoutConstructorUsesItsOwnRequestBudget() throws Exception {
+        startServer(exchange -> {
+            try {
+                Thread.sleep(2500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, SUCCESS);
+        });
+        HttpPrometheusGateway gateway = new HttpPrometheusGateway(
+                "http://127.0.0.1:" + server.getAddress().getPort(), 1, 1, new ObjectMapper());
+
+        assertThatThrownBy(() -> gateway.queryInstant("x", 1L))
+                .isInstanceOf(PrometheusQueryException.class)
+                .hasMessageContaining("timed out")
+                .hasMessageContaining("1s");
+    }
+
     private PrometheusGateway gateway(int connectSeconds, int requestSeconds) throws IOException {
         return gateway(server.getAddress().getPort(), connectSeconds, requestSeconds);
     }

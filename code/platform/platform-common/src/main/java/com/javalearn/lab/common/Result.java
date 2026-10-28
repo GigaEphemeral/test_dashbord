@@ -28,6 +28,15 @@ public final class Result<T> {
         return new Result<T>(errorCode.code(), message, null);
     }
 
+    /**
+     * Failure envelope that still carries evidence. B1-04 uses it for 409/40903:
+     * the pre-check report (with {@code blocking[]}) is the {@code data} of the
+     * refusal, so the console does not need a second request to explain it.
+     */
+    public static <T> Result<T> failure(ErrorCode errorCode, String message, T data) {
+        return new Result<T>(errorCode.code(), message, data);
+    }
+
     public boolean isSuccess() {
         return CommonErrorCode.SUCCESS.code().equals(code);
     }

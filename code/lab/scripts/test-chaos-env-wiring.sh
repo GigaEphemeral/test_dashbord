@@ -74,16 +74,17 @@ for key in "${KEYS[@]}"; do
   pass "$key: yml placeholder + compose forwarding + .env.example entry, defaults match ('$ydef')"
 done
 
-# Stage2 B1-01 ledger / B1-03 metrics keys are discovered instead of listed:
-# every ${LAB_LEDGER_*:...} / ${LAB_METRICS_*:...} / ${LAB_SOURCE_COMMIT:...}
-# placeholder in the controller yml must reach the container and be documented
-# in .env.example. Defaults are not compared here because several intentionally
-# nest another placeholder (e.g. ${LAB_LEDGER_MYSQL_MODE:${MYSQL_MODE:standalone}}),
-# which the simple sed extraction above cannot normalise.
-DISCOVERED_KEYS=$(grep -o '\${LAB_LEDGER_[A-Z0-9_]*:\|\${LAB_METRICS_[A-Z0-9_]*:\|\${LAB_SOURCE_COMMIT:' "$YML" \
+# Stage2 B1-01 ledger / B1-03 metrics / B1-04 pre-check keys are discovered
+# instead of listed: every ${LAB_LEDGER_*:...} / ${LAB_METRICS_*:...} /
+# ${LAB_PRECHECK_*:...} / ${LAB_SOURCE_COMMIT:...} placeholder in the controller
+# yml must reach the container and be documented in .env.example. Defaults are
+# not compared here because several intentionally nest another placeholder
+# (e.g. ${LAB_LEDGER_MYSQL_MODE:${MYSQL_MODE:standalone}}), which the simple sed
+# extraction above cannot normalise.
+DISCOVERED_KEYS=$(grep -o '\${LAB_LEDGER_[A-Z0-9_]*:\|\${LAB_METRICS_[A-Z0-9_]*:\|\${LAB_PRECHECK_[A-Z0-9_]*:\|\${LAB_SOURCE_COMMIT:' "$YML" \
   | sed 's/^\${//; s/:$//' | sort -u)
 if [[ -z "$DISCOVERED_KEYS" ]]; then
-  fail "no LAB_LEDGER_* / LAB_METRICS_* placeholder found in application.yml (ledger/metrics wiring missing)"
+  fail "no LAB_LEDGER_* / LAB_METRICS_* / LAB_PRECHECK_* placeholder found in application.yml (ledger/metrics/precheck wiring missing)"
 else
   while read -r key; do
     [[ -z "$key" ]] && continue
@@ -103,5 +104,5 @@ if (( failures > 0 )); then
   printf 'CHAOS ENV WIRING FAILED (%d)\n' "$failures" >&2
   exit 1
 fi
-printf 'CHAOS ENV WIRING PASSED (%d chaos keys + %d ledger/metrics keys)\n' \
+printf 'CHAOS ENV WIRING PASSED (%d chaos keys + %d ledger/metrics/precheck keys)\n' \
   "${#KEYS[@]}" "$(grep -c . <<< "$DISCOVERED_KEYS")"

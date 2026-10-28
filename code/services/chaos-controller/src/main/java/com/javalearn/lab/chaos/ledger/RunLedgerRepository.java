@@ -272,13 +272,24 @@ public class RunLedgerRepository {
     }
 
     public List<OperationRecord> findOperationsByStatuses(Collection<OperationStatus> statuses) {
-        if (statuses == null || statuses.isEmpty()) {
+        return findRecentOperationsByStatuses(statuses, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Bounded variant used by the B1-04 pre-check: the report only lists a few
+     * rows, so the query itself must not read an unbounded leftover list.
+     */
+    public List<OperationRecord> findRecentOperationsByStatuses(
+            Collection<OperationStatus> statuses, int limit) {
+        if (statuses == null || statuses.isEmpty() || limit < 1) {
             return List.of();
         }
         List<Object> args = new ArrayList<>();
-        String placeholders = placeholders(statuses.size(), args, statuses.stream().map(s -> s.name()).toList());
+        String placeholders = placeholders(statuses.size(), args,
+                statuses.stream().map(s -> s.name()).toList());
+        args.add(limit);
         return jdbc.query("SELECT " + OPERATION_COLUMNS + " FROM lab_operation "
-                        + "WHERE status IN (" + placeholders + ") ORDER BY requested_at ASC",
+                        + "WHERE status IN (" + placeholders + ") ORDER BY requested_at ASC LIMIT ?",
                 OPERATION_MAPPER, args.toArray());
     }
 

@@ -65,9 +65,12 @@ public class LedgerController {
     }
 
     /**
-     * Takes the write-run lock and advances DRAFT → VALIDATING → READY → RUNNING.
-     * 202 + PENDING_CONFIRMATION when the worker outlived the sync budget; the
-     * operation keeps going and {@code GET /lab/operations/{id}} shows the result.
+     * Runs the B1-04 pre-check first (before any transition or lock), then takes
+     * the write-run lock and advances DRAFT → VALIDATING → READY → RUNNING. A
+     * blocking pre-check finding is 409/40903 with the report in {@code data}
+     * and leaves the run DRAFT. 202 + PENDING_CONFIRMATION when the worker
+     * outlived the sync budget; the operation keeps going and
+     * {@code GET /lab/operations/{id}} shows the result.
      */
     @PostMapping("/lab/runs/{runId}/start")
     public ResponseEntity<Result<OperationView>> start(

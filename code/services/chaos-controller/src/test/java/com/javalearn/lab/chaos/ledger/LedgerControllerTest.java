@@ -4,6 +4,9 @@ import com.javalearn.lab.chaos.error.EnvLockConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
+import com.javalearn.lab.chaos.error.PrecheckBlockedException;
+import com.javalearn.lab.chaos.precheck.PrecheckItem;
+import com.javalearn.lab.chaos.precheck.PrecheckReport;
 import com.javalearn.lab.chaos.web.LabExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -250,6 +253,25 @@ class LedgerControllerTest {
                 .andExpect(jsonPath("$.code").value("40901"))
                 .andExpect(jsonPath("$.message").value(
                         org.hamcrest.Matchers.containsString("RUNNING")));
+    }
+
+    @Test
+    void aBlockedPrecheckAnswers409With40903AndTheBlockingReport() throws Exception {
+        PrecheckReport report = PrecheckReport.of("run-20261028-001", STARTED_AT,
+                List.of(PrecheckItem.block("traffic.stopped",
+                        "background traffic jl-traffic is running",
+                        java.util.Map.of("container", "jl-traffic"))), 10);
+        when(lifecycle.start("run-20261028-001", null))
+                .thenThrow(new PrecheckBlockedException(report));
+
+        mvc.perform(post("/lab/runs/run-20261028-001/start"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("40903"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers
+                        .containsString("traffic.stopped")))
+                .andExpect(jsonPath("$.data.verdict").value("BLOCKED"))
+                .andExpect(jsonPath("$.data.blocking[0].key").value("traffic.stopped"))
+                .andExpect(jsonPath("$.data.blocking[0].detail.container").value("jl-traffic"));
     }
 
     @Test
