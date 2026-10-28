@@ -470,6 +470,24 @@ services:
       LAB_RESET_MODE: ${LAB_RESET_MODE:-manual}
       CHAOS_TRAFFIC_CONTAINER: ${CHAOS_TRAFFIC_CONTAINER:-jl-traffic}
       CHAOS_TRAFFIC_STOP_GRACE_SECONDS: ${CHAOS_TRAFFIC_STOP_GRACE_SECONDS:-5}
+      # Narrow app proxy (Stage2 B0-05). Each key maps 1:1 to chaos.app-proxy.*
+      # in application.yml and the defaults here are the SAME numbers, so an
+      # absent .env entry keeps the historical behaviour byte-for-byte. Without
+      # this forwarding the yml placeholders would never see a .env override
+      # (compose passes the controller an explicit env list), and the B0-05
+      # "raise CHAOS_APP_PROXY_MAX_RESPONSE_BYTES in .env for B3 key pages"
+      # path would be decoration, not configuration. Regression test:
+      # code/lab/scripts/test-chaos-env-wiring.sh.
+      CHAOS_APP_PROXY_INSTANCES: ${CHAOS_APP_PROXY_INSTANCES:-app-1,app-2,app-3}
+      CHAOS_APP_PROXY_SCHEME: ${CHAOS_APP_PROXY_SCHEME:-http}
+      CHAOS_APP_PROXY_PORT: ${CHAOS_APP_PROXY_PORT:-8080}
+      CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS: ${CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS:-2}
+      CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS: ${CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS:-10}
+      CHAOS_APP_PROXY_MAX_REQUEST_BYTES: ${CHAOS_APP_PROXY_MAX_REQUEST_BYTES:-8192}
+      # Response relay cap (B0-05): over-size upstream answers are refused
+      # 502/50202, never truncated. Widen here (via .env) when B3 key-list
+      # pages need more than 2MB per hop.
+      CHAOS_APP_PROXY_MAX_RESPONSE_BYTES: ${CHAOS_APP_PROXY_MAX_RESPONSE_BYTES:-2097152}
       # MySQL InnoDB Cluster probe (design §8.3 / D11). Each key maps 1:1 to
       # chaos.mysql-cluster.* in application.yml; the SQL and argv stay in the
       # YAML image config. The code default target is jl-mysql-1, but the LAB
@@ -486,6 +504,10 @@ services:
       CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:-3}
       CHAOS_MYSQL_CLUSTER_THREAD_NAME: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:-mysql-cluster-probe}
       CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS: ${CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS:-5}
+      # B0-08 slice B: on a failed probe, inspect the probe container once to
+      # tell "the node answered wrongly" from "the drill killed the observer".
+      # One extra inspect per failed tick; false turns the check off.
+      CHAOS_MYSQL_CLUSTER_FAILURE_CONTAINER_CHECK_ENABLED: ${CHAOS_MYSQL_CLUSTER_FAILURE_CONTAINER_CHECK_ENABLED:-true}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
