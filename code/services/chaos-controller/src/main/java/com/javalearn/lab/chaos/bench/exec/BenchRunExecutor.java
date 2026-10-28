@@ -221,7 +221,13 @@ public class BenchRunExecutor {
             throw new BenchUnavailableException("lab.bench.exec.summary-file is blank: the "
                     + "executor cannot locate the summary report");
         }
-        return reportDirectory(runId).resolve(summaryFile);
+        Path directory = reportDirectory(runId);
+        Path file = directory.resolve(summaryFile).normalize();
+        if (!file.startsWith(directory) || file.equals(directory)) {
+            throw new BenchUnavailableException("lab.bench.exec.summary-file must be a plain "
+                    + "file name inside the run directory; got '" + summaryFile + "'");
+        }
+        return file;
     }
 
     /**

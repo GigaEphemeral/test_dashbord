@@ -206,6 +206,13 @@ class BenchRunExecutorTest {
         assertThrows(BenchReportTooLargeException.class, () -> executor.report(RUN_ID));
     }
 
+    @Test
+    void aSummaryFileThatEscapesTheRunDirectoryIsRefused() {
+        properties.setSummaryFile("../escape.json");
+
+        assertThrows(BenchUnavailableException.class, () -> executor.report(RUN_ID));
+    }
+
     // ------------------------------------------------------------- run ids
 
     @ParameterizedTest
