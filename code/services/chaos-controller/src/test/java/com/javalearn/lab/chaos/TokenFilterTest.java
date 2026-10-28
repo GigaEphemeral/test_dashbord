@@ -1,6 +1,7 @@
 package com.javalearn.lab.chaos;
 
 import com.javalearn.lab.chaos.action.ChaosActionService;
+import com.javalearn.lab.chaos.action.EnvironmentStopAllService;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.gateway.ContainerGateway;
 import com.javalearn.lab.chaos.model.ContainerView;
@@ -50,11 +51,14 @@ class TokenFilterTest {
     @MockitoBean
     private ChaosActionService chaosActionService;
 
+    @MockitoBean
+    private EnvironmentStopAllService environmentStopAllService;
+
     @BeforeEach
     void setUp() {
         when(containerGateway.listLabContainers())
                 .thenReturn(List.of(new ContainerView("jl-app-1", "running", "healthy")));
-        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(0, 0, 0));
+        when(environmentStopAllService.stopAll()).thenReturn(new StopAllResult(0, 0, 0));
     }
 
     @Test
