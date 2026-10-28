@@ -589,9 +589,10 @@ services:
       # the k6 directory is mounted read-only below and the default is a file:
       # location. An invalid manifest answers 503/50303, never an empty catalog.
       LAB_BENCH_SCENARIOS_LOCATION: ${LAB_BENCH_SCENARIOS_LOCATION:-file:/app/k6/scenarios/manifest.json}
-      # Stage2 B2-02a: controlled k6 executor defaults. The planner refuses a
-      # blank scripts host dir (B2-02b resolves the real path); the same keys
-      # and defaults live in application.yml and .env.example.
+      # Stage2 B2-02a/B2-02b-1: controlled k6 executor defaults. The resolver
+      # discovers the host path behind /app/k6; the planner still refuses a blank
+      # scripts host dir. The same keys and defaults live in application.yml
+      # and .env.example.
       LAB_BENCH_EXEC_K6_IMAGE: ${LAB_BENCH_EXEC_K6_IMAGE:-grafana/k6:1.3.0}
       LAB_BENCH_EXEC_NETWORK: ${LAB_BENCH_EXEC_NETWORK:-jl-net}
       LAB_BENCH_EXEC_SCRIPTS_HOST_DIR: ${LAB_BENCH_EXEC_SCRIPTS_HOST_DIR:-}
@@ -604,6 +605,15 @@ services:
       LAB_BENCH_EXEC_MAX_VUS: ${LAB_BENCH_EXEC_MAX_VUS:-1000}
       LAB_BENCH_EXEC_MAX_DURATION_SECONDS: ${LAB_BENCH_EXEC_MAX_DURATION_SECONDS:-3600}
       LAB_BENCH_EXEC_SUMMARY_FILE: ${LAB_BENCH_EXEC_SUMMARY_FILE:-summary.json}
+      # Stage2 B2-02b-1: controller mount inspection + bounded log/report reads.
+      # controller-container is the container inspected for the host path
+      # behind /app/k6; scripts-host-dir (when set) still wins.
+      LAB_BENCH_EXEC_CONTROLLER_CONTAINER: ${LAB_BENCH_EXEC_CONTROLLER_CONTAINER:-jl-chaos-controller}
+      LAB_BENCH_EXEC_CONTROLLER_K6_MOUNT: ${LAB_BENCH_EXEC_CONTROLLER_K6_MOUNT:-/app/k6}
+      LAB_BENCH_EXEC_REPORT_MAX_BYTES: ${LAB_BENCH_EXEC_REPORT_MAX_BYTES:-4194304}
+      LAB_BENCH_EXEC_LOGS_MAX_BYTES: ${LAB_BENCH_EXEC_LOGS_MAX_BYTES:-65536}
+      LAB_BENCH_EXEC_LOGS_MAX_TAIL: ${LAB_BENCH_EXEC_LOGS_MAX_TAIL:-1000}
+      LAB_BENCH_EXEC_STOP_GRACE_SECONDS: ${LAB_BENCH_EXEC_STOP_GRACE_SECONDS:-10}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
@@ -619,6 +629,12 @@ services:
       # Write-behind ledger stash (B1-01): events that could not be written
       # while MySQL was down survive a controller restart and replay in order.
       - jl-ledger-stash-data:/app/ledger-stash
+      # Stage2 B2-02b-1: shared summary volume. k6 writes
+      # /reports/<runId>/summary.json through the same named volume, so the
+      # controller can serve GET /lab/runs/{runId}/k6/report without copying
+      # files out of a container. Actual volume name follows
+      # LAB_BENCH_EXEC_REPORTS_VOLUME (top-level volumes: below).
+      - jl-k6-reports:/reports
     expose:
       - "8081"
     networks:
@@ -900,6 +916,11 @@ volumes:
     name: jl-tempo-data
   jl-ledger-stash-data:
     name: jl-ledger-stash-data
+  # Stage2 B2-02b-1: k6 summary volume. The logical key is fixed so the
+  # controller mount stays readable; the actual Docker name follows the same
+  # LAB_BENCH_EXEC_REPORTS_VOLUME override the Java planner uses.
+  jl-k6-reports:
+    name: ${LAB_BENCH_EXEC_REPORTS_VOLUME:-jl-k6-reports}
 
 networks:
   jl-net:

@@ -26,6 +26,19 @@ public enum LabErrorCode implements ErrorCode {
     PRECHECK_BLOCKED("40903", "Run pre-check blocked the start"),
     METHOD_NOT_ALLOWED("40501", "Method not allowed"),
     PAYLOAD_TOO_LARGE("41301", "Payload too large"),
+    /**
+     * Stage2 B2-02b-1: the launch request is not allowed by the bench
+     * whitelist/parameter contract (or a run id is not a safe container/path
+     * segment). Distinct from the generic 40001 so the console can point at
+     * the scenario/parameter that was refused.
+     */
+    BENCH_REQUEST_REJECTED("40002", "Bench launch request rejected"),
+    /**
+     * Stage2 B2-02b-1: a k6 container with the same name is already running (or
+     * not yet exited). The executor never replaces a live run; the console can
+     * stop it or wait for it to finish.
+     */
+    K6_CONTAINER_CONFLICT("40904", "k6 run container conflict"),
     BAD_GATEWAY("50201", "Bad gateway"),
     RESPONSE_TOO_LARGE("50202", "Upstream response too large"),
     /**

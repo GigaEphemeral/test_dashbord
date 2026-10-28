@@ -1,10 +1,14 @@
 package com.javalearn.lab.chaos.web;
 
+import com.javalearn.lab.chaos.bench.exec.BenchLaunchRejectedException;
 import com.javalearn.lab.chaos.error.AppPathNotAllowedException;
 import com.javalearn.lab.chaos.error.AppProxyRequestTooLargeException;
 import com.javalearn.lab.chaos.error.AppProxyResponseTooLargeException;
 import com.javalearn.lab.chaos.error.AppResponseNotJsonException;
 import com.javalearn.lab.chaos.error.AppUnreachableException;
+import com.javalearn.lab.chaos.error.BenchReportNotFoundException;
+import com.javalearn.lab.chaos.error.BenchReportTooLargeException;
+import com.javalearn.lab.chaos.error.BenchRunConflictException;
 import com.javalearn.lab.chaos.error.BenchUnavailableException;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
@@ -225,6 +229,43 @@ public class LabExceptionHandler {
         log.warn("Bench scenario catalog unavailable: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Result.failure(LabErrorCode.BENCH_UNAVAILABLE, ex.getMessage()));
+    }
+
+    /**
+     * B2-02b-1: the launch request (or a run id used as a path segment) is not
+     * allowed by the bench whitelist/parameter contract. 400 with its own code
+     * (40002) so the console can show which scenario/parameter was refused.
+     */
+    @ExceptionHandler(BenchLaunchRejectedException.class)
+    public ResponseEntity<Result<Void>> handleBenchLaunchRejected(BenchLaunchRejectedException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(LabErrorCode.BENCH_REQUEST_REJECTED, ex.getMessage()));
+    }
+
+    /**
+     * B2-02b-1: a k6 container with the same name has not exited. 409 with its
+     * own code (40904); the executor never replaces a live run.
+     */
+    @ExceptionHandler(BenchRunConflictException.class)
+    public ResponseEntity<Result<Void>> handleBenchRunConflict(BenchRunConflictException ex) {
+        log.warn("k6 run conflict: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.K6_CONTAINER_CONFLICT, ex.getMessage()));
+    }
+
+    /** B2-02b-1: the summary report is not on disk yet (or never written): 404. */
+    @ExceptionHandler(BenchReportNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleBenchReportNotFound(BenchReportNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    /** B2-02b-1: the summary report exceeds the configured cap: 413/41301. */
+    @ExceptionHandler(BenchReportTooLargeException.class)
+    public ResponseEntity<Result<Void>> handleBenchReportTooLarge(BenchReportTooLargeException ex) {
+        log.warn("k6 summary report refused: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Result.failure(LabErrorCode.PAYLOAD_TOO_LARGE, ex.getMessage()));
     }
 
     @ExceptionHandler(LedgerRunNotFoundException.class)
