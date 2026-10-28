@@ -208,6 +208,10 @@
   .fault-table input,.fault-table select{padding:6px 7px;font-size:12px}
   .fault-table td{padding:6px}
   .off{opacity:.42;filter:grayscale(.8);pointer-events:none}
+  .subhead{font-size:12px;color:var(--muted);letter-spacing:.04em;margin-bottom:8px}
+  .gc-parallel{display:none}
+  [data-node-row].off{opacity:.38;filter:grayscale(1)}
+  [data-node-row].off select,[data-node-row].off input,[data-node-row].off button{pointer-events:none}
   .topo-grid{display:grid;grid-template-columns:1fr 1.05fr 1.9fr 1.15fr .9fr;gap:10px;align-items:start;padding:10px;border:1px dashed #2a3d52;border-radius:12px;background:#0a1119}
   .topo-col{display:flex;flex-direction:column;gap:6px;min-width:0}
   .topo-label{font-size:10.5px;color:var(--muted-2);letter-spacing:.06em}
@@ -218,7 +222,7 @@
 </style>
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><div class="brand-mark"></div><div><h1>Java 演练台</h1><small>STAGE 2 · 交互稿 v3</small></div></div>
+    <div class="brand"><div class="brand-mark"></div><div><h1>Java 演练台</h1><small>STAGE 2 · 交互稿 v4</small></div></div>
     <nav id="nav">
       <button class="nav-btn active" data-page="overview"><span class="idx">01</span>总览</button>
       <button class="nav-btn" data-page="wizard"><span class="idx">02</span>场景向导</button>
@@ -227,7 +231,7 @@
       <button class="nav-btn" data-page="observe"><span class="idx">05</span>实时监控与操作</button>
       <button class="nav-btn" data-page="runs"><span class="idx">06</span>实验记录</button>
     </nav>
-    <div class="sidebar-foot">A–F 已采纳 · 前置基础配置 + 7 步向导<br>状态徽标悬停看中文解释</div>
+    <div class="sidebar-foot">A–F 已采纳 · 配置组细化 v4<br>状态徽标悬停看中文解释</div>
   </aside>
 
   <main class="main">
@@ -389,21 +393,98 @@
         <div class="notice warn" id="wizModeNotice" style="margin-top:8px;display:none">当前少于 2 个 Java 节点：实例分流/实例故障不可用；定向仍可用。</div>
       </div>
 
-      <div class="card wizard-panel" data-wpanel="3">
-        <h3 style="margin-top:0">变量与配置组</h3>
-        <p class="hint">只展示“本次改变”的变量；基线组与实验组必须同数据集、同流量模型，差异清单用于公平对照。JVM/GC 配置组由 B4 提供，应用/重建必须在预检查前完成。</p>
+            <div class="card wizard-panel" data-wpanel="3">
+        <div class="card-head"><h3>变量与配置组</h3><span class="chip info" id="cfgEnabled" data-tip="只对基础配置中已启用的节点可配；未启用行置灰且不可选择。">已启用 3/3</span></div>
+        <p class="hint">基线组 vs 实验组；只改变要对照的变量。详细 JVM/线程池/Caffeine/GC 日志参数在下方编辑器；应用/重启必须在预检查前完成，run 中禁止修改启动参数。</p>
         <table class="table">
-          <thead><tr><th>实例</th><th>基线组</th><th>实验组</th><th>差异</th></tr></thead>
-          <tbody>
-            <tr><td>app-1</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">-Xmx 512→256m · ParallelGC</span></td></tr>
-            <tr><td>app-2</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">L1 关闭 · 队列 500→200</span></td></tr>
-            <tr><td>app-3</td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">无差异（对照组）</span></td></tr>
+          <thead><tr><th>实例</th><th>状态</th><th>基线组</th><th>实验组</th><th>差异</th><th></th></tr></thead>
+          <tbody id="configRows">
+            <tr data-node-row="app-1"><td>app-1</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">-Xmx 512→256m · ParallelGC</span></td><td><button class="btn ghost" onclick="selectCfg('app-1')">编辑</button></td></tr>
+            <tr data-node-row="app-2"><td>app-2</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">L1 关闭 · 队列 500→200</span></td><td><button class="btn ghost" onclick="selectCfg('app-2')">编辑</button></td></tr>
+            <tr data-node-row="app-3"><td>app-3</td><td><span class="chip ok" data-tip="已启用。">已启用</span></td><td><select><option>baseline</option></select></td><td><select><option>experiment-A</option><option>experiment-B</option></select></td><td><span class="diff">无差异（对照组）</span></td><td><button class="btn ghost" onclick="selectCfg('app-3')">编辑</button></td></tr>
           </tbody>
         </table>
-        <div class="btn-row" style="margin-top:9px"><button class="btn ghost" onclick="showPage('instances')">编辑配置组（实例页）</button><span class="chip gray" data-tip="配置组应用/重建/健康确认属 B4；run 中禁止修改启动参数。">B4 应用</span></div>
+        <div class="notice info" id="configGateNotice" style="margin-top:8px">未启用的节点行置灰，且不会出现在下方编辑器的实例下拉框。</div>
+
+        <div class="divider"></div>
+        <div class="card-head"><h3>实验组配置 · 逐实例</h3><span class="chip warn" data-tip="修改 JVM 启动参数/镜像/资源需要重启；run 中禁止修改。">需重启</span></div>
+        <div class="grid g3">
+          <div class="field"><label>编辑实例 <span class="key">instance</span></label><select id="cfgInstance"></select><div class="help">只列出已启用节点；值仅为示意。</div></div>
+          <div class="field"><label>配置状态 <span class="key">status</span></label>
+            <div class="btn-row" style="padding-top:4px"><span class="chip warn" id="cfgStatus" data-tip="目标值已保存，需重启 JVM/容器。">待重启</span><button class="btn primary" onclick="applyConfig()">应用并重启</button><button class="btn ghost" onclick="toast('配置已保存为草稿')">仅保存</button><button class="btn ghost" onclick="rollbackConfig()">回滚</button></div>
+            <div class="help">重启顺序：重建/重启 → 健康检查 → Nginx 上游 → Prometheus up → 真实请求探针；失败自动回滚。</div>
+          </div>
+          <div class="field"><label>内存预算 <span class="key">budget</span></label><div class="hint" id="memBudget">-Xmx 512m + Metaspace 128m + 直接内存 64m + 线程栈 ≈ 800m，容器 1024m，余量 224m。</div></div>
+        </div>
+
+        <div class="grid g2" style="margin-top:10px">
+          <div class="card tight">
+            <div class="subhead">运行时与堆</div>
+            <div class="grid g2">
+              <div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>21</option><option>8（已验证镜像）</option></select><div class="help">需选择已验证镜像；JDK8 为 LIMITED。</div></div>
+              <div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div>
+              <div class="field"><label>初始堆 <span class="key">-Xms</span></label><input class="input" value="256m"><div class="help">启动时申请的最小堆；建议与 -Xmx 接近以减少扩缩。</div></div>
+              <div class="field"><label>最大堆 <span class="key">-Xmx</span></label><input class="input" value="512m"><div class="help">堆上限；与容器内存预算一起校验。</div></div>
+              <div class="field"><label>Metaspace <span class="key">MaxMetaspaceSize</span></label><input class="input" value="128m"><div class="help">类元数据上限；过大挤压堆外预算。</div></div>
+              <div class="field"><label>直接内存 <span class="key">MaxDirectMemorySize</span></label><input class="input" value="64m"><div class="help">NIO/Netty 等堆外直接内存上限。</div></div>
+            </div>
+          </div>
+          <div class="card tight">
+            <div class="subhead">GC 与 GC 日志</div>
+            <div class="grid g2">
+              <div class="field"><label>GC 类型 <span class="key">gcCollector</span></label><select id="cfgGc"><option value="g1">G1</option><option value="parallel">Parallel</option><option value="serial">Serial</option></select><div class="help">需与 JDK 兼容；JDK8 可选 G1/Parallel。</div></div>
+              <div class="field"><label>最大停顿 <span class="key">MaxGCPauseMillis</span></label><input class="input" value="200"><div class="help">G1 目标停顿，非硬保证。</div></div>
+              <div class="field gc-g1"><label>新代初始占比 <span class="key">G1NewSizePercent</span></label><input class="input" value="5"><div class="help">G1 新代初始比例（%）。</div></div>
+              <div class="field gc-g1"><label>新代最大占比 <span class="key">G1MaxNewSizePercent</span></label><input class="input" value="60"><div class="help">G1 新代上限比例（%）。</div></div>
+              <div class="field gc-g1"><label>Region 大小 <span class="key">G1HeapRegionSize</span></label><input class="input" value="4m"><div class="help">G1 堆分区大小，通常 1–32m。</div></div>
+              <div class="field gc-g1"><label>并发标记触发 <span class="key">InitiatingHeapOccupancyPercent</span></label><input class="input" value="45"><div class="help">堆占用达到该比例启动并发标记。</div></div>
+              <div class="field gc-parallel"><label>并行线程数 <span class="key">ParallelGCThreads</span></label><input class="input" value="4"><div class="help">Parallel GC 工作线程数。</div></div>
+              <div class="field gc-common"><label>新老代比 <span class="key">NewRatio</span></label><input class="input" value="2"><div class="help">老年代/新生代比例。</div></div>
+              <div class="field gc-common"><label>Survivor 比 <span class="key">SurvivorRatio</span></label><input class="input" value="8"><div class="help">Eden 与单个 Survivor 的比例。</div></div>
+            </div>
+            <div class="divider"></div>
+            <div class="grid g2">
+              <div class="field"><label>GC 日志 <span class="key">gcLogEnabled</span></label><select><option>开启</option><option>关闭</option></select><div class="help">JDK8 用 -Xloggc；JDK21 用 -Xlog:gc*。</div></div>
+              <div class="field"><label>日志路径 <span class="key">gcLogPath</span></label><input class="input" value="/app/logs/gc.log"><div class="help">路径外置；只读回读。</div></div>
+              <div class="field"><label>单文件上限 <span class="key">gcLogFileSize</span></label><input class="input" value="20m"><div class="help">滚动前单文件大小。</div></div>
+              <div class="field"><label>保留文件数 <span class="key">gcLogFileCount</span></label><input class="input" value="5"><div class="help">滚动保留数量。</div></div>
+              <div class="field"><label>OOM 堆转储 <span class="key">heapDumpOnOutOfMemory</span></label><select><option>开启</option><option>关闭</option></select><div class="help">OOM 时写 heap dump；路径需可写。</div></div>
+              <div class="field"><label>堆转储路径 <span class="key">heapDumpPath</span></label><input class="input" value="/app/logs/heap.hprof"><div class="help">转储文件路径；注意磁盘预算。</div></div>
+            </div>
+            <div class="field" style="margin-top:8px"><label>额外 JVM 参数 <span class="key">extraJvmArgs</span></label><textarea class="input" rows="2">-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap.hprof</textarea><div class="help" data-tip="仅允许白名单参数；拒绝危险诊断/命令执行类选项、任意路径与 shell。">仅白名单；每行一个参数。</div></div>
+          </div>
+        </div>
+
+        <div class="grid g2" style="margin-top:10px">
+          <div class="card tight">
+            <div class="subhead">业务线程池 / Tomcat 线程</div>
+            <div class="grid g2">
+              <div class="field"><label data-tip="常驻核心线程数；即使空闲也保留。">核心线程 <span class="key">corePoolSize</span></label><input class="input" value="16"><div class="help">常驻核心线程数；空闲也保留。</div></div>
+              <div class="field"><label data-tip="峰值线程数；队列满后才会扩到该值。">最大线程 <span class="key">maxPoolSize</span></label><input class="input" value="64"><div class="help">峰值线程数；队列满后扩到该值。</div></div>
+              <div class="field"><label data-tip="等待队列长度；满后触发拒绝策略。">队列长度 <span class="key">queueCapacity</span></label><input class="input" value="500"><div class="help">等待队列长度；满后触发拒绝策略。</div></div>
+              <div class="field"><label data-tip="非核心线程空闲存活时间。">空闲存活 <span class="key">keepAliveSeconds</span></label><input class="input" value="60"><div class="help">非核心线程空闲存活秒数。</div></div>
+              <div class="field"><label data-tip="Abort 抛异常；CallerRuns 回压调用线程；Discard 丢弃；DiscardOldest 丢最旧。">拒绝策略 <span class="key">rejectionPolicy</span></label><select><option>AbortPolicy</option><option>CallerRunsPolicy</option><option>DiscardPolicy</option><option>DiscardOldestPolicy</option></select><div class="help">Abort 抛异常；CallerRuns 回压调用线程；Discard 丢弃。</div></div>
+              <div class="field"><label data-tip="Tomcat 最大工作线程数；请求处理并发上限。">Tomcat 最大线程 <span class="key">server.tomcat.threads.max</span></label><input class="input" value="200"><div class="help">请求处理并发上限。</div></div>
+              <div class="field"><label data-tip="Tomcat 接受队列长度；满后拒绝连接。">Tomcat 接受队列 <span class="key">acceptCount</span></label><input class="input" value="100"><div class="help">连接等待队列；满后拒绝连接。</div></div>
+              <div class="field"><label data-tip="Tomcat 最小空闲线程。">最小空闲线程 <span class="key">minSpareThreads</span></label><input class="input" value="10"><div class="help">保持的空闲工作线程。</div></div>
+            </div>
+          </div>
+          <div class="card tight">
+            <div class="subhead">Caffeine L1</div>
+            <div class="grid g2">
+              <div class="field"><label>L1 开关 <span class="key">caffeineEnabled</span></label><select><option>开启</option><option>关闭（绕过并清空）</option></select><div class="help">关闭后不再命中本地缓存，并清空条目。</div></div>
+              <div class="field"><label>最大条目 <span class="key">maximumSize</span></label><input class="input" value="10000"><div class="help">本地缓存条目上限；超出按策略淘汰。</div></div>
+              <div class="field"><label>写入后过期 <span class="key">expireAfterWriteSeconds</span></label><input class="input" value="60"><div class="help">写入后多久过期；0 表示不启用。</div></div>
+              <div class="field"><label>访问后过期 <span class="key">expireAfterAccessSeconds</span></label><input class="input" value="30"><div class="help">最后一次访问后多久过期。</div></div>
+              <div class="field"><label>写入后刷新 <span class="key">refreshAfterWriteSeconds</span></label><input class="input" value="20"><div class="help">异步刷新间隔；不等于过期。</div></div>
+              <div class="field"><label>统计 <span class="key">recordStats</span></label><select><option>开启</option><option>关闭</option></select><div class="help">开启命中率/驱逐统计；关闭时指标显示不适用。</div></div>
+            </div>
+            <div class="hint">目标条目数 vs 实际条目数分开显示；每实例独立。</div>
+          </div>
+        </div>
       </div>
 
-      <div class="card wizard-panel" data-wpanel="4">
+<div class="card wizard-panel" data-wpanel="4">
         <h3 style="margin-top:0">流量与执行配置</h3>
         <div class="notice info">k6 是本次实验的统一流量触发层；以下配置对所有已选实验目标生效。</div>
         <div class="grid g3" style="margin-top:9px">
@@ -527,41 +608,51 @@
     </section>
 
     <!-- 实例 -->
-    <section class="page" data-page="instances">
-      <div class="notice info">实例/JVM 配置属 B4：本页是“当前状态 + 配置组库”，向导第 3 步只引用配置组；应用/重建/健康确认在预检查前完成。未启用节点置灰。</div>
+        <section class="page" data-page="instances">
+      <div class="notice info">实例/JVM 配置属 B4：本页展示“当前状态 + 配置组库”，完整参数在向导第 3 步编辑；应用/重建/健康确认在预检查前完成。未启用节点置灰且不可操作。</div>
       <div class="grid g3">
         <div class="card" data-instance-card="app-1">
-          <div class="card-head"><h3>app-1</h3><span class="chip ok" data-tip="配置已生效。">已生效</span></div>
+          <div class="card-head"><h3>app-1</h3><span class="chip ok" id="instStatus-app-1" data-tip="配置已生效。">已生效</span></div>
           <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>baseline</option><option>experiment-A</option></select></div>
           <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>21</option><option>8（已验证镜像）</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div></div>
-          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>G1</option><option>Parallel</option></select></div></div>
-          <div class="field" style="margin-top:8px"><label>业务池 <span class="key">core/max/queue</span></label><input class="input" value="16 / 64 / 500"></div>
-          <div class="field" style="margin-top:8px"><label>Caffeine L1</label><select><option>开启</option><option>关闭</option></select></div>
-          <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>G1</option><option>Parallel</option><option>Serial</option></select></div></div>
+          <div class="field" style="margin-top:8px"><label data-tip="业务池：核心/最大/队列；队列满后按拒绝策略处理。">业务池 <span class="key">core/max/queue</span></label><input class="input" value="16 / 64 / 500（Abort）"></div>
+          <div class="field" style="margin-top:8px"><label data-tip="Caffeine L1：最大条目、写入/访问过期、刷新与统计。">Caffeine L1</label><input class="input" value="开 · max 10000 · write 60s · access 30s · stats 开"></div>
+          <div class="hint">GC 参数：G1 · 200ms · 新代 5–60% · Region 4m · IHOP 45%</div>
+          <div class="hint">GC 日志：开 · /app/logs/gc.log · 20m×5 · OOM dump 开</div>
+          <div class="hint">额外 JVM：-XX:MaxMetaspaceSize=128m · MaxDirectMemorySize=64m</div>
+          <div class="btn-row" style="margin-top:10px"><button class="btn primary" onclick="restartInstance('app-1')">应用并重启</button><button class="btn ghost" onclick="showPage('wizard');showWizard(3);selectCfg('app-1')">完整参数</button><button class="btn ghost" onclick="toast('已回滚 app-1 到上一版配置')">回滚</button></div>
         </div>
         <div class="card" data-instance-card="app-2">
-          <div class="card-head"><h3>app-2</h3><span class="chip warn" data-tip="目标值已保存，需重启 JVM。">待重启</span></div>
+          <div class="card-head"><h3>app-2</h3><span class="chip warn" id="instStatus-app-2" data-tip="目标值已保存，需重启 JVM/容器。">待重启</span></div>
           <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>experiment-A</option><option>baseline</option></select></div>
           <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>21</option><option>8（已验证镜像）</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk21</option><option>jdk8</option></select></div></div>
-          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="128 / 256 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>Parallel</option><option>G1</option></select></div></div>
-          <div class="field" style="margin-top:8px"><label>业务池 <span class="key">core/max/queue</span></label><input class="input" value="8 / 32 / 200"></div>
-          <div class="field" style="margin-top:8px"><label>Caffeine L1</label><select><option>关闭</option><option>开启</option></select></div>
-          <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="128 / 256 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>Parallel</option><option>G1</option><option>Serial</option></select></div></div>
+          <div class="field" style="margin-top:8px"><label data-tip="业务池：核心/最大/队列；队列满后按拒绝策略处理。">业务池 <span class="key">core/max/queue</span></label><input class="input" value="8 / 32 / 200（CallerRuns）"></div>
+          <div class="field" style="margin-top:8px"><label data-tip="Caffeine L1：最大条目、写入/访问过期、刷新与统计。">Caffeine L1</label><input class="input" value="关 · max 5000 · write 30s · access 30s · stats 关"></div>
+          <div class="hint">GC 参数：Parallel · 4 线程 · NewRatio 2 · SurvivorRatio 8</div>
+          <div class="hint">GC 日志：开 · /app/logs/gc.log · 20m×5 · OOM dump 开</div>
+          <div class="hint">额外 JVM：-XX:MaxMetaspaceSize=128m · MaxDirectMemorySize=64m</div>
+          <div class="btn-row" style="margin-top:10px"><button class="btn primary" onclick="restartInstance('app-2')">应用并重启</button><button class="btn ghost" onclick="showPage('wizard');showWizard(3);selectCfg('app-2')">完整参数</button><button class="btn ghost" onclick="toast('已回滚 app-2 到上一版配置')">回滚</button></div>
         </div>
         <div class="card" data-instance-card="app-3">
-          <div class="card-head"><h3>app-3 · JDK8 外壳</h3><span class="chip gray" data-tip="LIMITED-OBSERVABILITY：热配置回读不可用；指标用 GC 日志/JMX/外部采集。">LIMITED</span></div>
+          <div class="card-head"><h3>app-3 · JDK8 外壳</h3><span class="chip gray" id="instStatus-app-3" data-tip="LIMITED-OBSERVABILITY：热配置回读不可用；指标用 GC 日志/JMX/外部采集。">LIMITED</span></div>
           <div class="field"><label>配置组 <span class="key">profile</span></label><select><option>experiment-B</option><option>baseline</option></select></div>
           <div class="grid g2" style="margin-top:8px"><div class="field"><label>JDK <span class="key">jdkVersion</span></label><select><option>8</option></select></div><div class="field"><label>镜像 <span class="key">imageTag</span></label><select><option>jdk8</option></select></div></div>
-          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC 日志</label><select><option>开启</option><option>关闭</option></select></div></div>
-          <div class="hint">仅支持容器/进程/GC 日志回读；应用内指标不完整，报告需标注来源。</div>
-          <button class="btn primary" style="margin-top:10px" disabled>应用配置（B4）</button>
+          <div class="grid g2" style="margin-top:8px"><div class="field"><label>Xms/Xmx</label><input class="input" value="256 / 512 MB"></div><div class="field"><label>GC <span class="key">gcCollector</span></label><select><option>Parallel</option><option>G1</option></select></div></div>
+          <div class="field" style="margin-top:8px"><label data-tip="业务池：核心/最大/队列；队列满后按拒绝策略处理。">业务池 <span class="key">core/max/queue</span></label><input class="input" value="16 / 64 / 500（Abort）"></div>
+          <div class="field" style="margin-top:8px"><label data-tip="Caffeine L1：最大条目、写入/访问过期、刷新与统计。">Caffeine L1</label><input class="input" value="开 · max 10000 · write 60s · access 30s · stats 开"></div>
+          <div class="hint">GC 参数：Parallel · 4 线程 · NewRatio 2 · SurvivorRatio 8</div>
+          <div class="hint">GC 日志：开 · /opt/logs/gc.log · 20m×5 · OOM dump 开</div>
+          <div class="hint">JDK8：热配置回读 READBACK_UNAVAILABLE；指标来源需标注。</div>
+          <div class="btn-row" style="margin-top:10px"><button class="btn primary" onclick="restartInstance('app-3')">应用并重启</button><button class="btn ghost" onclick="showPage('wizard');showWizard(3);selectCfg('app-3')">完整参数</button><button class="btn ghost" onclick="toast('已回滚 app-3 到上一版配置')">回滚</button></div>
         </div>
       </div>
-      <div class="card"><div class="card-head"><h3>配置组库</h3><span class="chip gray" data-tip="B4：保存的 JDK/堆/GC/业务池/缓存组合；向导按组引用。">B4</span></div>
-        <table class="table"><thead><tr><th>配置组</th><th>JDK / GC / 堆</th><th>业务池</th><th>缓存</th><th>用途</th></tr></thead><tbody>
-          <tr><td>baseline</td><td>21 / G1 / 256-512m</td><td>16/64/500</td><td>L1 开</td><td>基线组</td></tr>
-          <tr><td>experiment-A</td><td>21 / Parallel / 128-256m</td><td>8/32/200</td><td>L1 关</td><td>堆/GC/缓存对照</td></tr>
-          <tr><td>experiment-B</td><td>8 / 适用 GC / 256-512m</td><td>16/64/500</td><td>L1 开</td><td>JDK 对照（LIMITED）</td></tr>
+      <div class="card"><div class="card-head"><h3>配置组库</h3><span class="chip gray" data-tip="B4：保存的 JDK/堆/GC/JVM 参数/业务池/Caffeine/GC 日志组合；向导按组引用。">B4</span></div>
+        <table class="table"><thead><tr><th>配置组</th><th>JDK / GC / 堆</th><th>JVM 关键参数</th><th>业务池</th><th>Caffeine</th><th>GC 日志</th><th>用途</th></tr></thead><tbody>
+          <tr><td>baseline</td><td>21 / G1 / 256-512m</td><td>Metaspace 128m · Direct 64m</td><td>16/64/500 Abort</td><td>max 10000 · write 60s · stats 开</td><td>20m×5 · OOM dump</td><td>基线组</td></tr>
+          <tr><td>experiment-A</td><td>21 / Parallel / 128-256m</td><td>ParallelGCThreads 4 · NewRatio 2</td><td>8/32/200 CallerRuns</td><td>关闭</td><td>20m×5 · OOM dump</td><td>堆/GC/缓存对照</td></tr>
+          <tr><td>experiment-B</td><td>8 / Parallel / 256-512m</td><td>Metaspace 128m · Direct 64m</td><td>16/64/500 Abort</td><td>max 10000 · write 60s · stats 开</td><td>20m×5 · OOM dump</td><td>JDK 对照（LIMITED）</td></tr>
         </tbody></table>
       </div>
     </section>
@@ -905,6 +996,17 @@ function applyGates() {
     card.style.opacity = on ? '' : '.38';
     card.style.filter = on ? '' : 'grayscale(1)';
   });
+  $$('[data-node-row]').forEach(row => {
+    const on = state.javaNodes.includes(row.dataset.nodeRow);
+    row.classList.toggle('off', !on);
+    row.querySelectorAll('select,input,button').forEach(el => { el.disabled = !on; });
+  });
+  if ($('#cfgEnabled')) $('#cfgEnabled').textContent = '已启用 ' + javaCount() + '/3';
+  const missing = ['app-1','app-2','app-3'].filter(n => !state.javaNodes.includes(n));
+  if ($('#configGateNotice')) $('#configGateNotice').textContent = missing.length
+    ? '未启用节点：' + missing.join('、') + '。对应行置灰且不会出现在编辑器实例下拉框。'
+    : '全部节点已启用；所有行可编辑。';
+  rebuildConfigInstance();
   syncBaseControls();
 }
 
@@ -954,6 +1056,51 @@ if ($('#chaosProxy')) $('#chaosProxy').addEventListener('change', e => { state.c
 if ($('#wizChaos')) $('#wizChaos').addEventListener('change', e => { state.chaosProxy = e.target.checked; applyGates(); });
 if ($('#showSidecars')) $('#showSidecars').addEventListener('change', e => { state.showSidecars = e.target.checked; applyGates(); });
 
+function rebuildConfigInstance() {
+  const sel = $('#cfgInstance');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = state.javaNodes.map(n => `<option>${n}</option>`).join('');
+  if (state.javaNodes.includes(current)) sel.value = current;
+}
+function selectCfg(name) {
+  if (!state.javaNodes.includes(name)) { toast(name + ' 未启用，不能编辑'); return; }
+  const sel = $('#cfgInstance');
+  if (sel) sel.value = name;
+  showPage('wizard');
+  showWizard(3);
+  toast('当前编辑：' + name);
+}
+function updateGcGroups() {
+  const v = $('#cfgGc') ? $('#cfgGc').value : 'g1';
+  $$('.gc-g1').forEach(el => { el.style.display = v === 'g1' ? 'block' : 'none'; });
+  $$('.gc-parallel').forEach(el => { el.style.display = v === 'parallel' ? 'block' : 'none'; });
+  $$('.gc-common').forEach(el => { el.style.display = v === 'serial' ? 'none' : 'block'; });
+}
+function applyConfig() {
+  const st = $('#cfgStatus');
+  if (st) { st.textContent = '应用中'; st.className = 'chip warn'; }
+  toast('已提交受控重启：重建/重启 → 健康检查 → Nginx 上游 → Prometheus up → 探针');
+  setTimeout(() => {
+    if (st) { st.textContent = '已生效'; st.className = 'chip ok'; }
+    toast('配置已生效；稳定期内禁止起正式对照');
+  }, 1200);
+}
+function rollbackConfig() {
+  const st = $('#cfgStatus');
+  if (st) { st.textContent = '已回滚'; st.className = 'chip gray'; }
+  toast('已回滚到上一版配置并重新健康检查');
+}
+function restartInstance(name) {
+  if (!state.javaNodes.includes(name)) { toast(name + ' 未启用'); return; }
+  const st = $('#instStatus-' + name);
+  if (st) { st.textContent = '应用中'; st.className = 'chip warn'; }
+  toast(`已提交 ${name} 受控重启：重建 → 健康 → Nginx reload → 稳定期`);
+  setTimeout(() => {
+    if (st) { st.textContent = '已生效'; st.className = 'chip ok'; }
+    toast(`${name} 配置已生效`);
+  }, 1200);
+}
 function showWizard(step) {
   state.wizard = step;
   $$('.step').forEach(s => s.classList.toggle('active', Number(s.dataset.step) === step));
@@ -1115,6 +1262,7 @@ $$('#opsTabs .tab').forEach(tab => tab.addEventListener('click', () => {
   $$('[data-tabpanel]').forEach(p => p.classList.toggle('active', p.dataset.tabpanel === tab.dataset.tab));
 }));
 
+if ($('#cfgGc')) $('#cfgGc').addEventListener('change', updateGcGroups);
 if ($('#liveRecover')) $('#liveRecover').addEventListener('change', e => {
   if ($('#liveTtl')) $('#liveTtl').disabled = e.target.value === '永不恢复';
 });
@@ -1147,6 +1295,7 @@ $('#refreshBtn').addEventListener('click', () => toast('已刷新（演示）'))
 $('#autoSync').addEventListener('change', e => toast(e.target.checked ? '自动同步已开启（5s）' : '自动同步已关闭'));
 
 applyGates();
+updateGcGroups();
 syncLoadOnly();
 renderDistribution();
 updatePreview();
