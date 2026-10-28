@@ -187,3 +187,66 @@ docker compose --env-file code/lab/docker/.env.example \
 8. 重试（**换 key**）：`POST $BASE/lab/runs/$RUN/start`（`Idempotency-Key: a26-clean`）→ 200/202，run `RUNNING`；
    `GET $BASE/lab/operations/{operationId}` → `afterSummary.precheckVerdict`（WARN）与 `precheckWarnings=toxiproxy.clean`。
 9. 收尾：`POST $BASE/lab/runs/$RUN/stop` → `COMPLETED`，锁释放；记为 A26 通过并回填本节。
+
+## 补充：主会话真机 A26 + 监控必需项外置（2026-10-28，合并 `51ba5b8` 后）
+
+镜像沿用离线构建路径，imageId **`144406e5820b`**（含本补充的监控外置修正）。
+
+### 1. 基线预检查（只读）
+
+`GET /lab/runs/run-20261028-004/precheck` → `verdict=WARN`：
+`traffic.stopped/chaos.clean/operations.settled/monitoring.ready/resources.budget/images.consistent` 全 **PASS**，
+`toxiproxy.clean` 为 **WARN**（dev 栈没有 toxiproxy 层，按设计只警告）；
+`resources.budget` 明细 `8480MB limits + 1024MB reserve <= 15610MB`；
+`images.consistent` 三个 app 共用 `sha256:5b18a49d504c...`。
+
+### 2. A26 阻断（真机 PASS）
+
+```
+POST /lab/traffic/start           → 200 running
+POST /chaos/instances/jl-app-2/actions {"action":"freeze","ttlSeconds":15} → 202
+POST /lab/runs/run-20261028-004/start → 409 / 40903
+```
+响应 `data` 为完整报告：`blocking` 含 `traffic.stopped`（jl-traffic running）与 `chaos.clean`
+（1 个活动动作，`jl-app-2 freeze (14s left)`，带 remainingTtlSeconds）；`warnings` 含 toxiproxy。
+副作用的“零残留”核验：run 仍 **DRAFT**、`lab_env_lock` **0 行**、
+`lab_operation` 记 **FAILED**（`PrecheckBlockedException: run precheck BLOCKED: traffic.stop...`）。
+
+清理（`POST /chaos/stop-all` + `POST /lab/traffic/stop`）后再查 → `verdict=WARN`（仅 toxiproxy）；
+用新幂等键重试 start → **200 / APPLIED**，`afterSummary` 记录
+`precheckVerdict=WARN` 与 `precheckWarnings=toxiproxy.clean`；stop → COMPLETED，锁归零。
+
+### 3. 监控必需项外置（合并后主会话修正）
+
+原实现把 `up{job="seckill-app"}`、`sum(up{job="redis-exporter"})`、`sum(mysql_cluster_probe_up)`
+三条 PromQL 写死在 `RunPrecheckService`：dev 单机（无 `mysql_cluster_probe_up`）或 ha 渲染
+（无 `redis-exporter`，只有 `redis-exporter-ha`）会**每次 start 都被阻断**，违反规约 §1。
+已改为外置：
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `LAB_PRECHECK_REQUIRE_REDIS_EXPORTER` | true | 是否要求 `sum(up{job="redis-exporter"}) >= 1` |
+| `LAB_PRECHECK_REQUIRE_MYSQL_PROBE` | true | 是否要求 `mysql_cluster_probe_up == 1` |
+| `LAB_PRECHECK_EXTRA_QUERIES` | 空 | 分号分隔 `name=promql`，每条须返回非空瞬时结果（阈值写在 PromQL 里，例如 `redis-ha=sum(up{job="redis-exporter-ha"}) >= 1`） |
+
+`extra-queries` 在启动时校验（`name=promql` 形状、名称正则、去重、上限 20）；解析器对畸形条目防御性跳过。
+测试新增：按栈关闭两项后仍 PASS（detail 标 `not-required`）、额外查询缺序列 → BLOCK / 有值 → PASS、
+配置形状/名称/重复校验。链路发现脚本已覆盖 `LAB_PRECHECK_*`（现共 8 chaos + 59 ledger/metrics/precheck 键）。
+
+### 4. 回归闸门
+
+| 闸门 | 结果 |
+|---|---|
+| `mvn -pl services/chaos-controller -am test` | **474 / 0 / 0 / 0** |
+| `mvn test`（全量） | **1029 / 0 / 0 / 0** |
+| `smoke.sh` | 7/7 |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL** |
+
+> 说明：A26 期间背景 traffic 与之前的 smoke 把 product 1 库存压空，首轮 smoke/verify 报
+> `40901 Sold out`；`reset-lab.sh --yes` 复位演示基线（stock=100/orders=0）后全绿。属演示数据状态，不是代码回归。
+
+### 5. 遗留
+
+- `toxiproxy.clean` 在 dev 栈恒 WARN（无该层）；`enabled=false` 的栈可忽略该警告。
+- 阻断后的重试需换 `Idempotency-Key`（同 key 会回放 FAILED，符合幂等语义）。
+- `check-timeout` 只阻止新检查开始；已在进行的 Docker/Prometheus 调用受各自超时约束。
