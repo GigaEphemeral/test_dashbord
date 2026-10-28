@@ -368,3 +368,11 @@ clock.instant() > deadline → 超时
 - **配置**：`LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS` 三处同默认 30（yml/compose/.env.example），env 接线自动发现。
 - **测试**：`BenchRunWatchdogTest` 新增 4 条（STOPPING 过宽限完成、宽限内不动、容器仍活不动、第二跳暂存后下一 tick 补完成）；全模块 **584 / 0 / 0 / 0**，env 接线 **91 PASS**。
 - **仍未验证**：真实台账暂存窗口下的 STOPPING 恢复（真机 A20 会覆盖常规 stop/超时路径，台账故障注入不在本步）。
+
+
+## 补充：run 元数据 `note`/`source`（真机 A01 首次启动发现，2026-10-28）
+
+- **问题**：A01 真机用 `{"note":"b2-02-live","LOAD_START_VUS":1,"LOAD_VUS":2,"LOAD_DURATION":"5s"}` 创建 run 后 start 返回 400，run 变 FAILED：planner 把 `note` 当成未知 k6 参数拒绝。`note` 是 run 标签/清理 marker，不是 k6 参数。
+- **修正**：planner 增加元数据白名单 `note`/`source`：必须是 ≤200 字符、无控制字符的非空字符串；只留在 `lab_run_param`，**不渲染进 k6 容器环境**。未知参数仍拒绝；强制值仍拒绝。
+- **测试**：planner 新增 2 条（元数据被接受且不转发；非法元数据被拒），`BenchLaunchPlannerTest` **27/27**；全模块 **586 / 0 / 0 / 0**。
+- **口径**：console-smoke 用 `note=console-smoke` 作为自有 run 的清理 marker（不再依赖非白名单 scenario 前缀）。

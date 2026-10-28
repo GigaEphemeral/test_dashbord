@@ -168,6 +168,29 @@ class BenchLaunchPlannerTest {
     }
 
     @Test
+    void runMetadataIsAcceptedButNeverForwarded() {
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "smoke",
+                Map.of("note", "console-smoke", "source", "playwright", "SMOKE_VUS", 2));
+
+        assertEquals("2", plan.env().get("SMOKE_VUS"));
+        assertFalse(plan.env().containsKey("note"));
+        assertFalse(plan.env().containsKey("source"));
+    }
+
+    @Test
+    void invalidRunMetadataIsRejected() {
+        assertTrue(assertThrows(BenchLaunchRejectedException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of("note", 5)))
+                .getMessage().contains("run metadata"));
+        assertTrue(assertThrows(BenchLaunchRejectedException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of("note", "x".repeat(201))))
+                .getMessage().contains("at most 200"));
+        assertTrue(assertThrows(BenchLaunchRejectedException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of("note", "a\nb")))
+                .getMessage().contains("control characters"));
+    }
+
+    @Test
     void typeMismatchIsRejected() {
         assertRejected("smoke", Map.of("SMOKE_VUS", "10"), "expects a number");
         assertRejected("smoke", Map.of("ERROR_RATE", "fast"), "expects a number");

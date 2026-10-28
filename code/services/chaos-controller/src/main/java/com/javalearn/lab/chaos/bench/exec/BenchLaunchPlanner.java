@@ -53,6 +53,13 @@ public class BenchLaunchPlanner {
 
     private static final Set<String> FORCED_KEYS = Set.of(RUN_ID, BASE_URL, PROMETHEUS_RW_SERVER_URL,
             PROMETHEUS_RW_TREND_STATS, PROMETHEUS_RW_PUSH_INTERVAL);
+    /**
+     * Run metadata, not k6 parameters: accepted on purpose, validated as a short
+     * string and never rendered into the container environment. {@code note} is
+     * the operator label the console/smoke use to find their own runs.
+     */
+    private static final Set<String> METADATA_KEYS = Set.of("note", "source");
+    private static final int METADATA_MAX_LENGTH = 200;
     private static final String LABEL_APP = "lab";
     private static final String LABEL_ROLE = "lab.role";
     private static final String LABEL_RUN_ID = "lab.run-id";
@@ -265,6 +272,11 @@ public class BenchLaunchPlanner {
                         + "derived from the run and the configuration and cannot be overridden "
                         + "(forced: RUN_ID, BASE_URL, K6_PROMETHEUS_RW_*)");
             }
+            if (METADATA_KEYS.contains(key)) {
+                validateMetadata(key, entry.getValue());
+                // Metadata stays in lab_run_param; it is never a k6 env value.
+                continue;
+            }
             if (!definition.params().containsKey(key)) {
                 throw new BenchLaunchRejectedException("unknown parameter '" + key + "' for scenario '"
                         + scenario + "'; accepted parameters: "
@@ -274,6 +286,28 @@ public class BenchLaunchPlanner {
             effective.put(key, entry.getValue());
         }
         return effective;
+    }
+
+    private void validateMetadata(String key, Object value) {
+        if (!(value instanceof String text)) {
+            throw new BenchLaunchRejectedException("parameter '" + key + "' is run metadata and "
+                    + "must be a string; got " + describe(value));
+        }
+        if (text.isBlank()) {
+            throw new BenchLaunchRejectedException("parameter '" + key + "' is run metadata and "
+                    + "must not be blank");
+        }
+        if (text.length() > METADATA_MAX_LENGTH) {
+            throw new BenchLaunchRejectedException("parameter '" + key + "' is run metadata and "
+                    + "must be at most " + METADATA_MAX_LENGTH + " characters; got " + text.length());
+        }
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < 0x20 || c == 0x7f) {
+                throw new BenchLaunchRejectedException("parameter '" + key + "' is run metadata and "
+                        + "must not contain newlines or control characters");
+            }
+        }
     }
 
     private void validateOverride(String scenario, String key, Object fallback, Object value) {
