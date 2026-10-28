@@ -223,6 +223,35 @@ const spikeStages = [
 const thinkTime = duration('THINK_TIME', '1s');
 const pollInterval = duration('SECKILL_POLL_INTERVAL', '1s');
 
+/**
+ * Stage2 B2-03a traffic attribution. The runner (chaos-controller planner)
+ * injects both values; direct `run.sh` runs fall back to the documented
+ * defaults. Mode is a closed enum because an unknown value would silently
+ * mislabel the run; the instance must be a plain label, never a URL.
+ */
+const TRAFFIC_MODES = ['via-nginx', 'target-instance'];
+
+function trafficMode() {
+  const value = text('TRAFFIC_MODE', 'via-nginx');
+  if (TRAFFIC_MODES.indexOf(value) === -1) {
+    throw new Error(
+      `[k6/config] TRAFFIC_MODE must be one of ${TRAFFIC_MODES.join(', ')}, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+function trafficTargetInstance() {
+  const value = text('TARGET_INSTANCE', 'nginx').trim();
+  if (value.length === 0) {
+    throw new Error('[k6/config] TARGET_INSTANCE must not be blank');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`[k6/config] TARGET_INSTANCE must be a plain instance label, got "${value}"`);
+  }
+  return value;
+}
+
 export const config = {
   runId,
   baseUrl,
@@ -286,6 +315,9 @@ export const config = {
   traffic: {
     vus: integer('TRAFFIC_VUS', 50, 1),
     duration: duration('TRAFFIC_DURATION', '30m'),
+    // Stage2 B2-03a attribution, also used by lib/http.js request tags.
+    mode: trafficMode(),
+    targetInstance: trafficTargetInstance(),
   },
   thresholds: {
     p95Ms,

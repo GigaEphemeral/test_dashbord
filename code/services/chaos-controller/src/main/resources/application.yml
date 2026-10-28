@@ -174,7 +174,13 @@ lab:
       reports-mount: ${LAB_BENCH_EXEC_REPORTS_MOUNT:/reports}
       reports-volume: ${LAB_BENCH_EXEC_REPORTS_VOLUME:jl-k6-reports}
       prometheus-rw-url: ${LAB_BENCH_EXEC_PROMETHEUS_RW_URL:http://prometheus:9090/api/v1/write}
-      base-url: ${LAB_BENCH_EXEC_BASE_URL:http://nginx}
+      # Stage2 B2-03a: via-nginx BASE_URL. The old LAB_BENCH_EXEC_BASE_URL
+      # key is retired; this key carries the same default.
+      nginx-base-url: ${LAB_BENCH_EXEC_NGINX_BASE_URL:http://nginx}
+      # Fixed service-name table for target-instance runs (never a URL/host/
+      # port request field) and the port the planner appends to it.
+      target-instances: ${LAB_BENCH_EXEC_TARGET_INSTANCES:app-1,app-2,app-3}
+      target-port: ${LAB_BENCH_EXEC_TARGET_PORT:8080}
       container-prefix: ${LAB_BENCH_EXEC_CONTAINER_PREFIX:jl-k6-}
       max-vus: ${LAB_BENCH_EXEC_MAX_VUS:1000}
       max-duration-seconds: ${LAB_BENCH_EXEC_MAX_DURATION_SECONDS:3600}

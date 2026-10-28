@@ -366,7 +366,8 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
         }
     }
 
-    private Snapshot toSnapshot(InspectContainerResponse inspected, String fallbackName) {
+    /** Package-private for the label-reading regression test (no Docker daemon). */
+    static Snapshot toSnapshot(InspectContainerResponse inspected, String fallbackName) {
         InspectContainerResponse.ContainerState state = inspected.getState();
         String status = state == null || state.getStatus() == null
                 ? "UNKNOWN" : state.getStatus().toUpperCase(Locale.ROOT);
@@ -380,8 +381,11 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
             finishedAt = normalizeTimestamp(state.getFinishedAt());
         }
         String configImage = inspected.getConfig() == null ? null : inspected.getConfig().getImage();
-        String scenario = inspected.getConfig() == null ? null
-                : labels(inspected.getConfig().getLabels()).get(SCENARIO_LABEL);
+        Map<String, String> labels = inspected.getConfig() == null ? Map.of()
+                : labels(inspected.getConfig().getLabels());
+        String scenario = labels.get(SCENARIO_LABEL);
+        String trafficMode = labels.get(LABEL_TRAFFIC_MODE);
+        String targetInstance = labels.get(LABEL_TARGET_INSTANCE);
         String name = inspected.getName();
         if (name != null && name.startsWith("/")) {
             name = name.substring(1);
@@ -390,7 +394,7 @@ public class DockerK6ContainerGateway implements K6ContainerGateway {
             name = fallbackName;
         }
         return new Snapshot(status, name, inspected.getId(), exitCode, startedAt, finishedAt,
-                configImage, scenario);
+                configImage, scenario, trafficMode, targetInstance);
     }
 
     private void requireK6Container(String containerName) {

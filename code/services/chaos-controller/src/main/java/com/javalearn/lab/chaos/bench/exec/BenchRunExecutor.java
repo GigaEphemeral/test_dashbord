@@ -97,8 +97,9 @@ public class BenchRunExecutor {
             }
         }
         return new BenchExecutionState(snapshot.status(), snapshot.containerName(),
-                snapshot.containerId(), snapshot.scenario(), snapshot.exitCode(),
-                snapshot.startedAt(), snapshot.finishedAt(), available, bytes,
+                snapshot.containerId(), snapshot.scenario(), snapshot.trafficMode(),
+                snapshot.targetInstance(), snapshot.exitCode(), snapshot.startedAt(),
+                snapshot.finishedAt(), available, bytes,
                 noteFor(snapshot, available, bytes));
     }
 

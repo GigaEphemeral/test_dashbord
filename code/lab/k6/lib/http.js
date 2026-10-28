@@ -3,7 +3,8 @@
  *
  * Responsibilities:
  * - build absolute URLs from config (never from scenario literals);
- * - attach the per-run `run_id` tag and a `flow` tag to every request;
+ * - attach the per-run `run_id` tag, a `flow` tag and the Stage2 B2-03a
+ *   attribution tags (`instance`, `traffic_mode`) to every request;
  * - mark expected business statuses (200/202/409/429 for seckill) through
  *   http.expectedStatuses so they do not count as failed requests;
  * - record custom error/server-error rates and seckill rejection counters;
@@ -58,11 +59,20 @@ export function call(method, path, options) {
     tags: {
       run_id: config.runId,
       flow: opts.flow || 'unknown',
+      // Stage2 B2-03a: every request is attributable to the traffic mode and
+      // the instance the runner pinned (nginx when going through the upstream).
+      instance: config.traffic.targetInstance,
+      traffic_mode: config.traffic.mode,
     },
     responseCallback: http.expectedStatuses(...acceptStatuses),
   };
   if (opts.tags) {
     Object.assign(params.tags, opts.tags);
+    // Attribution is owned by the runner-injected config: a scenario may add
+    // tags through opts.tags, but it can never forge which instance/mode
+    // produced the request.
+    params.tags.instance = config.traffic.targetInstance;
+    params.tags.traffic_mode = config.traffic.mode;
   }
 
   const body = opts.body === undefined || opts.body === null ? null : JSON.stringify(opts.body);

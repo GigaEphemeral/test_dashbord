@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,6 +67,8 @@ class BenchRunExecutorTest {
         assertEquals(1, gateway.createCalls);
         assertEquals("RUNNING", state.status());
         assertEquals("cid-" + RUN_ID, state.containerId());
+        assertEquals("via-nginx", state.trafficMode());
+        assertEquals("nginx", state.targetInstance());
     }
 
     @Test
@@ -135,6 +138,22 @@ class BenchRunExecutorTest {
         assertEquals(0L, state.reportBytes());
         assertNotNull(state.note());
         assertTrue(state.note().contains("no k6 container"), state.note());
+        // ABSENT has no container labels to read.
+        assertNull(state.trafficMode());
+        assertNull(state.targetInstance());
+    }
+
+    @Test
+    void stateCarriesTheTrafficAttributionReadFromContainerLabels() {
+        gateway.snapshot = new K6ContainerGateway.Snapshot("EXITED", "jl-k6-" + RUN_ID, "cid",
+                0, "2026-10-28T10:00:00Z", "2026-10-28T10:05:00Z", "grafana/k6:1.3.0", "load",
+                "target-instance", "app-2");
+
+        BenchExecutionState state = executor.state(RUN_ID);
+
+        assertEquals("target-instance", state.trafficMode());
+        assertEquals("app-2", state.targetInstance());
+        assertEquals("load", state.scenario());
     }
 
     @Test
@@ -296,6 +315,8 @@ class BenchRunExecutorTest {
         labels.put("lab.role", "k6");
         labels.put("lab.run-id", runId);
         labels.put("lab.scenario", "smoke");
+        labels.put(K6ContainerGateway.LABEL_TRAFFIC_MODE, "via-nginx");
+        labels.put(K6ContainerGateway.LABEL_TARGET_INSTANCE, "nginx");
         String report = "/reports/" + runId + "/summary.json";
         return new BenchLaunchPlan(runId, "smoke", "jl-k6-" + runId, "grafana/k6:1.3.0",
                 List.of("run", "--quiet", "--summary-export", report,
@@ -303,7 +324,9 @@ class BenchRunExecutorTest {
                 env,
                 List.of(new BenchLaunchPlan.Bind("/host/k6", "/scripts", true),
                         new BenchLaunchPlan.Bind("jl-k6-reports", "/reports", false)),
-                labels, "jl-net", report, report);
+                labels, "jl-net", report, report,
+                new BenchLaunchPlan.Traffic("via-nginx", "nginx", "http://nginx", false, false,
+                        "app-1:8080=1,app-2:8080=1,app-3:8080=1"));
     }
 
     /** In-memory gateway: records calls, never touches Docker. */
@@ -343,7 +366,9 @@ class BenchRunExecutorTest {
             created = plan;
             snapshot = new K6ContainerGateway.Snapshot("RUNNING", plan.containerName(),
                     "cid-" + plan.runId(), null, "2026-10-28T10:00:00Z", null, plan.image(),
-                    plan.scenario());
+                    plan.scenario(),
+                    plan.labels().get(K6ContainerGateway.LABEL_TRAFFIC_MODE),
+                    plan.labels().get(K6ContainerGateway.LABEL_TARGET_INSTANCE));
             return "cid-" + plan.runId();
         }
 
