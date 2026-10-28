@@ -4,17 +4,23 @@
  * The old four-tab single page is gone: this script walks the seven sections
  * (总览 / 场景向导 / 实例与 JVM / Benchmark / 实时监控 / 故障与缓存实验 / 实验记录)
  * and asserts the same capabilities on their new pages. The ledger block is new:
- * it creates a uniquely named DRAFT run, reads its pre-check, drives start/stop
- * through the operation contract, checks the metric quality badges, reloads the
- * page and proves the selected run is restored from localStorage.
+ * it creates a DRAFT run for the UI-launchable `load` scenario, reads its
+ * pre-check, drives start/stop through the operation contract, checks the k6
+ * execution card (state, container, log tail, report button), checks the metric
+ * quality badges, reloads the page and proves the selected run is restored from
+ * localStorage.
  *
  * A BLOCKED pre-check is a valid outcome (the controller refuses the start with
  * 409/40903); in that branch the script asserts the blocking evidence and the
- * disabled start button instead of forcing the run. Both branches keep the same
- * number of assertions so the baseline is stable.
+ * disabled start button instead of forcing the run. The blocked branch keeps
+ * the pre-existing four assertions; the expected !blocked branch adds four k6
+ * assertions and folds the "container no longer RUNNING" condition into the
+ * existing stop/COMPLETED check (67 -> 71).
  *
  * Cleanup: traffic stop, guide reset, chaos stop-all, thread stop-all, cache
- * mode off and stop any RUNNING/UNKNOWN run left by a crashed attempt.
+ * mode off and any RUNNING/UNKNOWN run this tool created. Ownership is proven
+ * by the legacy scenario prefix or by the request-param note marker
+ * (`console-smoke`) on a UI-launchable scenario; user runs are left alone.
  *
  * Run through code/lab/scripts/console-smoke.sh (it resolves Playwright,
  * CONSOLE_URL and the lab token). Requires the stack running and the dashboard
@@ -31,10 +37,29 @@ const API_BASE = process.env.LAB_API_BASE || 'http://127.0.0.1:8080/lab-api';
 const SCENARIO_ID = process.env.SMOKE_SCENARIO_ID || 'quick-failover';
 const LOG_CONTAINER = process.env.SMOKE_LOG_CONTAINER || 'jl-app-1';
 const ACTION_TIMEOUT_MS = Number(process.env.SMOKE_ACTION_TIMEOUT_MS || 20000);
-// Unique per run so the ledger assertions never depend on an empty database.
+// The ledger now launches real k6 containers, and the start gate only accepts
+// the manifest's views.ui whitelist (smoke/load/spike). A synthetic scenario
+// name would be refused with 400/40002 and the run would go FAILED, so the
+// default is a short `load`. LOAD_DURATION=30s keeps the run RUNNING while the
+// k6 card/log/report assertions read the live container; the watchdog would
+// otherwise complete it first. Every value stays env-overridable.
 const RUN_SCENARIO_PREFIX = process.env.SMOKE_RUN_SCENARIO_PREFIX || 'console-smoke-';
-const RUN_SCENARIO = process.env.SMOKE_RUN_SCENARIO || `${RUN_SCENARIO_PREFIX}${Date.now()}`;
-const RUN_PARAMS = process.env.SMOKE_RUN_PARAMS || '{"note":"console-smoke","source":"playwright"}';
+const RUN_SCENARIO = process.env.SMOKE_RUN_SCENARIO || 'load';
+const RUN_PARAMS = process.env.SMOKE_RUN_PARAMS
+  || '{"note":"console-smoke","source":"playwright","LOAD_START_VUS":1,"LOAD_VUS":5,"LOAD_DURATION":"30s"}';
+// Marker used by stopActiveRuns to close a leftover run this tool created even
+// when its scenario is `load` (the legacy prefix no longer matches).
+const SMOKE_RUN_MARKER = (() => {
+  try {
+    const parsed = JSON.parse(RUN_PARAMS);
+    return typeof parsed?.note === 'string' ? parsed.note : '';
+  } catch {
+    return '';
+  }
+})();
+// UI-launchable scenarios; refreshed from the catalog, with the manifest
+// defaults as the offline fallback.
+let UI_SCENARIOS = ['smoke', 'load', 'spike'];
 // Defaults mirror VITE_LAB_KPI_KEYS / VITE_LAB_RUN_METRIC_KEYS (12 + 1 probe).
 const KPI_COUNT = Number(process.env.SMOKE_KPI_COUNT || 13);
 const RUN_METRIC_COUNT = Number(process.env.SMOKE_RUN_METRIC_COUNT || 13);
@@ -138,17 +163,51 @@ async function apiPost(path, body) {
 }
 
 /**
- * A crashed smoke may still hold the write-run lock. Only runs this tool owns
- * (scenario prefix) are closed; a user's active demo is left alone.
+ * A crashed smoke may still hold the write-run lock. Two ownership marks are
+ * accepted: the legacy scenario prefix, and a run whose request params carry
+ * this tool's note marker while its scenario is UI-launchable (the default is
+ * now `load`, so the prefix alone cannot identify it). A user's active demo is
+ * left alone.
  */
+async function loadUiScenarios() {
+  try {
+    const catalog = unwrap(await apiRequest('/lab/bench/scenarios'));
+    const ui = catalog?.views?.ui;
+    if (Array.isArray(ui) && ui.length > 0) {
+      UI_SCENARIOS = ui;
+    }
+  } catch (err) {
+    console.log(`WARN  could not read views.ui (${err.message}); using ${UI_SCENARIOS.join(',')}`);
+  }
+}
+
+async function isSmokeOwnedRun(run) {
+  if (String(run.scenario || '').startsWith(RUN_SCENARIO_PREFIX)) {
+    return true;
+  }
+  if (!SMOKE_RUN_MARKER || !UI_SCENARIOS.includes(run.scenario)) {
+    return false;
+  }
+  try {
+    const detail = unwrap(await apiRequest(`/lab/runs/${encodeURIComponent(run.runId)}`));
+    const request = (detail?.params || []).find((param) => param.group === 'request');
+    return request?.payload?.note === SMOKE_RUN_MARKER;
+  } catch (err) {
+    console.log(`WARN  could not read params of run ${run.runId}: ${err.message}`);
+    return false;
+  }
+}
+
 async function stopActiveRuns() {
+  await loadUiScenarios();
+  const seen = new Set();
   for (const status of ['RUNNING', 'UNKNOWN']) {
     try {
-      const page = unwrap(await apiRequest(`/lab/runs?status=${status}&limit=10`));
-      const owned = (page?.items || []).filter(
-        (run) => String(run.scenario || '').startsWith(RUN_SCENARIO_PREFIX),
-      );
-      for (const run of owned) {
+      const page = unwrap(await apiRequest(`/lab/runs?status=${status}&limit=50`));
+      for (const run of page?.items || []) {
+        if (seen.has(run.runId)) continue;
+        seen.add(run.runId);
+        if (!(await isSmokeOwnedRun(run))) continue;
         try {
           await apiRequest(`/lab/runs/${encodeURIComponent(run.runId)}/stop`, {
             method: 'POST',
@@ -932,8 +991,9 @@ async function main() {
     const verdict = precheckReady.ok ? precheckReady.detail : '';
     const blocked = verdict === 'BLOCKED';
 
-    // Both branches emit four assertions so the baseline does not depend on
-    // whether the environment passes the pre-check.
+    // A blocked environment keeps the pre-existing four assertions. The
+    // expected (passing) environment takes the !blocked branch, which adds four
+    // k6 assertions; that is why the documented baseline is 71.
     if (!blocked) {
       await page.getByTestId('run-start').click();
       const started = await waitOperation(page);
@@ -945,6 +1005,55 @@ async function main() {
         'runs: start returns an operation and moves the run to RUNNING',
         started.ok && running.ok,
         `${started.detail}; status=${running.detail}`,
+      );
+
+      // The start hook launches a real k6 container. These assertions read the
+      // k6 card while the 30s load is still RUNNING. ABSENT is a normal 200
+      // ("not started/cleaned up") and must not be reported as an error.
+      const k6Card = await waitForCondition(async () => {
+        if ((await page.getByTestId('k6-run-card').count()) === 0) {
+          return { ok: false, detail: 'k6 card not rendered' };
+        }
+        const statusLoc = page.getByTestId('k6-status');
+        if ((await statusLoc.count()) === 0) {
+          return { ok: false, detail: 'k6 status not rendered' };
+        }
+        const status = ((await statusLoc.textContent()) || '').trim();
+        return { ok: status === 'RUNNING', detail: `status=${status}` };
+      });
+      check('runs: the k6 card reports the started container as RUNNING', k6Card.ok, k6Card.detail);
+
+      const k6Container = ((await page.getByTestId('k6-container').textContent()) || '').trim();
+      check(
+        'runs: the k6 container name carries the jl-k6- prefix',
+        k6Container.startsWith('jl-k6-'),
+        k6Container,
+      );
+
+      if (k6Card.ok) {
+        try {
+          await page.getByTestId('k6-log-refresh').click({ timeout: 5000 });
+        } catch {
+          // the card is busy or the run moved on; the poller below decides
+        }
+      }
+      const k6Log = await waitForCondition(async () => {
+        const view = page.getByTestId('k6-log-view');
+        if ((await view.count()) === 0) {
+          return { ok: false, detail: 'log view not rendered' };
+        }
+        const text = ((await view.textContent()) || '').trim();
+        return { ok: text.length > 0, detail: `${text.length} chars` };
+      });
+      check('runs: the k6 log tail is rendered after refresh', k6Log.ok, k6Log.detail);
+
+      const reportLoc = page.getByTestId('k6-report-download');
+      const reportPresent = (await reportLoc.count()) > 0;
+      const reportEnabled = reportPresent && (await reportLoc.isEnabled());
+      check(
+        'runs: report download stays disabled until k6 exits',
+        reportPresent && !reportEnabled,
+        `present=${reportPresent} enabled=${reportEnabled}`,
       );
 
       const timeline = await waitForCondition(async () => {
@@ -960,10 +1069,23 @@ async function main() {
           const text = ((await page.getByTestId('run-status-badge').textContent()) || '').trim();
           return { ok: text === 'COMPLETED', detail: text };
         });
+        // The container is stopped with the run. ABSENT is the rendered label
+        // for "not started/cleaned up"; either terminal value is acceptable.
+        const k6Idle = await waitForCondition(async () => {
+          const statusLoc = page.getByTestId('k6-status');
+          if ((await statusLoc.count()) === 0) {
+            return { ok: false, detail: 'k6 status not rendered' };
+          }
+          const status = ((await statusLoc.textContent()) || '').trim();
+          return {
+            ok: ['EXITED', 'ABSENT', '未启动/已清理'].includes(status),
+            detail: status,
+          };
+        });
         check(
-          'runs: stop returns an operation and completes the run',
-          stopped.ok && completed.ok,
-          `${stopped.detail}; status=${completed.detail}`,
+          'runs: stop completes the run and the k6 container leaves RUNNING',
+          stopped.ok && completed.ok && k6Idle.ok,
+          `${stopped.detail}; status=${completed.detail}; k6=${k6Idle.detail}`,
         );
       } else {
         check('runs: stop returns an operation and completes the run', false, 'start did not reach RUNNING');

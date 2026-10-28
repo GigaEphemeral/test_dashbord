@@ -384,3 +384,54 @@ clock.instant() > deadline → 超时
 - **修正**：新增 `OperationContext`（ThreadLocal），`OperationService` 在 worker 线程绑定当前 operationId；`RunPrecheckService.enforce` 按**精确 operationId** 排除自身（不论状态），GET 报告仍不忽略任何操作；无上下文时保留旧的 `REQUESTED` 启发式作为回退。其他 PENDING_CONFIRMATION/UNKNOWN 兄弟仍阻断。
 - **测试**：`RunPrecheckServiceTest` 新增 1 条（自身 PENDING_CONFIRMATION 被忽略、其他 PENDING 仍阻断）；全模块 **587 / 0 / 0 / 0**。
 - **口径**：这不是放宽门禁，只是把"自身 in-flight 操作"从"未结兄弟"里按 id 摘出来。
+
+
+## 补充：B2-02b-2b 控制台 k6 卡与 console-smoke（2026-10-28）
+
+### UI（run 详情「k6 执行」卡）
+
+- 位置：`RunLedger.vue` 的 run 详情之后、预检查之前；根节点 `data-testid="k6-run-card"`。
+
+| 字段 | testid | 说明 |
+|---|---|---|
+| 状态徽标 | `k6-status` | `ABSENT` 渲染「未启动/已清理」，其余原样 `CREATED/RUNNING/EXITED`，颜色按 exitCode 区分 |
+| 容器名 | `k6-container` | 计划容器名（ABSENT 时也有，`jl-k6-<runId>`） |
+| scenario | `k6-scenario` | `lab.scenario` 标签 |
+| exitCode | `k6-exit-code` | 运行中/ABSENT 为 — |
+| started/finished | `k6-started`、`k6-finished` | Docker ISO 时间转本地 |
+| 报告 | `k6-report-available`、`k6-report-bytes` | 可用/未生成 + B/KB/MB |
+| note | `k6-note` | 后端提示（无容器/报告未生成/超限） |
+| 日志 | `k6-log-view`、`k6-log-truncated` | tail=100；`truncated` 显示「已截断」 |
+
+- 轮询：选中 run 立即读一次 `GET /lab/runs/{id}/k6`；RUNNING/STOPPING/VERIFYING/UNKNOWN 或 k6 仍 CREATED/RUNNING 时随 5s `syncTick` 继续；run 进入终态时若 k6 仍是 RUNNING 会再读一次（避免看门狗抢先完成时卡片停在 RUNNING），随后停止；503 错误也不逐 tick 重试；start/stop 动作后强制刷新一次。
+- 日志：`k6-log-refresh` 调 `GET …/k6/logs?tail=100`；容器不存在（404）显示「尚未启动或已清理」提示，不当作告警；200 但空文本显示「（k6 暂无输出）」，保证日志区始终可读。
+- 报告：`k6-report-download` 仅 `reportAvailable=true` 且不忙时可用；带 `X-Lab-Token` fetch → blob → 临时 `<a download>`；404（未生成）/413（超限）保留原状态语义并显示。
+- 失败隔离：503/50303 只在卡内显示「k6 执行层不可用」，不设置全局 DEGRADED、不使用 `role="alert"`，run 详情/预检查/操作/指标不受影响。
+- 新建表单：`fetchBenchScenarios` 的 `views.ui` 填 `run-create-scenario-options` datalist，并提示「其它场景 start 会被 400/40002 拒绝，params 只接受 manifest 声明的键」；目录 503 只退化为手动输入提示，不阻塞创建。
+- 常驻口径：`App.vue` 的 `steadyContainers` 无条件排除 `jl-k6-` 前缀（即使 `VITE_LAB_ON_DEMAND_CONTAINERS` 显式配置）；`labModel.js` 新增 role `k6`（label「按需压测」、group `load`），`GET /containers` 里的按需 k6 不会抬高常驻计数。
+
+### console-smoke
+
+- 默认 `SMOKE_RUN_SCENARIO=load`；默认 `SMOKE_RUN_PARAMS={"note":"console-smoke","source":"playwright","LOAD_START_VUS":1,"LOAD_VUS":5,"LOAD_DURATION":"30s"}`（均可 env 覆盖）。30s 保证断言期间 run 仍 RUNNING，不被看门狗抢先完成。
+- `stopActiveRuns()`：保留旧 scenario 前缀清理；另对 RUNNING/UNKNOWN run 读详情，若 `params` 中 group=request 的 `payload.note` 等于本次 `RUN_PARAMS.note` 且 scenario ∈ `views.ui`（目录不可用时回退 smoke/load/spike）才 stop。只关闭明确带 marker 的 run，用户 run 不动。
+- `!blocked` 分支 start 后新增 4 条断言：k6 卡可见且 `RUNNING`、容器名 `jl-k6-` 前缀、刷新后 `k6-log-view` 非空、报告按钮此时禁用（不把 ABSENT 当失败）。stop 后的「k6 不再 RUNNING（EXITED/ABSENT）」并入既有 stop/COMPLETED 断言，保持 67→71 的计数；blocked 环境仍是原来的 4 条（67）。
+- 本步未跑 console-smoke（需要真栈 + 重建 dist）；预计非 blocked **71 PASS / 0 FAIL**，真机数字由主会话回写。
+
+### 构建与静态检查
+
+- `code/lab/dashboard`：`npm ci` + `npm run build` 成功（28 modules；JS 196.00 kB / gzip 69.34 kB，CSS 30.18 kB / gzip 5.90 kB）。
+- `node --check code/lab/scripts/console-smoke.mjs` 通过；未改 shell。
+
+### 风险（已在主会话修正）
+
+- `note`/`source` 元数据被 planner 当成未知 k6 参数、慢预检查把自身 start 操作算作未结操作，这两个问题在真机 A01 首跑/二跑暴露；已由主会话修正：`fbd9a7b`（run 元数据白名单，只存台账不转发给 k6）、`21bd69b`（`OperationContext` 按 operationId 排除自身 start 操作）。本段 UI/smoke 逻辑按修正后的后端工作。
+
+### 未验证真机项
+
+- console-smoke 的实际 PASS 数、真实 k6 容器 RUNNING→EXITED、日志 tail 与 `summary.json` 下载（含 413）。
+- A01（UI 启动 load 全程无终端）与 A20（stop/超时清理）。
+- 无 Docker 时 503/50303 的卡内呈现，以及 k6 容器在 `GET /containers` 下不抬高常驻计数。
+
+### 最新 commit
+
+`f1813a1`（UI k6 卡 / views.ui 提示 / 常驻口径）、`e31fa01`（空日志占位）、`c0c3996`（终态再读一次）、`199c343`（console-smoke）、`787e1a8`（基线注释）；本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log -1`）。

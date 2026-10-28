@@ -705,6 +705,11 @@ where. `run.sh` and `bench.sh` read it through `lib/scenario-manifest.mjs`
 | `bench` | 5 scripts: `smoke`, `load`, `stress`, `spike`, `soak` | `bench.sh` (preflight -> reset -> k6 -> verdict -> archive); `thresholdsExpected=false` for `stress`, which has no k6 threshold by design |
 | `ui` | 3 scripts: `smoke`, `load`, `spike` | Stage2 B2-02 executor / console whitelist |
 
+Stage2 B2-02b-2b wires the console to this whitelist: a run created for
+`smoke`, `load` or `spike` starts a `jl-k6-<runId>` container, and the run
+detail card shows its state, log tail and `summary.json` download; any other
+scenario is refused with 400/40002.
+
 - `traffic` is `serviceOnly: true`: it is started by the compose `traffic`
   service (profile `traffic`), never by `run.sh` or `bench.sh`, and is in no
   view. `bash code/lab/k6/run.sh traffic` refuses with an explicit message.
