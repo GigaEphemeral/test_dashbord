@@ -373,8 +373,13 @@ function resetK6() {
 async function loadK6(runId, { force = false } = {}) {
   if (!runId) return
   const terminal = ['COMPLETED', 'FAILED', 'ABORTED', 'INVALID'].includes(runStatus.value)
-  // A DRAFT/terminal run has nothing to poll once the state was read once.
-  if (!force && k6.value && (terminal || !k6Pollable.value)) return
+  const settled = ['EXITED', 'ABSENT'].includes(k6Status.value)
+  // Terminal run: one more read is still needed when the last state was
+  // RUNNING (the watchdog settles the run just before the next 5s poll), then
+  // stop polling. A degraded k6 layer is not retried on every tick either.
+  if (!force && terminal && (settled || k6Unavailable.value)) return
+  // Non-terminal run with a state that cannot change (DRAFT + ABSENT).
+  if (!force && !terminal && k6.value && !k6Pollable.value) return
   const seq = ++k6Seq
   try {
     const value = await fetchK6State(props.token, runId)
