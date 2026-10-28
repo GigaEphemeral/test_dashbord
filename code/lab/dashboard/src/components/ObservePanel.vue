@@ -27,6 +27,7 @@ const DEFAULT_KPI_KEYS = [
   'jvm.gc.pause.max',
   'jvm.threads.live',
   'hikari.active',
+  'executor.rejected',
   'cache.l1.hit.ratio',
   'cache.l2.keys',
   'business.orders.created',

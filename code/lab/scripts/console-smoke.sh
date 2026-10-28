@@ -57,7 +57,7 @@ Environment (environment > lab .env > default):
   SMOKE_RUN_SCENARIO          ledger run scenario, default console-smoke-<epoch>
   SMOKE_RUN_SCENARIO_PREFIX   ownership prefix for leftover-run cleanup, default console-smoke-
   SMOKE_RUN_PARAMS            ledger run params JSON, default {"note":"console-smoke",...}
-  SMOKE_KPI_COUNT             observe KPI card count, default 12
+  SMOKE_KPI_COUNT             observe KPI card count, default 13
   SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package

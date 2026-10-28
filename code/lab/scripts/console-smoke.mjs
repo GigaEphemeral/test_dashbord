@@ -36,7 +36,7 @@ const RUN_SCENARIO_PREFIX = process.env.SMOKE_RUN_SCENARIO_PREFIX || 'console-sm
 const RUN_SCENARIO = process.env.SMOKE_RUN_SCENARIO || `${RUN_SCENARIO_PREFIX}${Date.now()}`;
 const RUN_PARAMS = process.env.SMOKE_RUN_PARAMS || '{"note":"console-smoke","source":"playwright"}';
 // Defaults mirror VITE_LAB_KPI_KEYS / VITE_LAB_RUN_METRIC_KEYS (12 + 1 probe).
-const KPI_COUNT = Number(process.env.SMOKE_KPI_COUNT || 12);
+const KPI_COUNT = Number(process.env.SMOKE_KPI_COUNT || 13);
 const RUN_METRIC_COUNT = Number(process.env.SMOKE_RUN_METRIC_COUNT || 13);
 // TTL is a safety net: the smoke clears the fault with stop-all as soon as the
 // badge is asserted. Ten seconds leaves room for one manual sync plus a 5s poll
