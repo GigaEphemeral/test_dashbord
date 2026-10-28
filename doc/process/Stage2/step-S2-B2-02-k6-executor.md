@@ -34,6 +34,8 @@
 | `max-duration-seconds` | `LAB_BENCH_EXEC_MAX_DURATION_SECONDS` | `3600` | 时长类参数上限（秒） |
 | `summary-file` | `LAB_BENCH_EXEC_SUMMARY_FILE` | `summary.json` | 报告文件名 |
 
+> 后续变更（S2-B2-03a）：`base-url` / `LAB_BENCH_EXEC_BASE_URL` 由 `nginx-base-url` / `LAB_BENCH_EXEC_NGINX_BASE_URL` 取代（默认值同为 `http://nginx`），并新增 `target-instances` / `target-port`；见 `step-S2-B2-03-traffic-modes.md`。
+
 三处默认值一致：`application.yml` 的 `${LAB_BENCH_EXEC_*:default}` 占位、`compose.base.yml` 的
 `${LAB_BENCH_EXEC_*:-default}` 转发、`.env.example` 条目。`scripts-host-dir` 三处都为空：
 controller 无法凭空知道 `/scripts` 背后的宿主目录（`run.sh` 在 Windows 上还要 `cygpath -m`），
