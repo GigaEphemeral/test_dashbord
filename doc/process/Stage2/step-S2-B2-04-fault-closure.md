@@ -111,3 +111,85 @@ Body：`{"status":"RESTORED"|"FAILED","note":"..."}`
 
 - `0f60c47` `feat(B2-04): expose fault liveness and close UNKNOWN operations`
 - docs（本文件）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
+
+
+---
+
+# 补充：B2-04b1（stop-all 覆盖 traffic / k6 / 线程实验室）
+
+> 本步不做 UI、不跑真机；toxiproxy 与线程故障动作的 operationId 统一留给 B2-04b2。
+
+## 1. 覆盖矩阵
+
+| 层 | stop-all 实际动作 | 结果字段 / 取值 |
+|---|---|---|
+| 容器动作 + toxiproxy | `ChaosActionService.stopAll()` 原样保留：逐动作 revert（start/SIGCONT）、APPLYING 延迟、FAILED 保留；`NetworkFaultCleaner.resetAll()` | `reverted` / `failed` / `pending` / `toxiproxy`（既有语义，构造器未改） |
+| background traffic | `TrafficService.stop()`（沿用 `chaos.traffic.stop-grace-seconds`） | `traffic`: `stopped` \| `not-running` \| `failed` |
+| 线程实验室 | 对 `chaos.app-proxy.instances` 每个实例 `forward(instance,"POST","/lab/thread/stop-all",null,null)`；token 由代理内部携带 | `threads`: 实例 → `ok` \| `failed` |
+| k6 run 容器 | `BenchRunExecutor.sweepOrphans()` 列 `lab.role=k6`；RUNNING/CREATED/PAUSED（含 RESTARTING）先 `stop(runId)`，随后所有列出的容器 `cleanup(runId)`（removed）；EXITED 只清理 | `k6Stopped` / `k6Cleaned` / `k6Failed` |
+
+- 编排入口：`com.javalearn.lab.chaos.action.EnvironmentStopAllService`（新增 `@Service`；未改 `ChaosActionService` 构造器与既有单测）。
+- `ChaosController.stopAll` 只换成调用编排服务：仍是 `operations.submitBlocking(...)`、`environment/lab/stop-all` 目标、调用方 `Idempotency-Key` 语义不变。
+- `StopAllResult` 新增 5 个尾部组件；3/4/5 参旧构造器与 `withOperationId` 全部保留，旧调用点零改动。
+
+## 2. 执行顺序（固定）
+
+1. **容器动作 + toxiproxy**：破坏性最大，必须最先回滚；沿用 APPLYING 延迟与暂停标志。
+2. **traffic**：先停掉新负载，避免线程/k6 清理期间继续加压。
+3. **线程实验室**：逐实例恢复死锁/卡顿等线程故障。
+4. **k6**：停止活动 run 并 remove 所有残留容器。
+
+后三步互不依赖；某一步失败不改变后续顺序，也不阻断后续执行。
+
+## 3. 失败语义
+
+| 子项 | 失败判定 | 处理 |
+|---|---|---|
+| 容器 / toxiproxy | `ChaosActionService` 内既有 per-action catch | 保持既有；若该方法意外抛 Runtime，编排层记 `failed=1` 且 toxiproxy `failed`，继续后三步，不返回 500 |
+| traffic | `ContainerNotFoundException` → `not-running`；其它 Runtime → `failed` | 只记录，继续线程与 k6 |
+| 线程 | forward 抛异常或非 2xx → 该实例 `failed` | 每个实例独立 try/catch，其它实例照常收到 stop-all |
+| k6 | `runId` 空/不可用、stop 或 cleanup 抛异常 → 该容器 `failed`；inventory 读取失败 → `k6Failed=1` | stop 失败后仍尝试 cleanup；单个容器最多计一次 failed；已不存在的容器不计失败 |
+
+- 任一子项失败都不抛出：HTTP 仍为 200 + `StopAllResult`，operation 仍为 `RESTORED`；已回滚的容器不会因 traffic/k6 失败被报成整体失败。
+- 幂等回放沿用 B1-02：同一 `Idempotency-Key` 在窗口内不执行 work，直接返回存储的 operation 视图；`afterSummary` 里是首次执行的 traffic/threads/k6 记录，回放不重复清理。
+
+## 4. 结果字段（JSON）
+
+```json
+{
+  "reverted": 2,
+  "failed": 0,
+  "pending": 1,
+  "toxiproxy": {"status": "reset", "proxiesReset": 2, "proxiesTotal": 2, "errors": []},
+  "traffic": "stopped",
+  "threads": {"app-1": "ok", "app-2": "ok", "app-3": "failed"},
+  "k6Stopped": 1,
+  "k6Cleaned": 2,
+  "k6Failed": 0,
+  "operationId": "op-..."
+}
+```
+
+- `traffic=null` 只可能来自旧构造器（该子项未评估）；HTTP 响应由编排服务生成，正常不为 null。
+- `threads` 在记录构造时做防御性拷贝并只读，避免调用方修改响应状态。
+- operation 的 `afterSummary` 同步写入 `traffic` / `threads` / `k6Stopped` / `k6Cleaned` / `k6Failed`，回放时可直接解释清理范围。
+
+## 5. 测试
+
+| 套件 | 结果 | 新增覆盖（+15） |
+|---|---|---|
+| `mvn -f code/pom.xml -pl services/chaos-controller -am test` | **651 / 0 fail / 0 error / 0 skip**，BUILD SUCCESS（基线 636） | `EnvironmentStopAllServiceTest` +9（四项全成功计数、traffic 抛异常仍执行其余、单实例失败/非 2xx 隔离、k6 stop/cleanup 异常计数、空 runId、inventory 失败、traffic 缺失、base 抛异常、空场景）；`StopAllResultTest` +4（3/4/5 参构造器、withOperationId 保留新字段、threads 只读）；`ChaosControllerTest` +2（响应与 afterSummary 新字段、幂等回放不重复清理） |
+| `node --test "code/lab/k6/test/"*.test.mjs` | **105 / 105 pass** | 未改 k6 脚本 |
+| `bash code/lab/scripts/test-chaos-env-wiring.sh` | **PASS**（8 chaos + 85 其它键） | 无新配置键，数字不变 |
+
+## 6. 未验证项
+
+- **真机 stop-all**：未在真栈验证 traffic 容器被停、三个实例的线程故障全部恢复、RUNNING/EXITED k6 容器被停止并 removed（设计 A12 清理恢复验收）；本步仅由 Mockito 单测覆盖编排调用。
+- **UI**：控制台未展示 `traffic/threads/k6*`，一键还原按钮未接新字段；归 UI 批次。
+- **B2-04b2**：toxiproxy 与线程故障动作的 operationId / fault 事件未在本步统一；本步只扩展 stop-all 的覆盖范围。
+- **Docker 竞态**：inventory 与 cleanup 之间 daemon 抖动、容器在 stop 与 remove 之间消失等时序未真机演练；按 best-effort 计入 `k6Failed` 或自然消失。
+
+## 最新 commit
+
+- `e488c59` `feat(B2-04): extend stop-all to traffic, thread lab and k6`
+- docs（本文件）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
