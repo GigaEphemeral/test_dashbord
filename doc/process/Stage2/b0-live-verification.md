@@ -782,3 +782,107 @@ thresholds.results  = 5 条全 ok（write_success / flow_errors / p95 / p99 / ht
   开工态是 mysql-2 为主；是否/如何回正见 R2-5 收尾。
 
 **结论：R2-3 PASS**
+
+## R2-4. R1 让路的两个快项：B0-03 总开关 / B0-04 前缀改值
+
+两项都只动 shell 注入的 compose 既有占位（`.env`、`compose*.yml` 一字未改），各只 recreate 一台，
+做完即无覆盖 recreate 复位。
+
+### R2-4.1 B0-03：全局 `cache` 开关关闭 ⇒ caffeine 家族序列**消失**（缺失 ≠ 值为 0）
+
+做法（占位见 `compose.base.yml:90  LAB_TOGGLE_CACHE: ${LAB_TOGGLE_CACHE:-true}`）：
+
+```bash
+LAB_TOGGLE_CACHE=false docker compose … up -d --no-deps --force-recreate --wait app-1   # 01:40:17Z
+docker inspect jl-app-1 → env LAB_TOGGLE_CACHE=false
+docker exec jl-nginx sh -c 'nginx -t -q && nginx -s reload'                             # R1 §5.0 口径
+```
+
+读回与驱动（`/tmp/r2/b003-off-live.log`，EXIT=0）：
+
+| 观测点 | app-1（开关关） | app-2 / app-3（对照） |
+|---|---|---|
+| `GET /lab/toggles` | `"cache":false` | `"cache":true` |
+| 60 次读（3 轮 ×20 商品，直连 `:8080`） | 60×**200**（关缓存不影响可读性） | 60×200 |
+| 原始抓取 `^cache_l1_caffeine` 行数 | **0** | 4 / 4 |
+| 原始抓取 `^cache_l1_estimated_size` 行数 | **0** | 1 / 1 |
+| 原始抓取 `^cache_l1_requests_total` 行数 | **0** | 2 / 2 |
+
+同一份 app-1 抓取里，`cache_avalanche_l1_total`、`cache_bloom_requests_total`、
+`cache_breakdown_mutex_total` 等家族**照旧以 0.0 值出现**（前 20 行已入日志）⇒
+「0 值序列」与「序列整体缺失」在同一台 JVM 的同一次抓取里同时可见，这正是缺失≠0 最强的证据形态。
+
+Prometheus 侧（`/tmp/r2/b003-off-prom.log`，查询时刻 01:52:54Z，距 recreate 11m，远超 5m lookback）：
+
+```
+count by (instance) (cache_l1_caffeine_requests_total)  ->  仅 app-2:8080=2、app-3:8080=2
+count by (instance) (cache_l1_estimated_size)           ->  仅 app-2:8080=1、app-3:8080=1
+absent(cache_l1_estimated_size{instance="app-1"})                  = 1
+absent(cache_l1_caffeine_requests_total{instance="app-1"})         = 1
+cache_l1_caffeine_requests_total{instance="app-1:8080"}            = EMPTY RESULT
+query_range 01:42:00Z..01:52:00Z step=30s（app-1）                  = EMPTY RESULT   ← 不是 0 值采样，是无采样
+```
+
+**与 R1 §3.2 的口径差别（新事实，需分清两个开关）**：
+`LAB_CACHE_L1_MICROMETER_STATS_ENABLED=false` 只让 5 条 caffeine 家族序列消失，
+应用口径 `cache_l1_requests_total` 仍在（R1 实测 6 条）；而**总开关** `LAB_TOGGLE_CACHE=false`
+让两族一起消失（原始抓取 `cache_l1_requests_total` = 0 行）⇒ 总开关关的是缓存本身（不装配/不走），
+stats 开关只关 Micrometer 绑定。B0-03 的「缺失≠0」判定在两条路径上都成立。
+
+复位（`/tmp/r2/reset-app12.log`、`/tmp/r2/reset-check.log`、`/tmp/r2/b003-restore-prom.log`，均 EXIT=0）：
+不带覆盖 recreate app-1 + app-2（01:55:50Z，Healthy）+ `nginx -s reload`；
+读回 `LAB_TOGGLE_CACHE=true`、`/lab/toggles` `cache:true`×3；三个 `count by (instance)` 查询全部回到 **3**，
+且 app-1 新 JVM 是活值（刚打一轮读后 `result=hit 0 / result=miss 20`），不是常量。
+
+### R2-4.2 B0-04：`LAB_CACHE_L2_KEY_PREFIX` 改值后 state 视图**无「0 键」错位**
+
+做法（占位 `compose.base.yml:113  LAB_CACHE_L2_KEY_PREFIX: ${LAB_CACHE_L2_KEY_PREFIX:-cache:}`）：
+01:32:40Z 只 recreate app-2，注入 `LAB_CACHE_L2_KEY_PREFIX=cache:r2pfx:`；app-3 保持默认前缀作对照。
+R1 已登记该条为「未做」，其判据是「state 视图不出现 0 键错位」——本步把它做成**两个时刻 × 三个视图**的对齐表。
+
+有效值回读（`/tmp/r2/b004-prefix-live.log`，EXIT=0）：
+
+```
+configKey=app.lab.cache.l2.key-prefix  env=LAB_CACHE_L2_KEY_PREFIX
+value=cache:r2pfx:   defaultValue=cache:   source=systemEnvironment
+（同一台同一次回读：ttl-seconds=300/defaultValue 300、clear-scan-count=500/500 ⇒ 只动了前缀一个键）
+```
+
+对齐（`/tmp/r2/b004-prefix-live.log` + `/tmp/r2/b004-prefix-live2.log` +
+`/tmp/r2/b004-state-newprefix.json`、`b004-state-after-seed.json`，EXIT=0）：
+
+| 时刻 | app-2 `state.keys` | 同刻 raw `redis-cli --scan` | 判定 |
+|---|---|---|---|
+| 01:34:15Z 改前缀后、未播种（`b004-state-newprefix.json`） | `l2ExperimentKeys=0`、`l2AvalancheKeysAlive=0`、`hotKeyCached=false`、`redisReachable=true` | 该时刻未留 raw 计数（如实记，判据取下一周期） | state 侧 0；见 01:53:53Z 行的 raw/raw 对齐 |
+| 01:35:05Z 播种后（`b004-state-after-seed.json`） | `l2ExperimentKeys=201`、`l2AvalancheKeysAlive=200`、`hotKeyCached=true` | — | 与 R1 §4.3 默认前缀下同一组数字（201/200/true）一致 |
+| 01:53:53Z 播种键过期后 | 回到 `0 / 0 / false` | `cache:r2pfx:*`=**0**、`cache:product:*`=20 | **state 0 == raw 0**，逐字对齐 |
+| 01:54:18Z 再播种后 | `201 / 200 / true` | `cache:r2pfx:product:*`=**201**、`cache:r2pfx:*`=201、`cache:product:*`=20（未变）、`cache:*`=221 | **201 = 201**，跨前缀零污染 |
+| 01:54:18Z 对照 app-3（默认前缀） | `l2ExperimentKeys=0` | `cache:product:*`=20 | 这 20 键是 id 1..20 常规读缓存，落在实验窗口 90000–90999 之外 ⇒ 各自前缀各自口径的正确读数 |
+
+写路径同样走新前缀（不是只改读侧）：
+
+```
+cache:r2pfx:product:90123  TTL=53   ← app-2 常规 L2 写键（GET /api/products/90123 后）
+cache:product:90123        TTL=-2   ← 默认前缀下根本没有这个键
+cache:r2pfx:product:90999  TTL=294  ← 播种热键，仍按 seed 口径 300s（R1 §4.4 结论在前缀改值后依旧成立）
+cache:r2pfx:product:90001  TTL=53   ← 播种雪崩键，仍按 60s 口径
+```
+
+⇒ 前缀是「五方共用同一解析点」在真机上成立：`/lab/config` 回读、state 扫描、常规写、播种写、
+雪崩写全部随同一个值移动，且各实例按自己生效的前缀计数 ⇒ R1 登记的那条「未做」现记 **PASS**。
+
+复位：不带覆盖 recreate app-2（同 R2-4.1 那一次），读回 `LAB_CACHE_L2_KEY_PREFIX=cache:`；
+`/lab/cache/state` 回到默认前缀视图。遗留：`cache:r2pfx:*` 下 201 个实验键会按各自 TTL（≤300s）自然过期，
+未手工 DEL（演练期间不碰 `jl-redis` 数据，避免与 verify.sh 的 Redis 断言抢时间窗）。
+
+### R2-4 逐项结论
+
+| 清单项 | 结果 |
+|---|---|
+| B0-03 真机：全局 `cache` 开关关闭 ⇒ caffeine 家族序列消失（缺失≠0） | **PASS**（原始抓取 0 行 + `absent()`=1 + range EMPTY + 同抓取内 0.0 值家族对照） |
+| B0-03 复位后序列回归 3 实例且为活值 | PASS |
+| B0-04 真机：`LAB_CACHE_L2_KEY_PREFIX` 改值 ⇒ state 视图无「0 键」错位 | **PASS**（state 计数与同前缀 raw 扫描逐时刻相等） |
+| B0-04 写路径随前缀移动 / 播种与雪崩 TTL 口径不受影响 | PASS |
+| 两项复位（env、toggles、序列） | PASS（见上） |
+
+**结论：R2-4 PASS**（R1 §3.2/§4 的两条留白在真机补齐；新记录一条口径差别：总开关 vs stats 开关影响面不同）
