@@ -193,3 +193,90 @@ Body：`{"status":"RESTORED"|"FAILED","note":"..."}`
 
 - `e488c59` `feat(B2-04): extend stop-all to traffic, thread lab and k6`
 - docs（本文件）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
+
+## 补充：B2-04b2（toxiproxy / 线程故障统一 operation 契约）
+
+本段把 `ToxiproxyController` 的 6 个写端点与新增的线程故障统一入口接入 B1-02 operation 契约，并在给出 `runId` 时把成功动作写入 `lab_fault_event`。不改 UI、不跑真机。
+
+### 1. 端点与响应形状
+
+| 端点 | 同步结算（HTTP 202） | pending（HTTP 202） | 幂等回放（HTTP 200） |
+|---|---|---|---|
+| `POST /chaos/toxiproxy/{proxy}/toxics`（body 原样 `ToxicRequest`） | `Result<ToxicView>` | `Result<OperationView>`（PENDING_CONFIRMATION） | `Result<OperationView>`（`idempotentReplay=true`） |
+| `DELETE /chaos/toxiproxy/{proxy}/toxics/{name}` | `Result<Void>`（路径与返回语义不变） | 同上 | 同上 |
+| `POST /chaos/toxiproxy/{proxy}/reset` | `Result<ProxyResetView>` | 同上 | 同上 |
+| `POST /chaos/toxiproxy/{proxy}/disable`、`/enable` | `Result<ProxyEnabledView>` | 同上 | 同上 |
+| `POST /chaos/toxiproxy/reset-all` | `Result<NetworkResetReport>` | 同上 | 同上 |
+| `POST /chaos/instances/{name}/thread/fault`（body 原样转发） | app 原始 JSON 响应体（`application/json`） | 同上 | 同上 |
+| `POST /chaos/instances/{name}/thread/fault/{mode}/{action}` | app 原始 JSON 响应体 | 同上 | 同上 |
+| `POST /chaos/instances/{name}/thread/stop-all` | app 原始 JSON 响应体 | 同上 | 同上 |
+
+- 所有写响应都带 `X-Operation-Id`；`GET /chaos/toxiproxy/state` 保持只读、无 operation。
+- pending 时只返回 operation 视图，不伪造结算结果；幂等回放返回存储的 operation 视图，不重复调用 toxiproxy / app。
+- 线程入口同步结算时原样中继 app 的 `Result` 信封（HTTP 202、UTF-8 JSON），不做二次包装。
+- 旧的 `/chaos/app/{instance}/lab/thread/**` 代理保留（GET 状态、lifecycle、snapshot 继续用），`AppProxyService` 白名单与行为未改。
+
+### 2. operation 映射与状态
+
+| 入口 | targetKind | targetName | action | 结算状态 |
+|---|---|---|---|---|
+| toxiproxy add / disable | `toxiproxy` | `{proxy}` | `toxiproxy-add` / `toxiproxy-disable` | APPLIED |
+| toxiproxy remove / reset / enable | `toxiproxy` | `{proxy}` | `toxiproxy-remove` / `-reset` / `-enable` | RESTORED |
+| toxiproxy reset-all | `toxiproxy` | `all` | `toxiproxy-reset-all` | RESTORED |
+| thread `/fault`、`/fault/{mode}/{pause,resume}` | `thread` | `{instance}` | `thread-fault` | APPLIED |
+| thread `/fault/{mode}/stop` | `thread` | `{instance}` | `thread-fault` | RESTORED |
+| thread `/stop-all` | `thread` | `{instance}` | `thread-stop-all` | RESTORED |
+
+- 全部为 `strictLedger=false`（故障动作在 MySQL 演练期间仍须可用），`ttlSeconds=null`（toxiproxy 无线程 TTL）。
+- 线程入口的 operation 幂等键按 `action + targetKind + targetName` 复用；同一 `Idempotency-Key` 用于不同 mode 会被视为同一 `thread-fault` 请求而回放——调用方应为不同 mode 使用不同键（B2-04c UI 遵守）。
+
+### 3. runId 与 lab_fault_event
+
+- `runId` 是写端点上的**可选 query 参数**（不改 JSON body）。先经 `FaultEventService.validateRun`：格式非法 400/40001，run 不存在 404/40401（均在创建 operation 之前）；ledger 不可达时动作照常执行，写入阶段失败被吞掉。
+- 成功（APPLIED/RESTORED）且给了 `runId` 时写一行 `lab_fault_event`，`detail` 恒定含 `operationId`、`runStatus` 与请求摘要：
+  - toxiproxy：`source=toxiproxy`，`target={proxy}`（reset-all 为 `all`），`event=toxiproxy-add|remove|reset|disable|enable|reset-all`；
+  - thread：`source=thread`，`target={instance}`，`event=thread-fault`（body 入口）、`thread-fault-{mode}-{action}`（路径入口）或 `thread-stop-all`。
+- `reset-all` 仅在报告为 `reset` / `partial`（确有代理被恢复）时写事件；`failed` / `disabled` 只落 operation 行，事件列不谎报恢复。
+- 失败动作不写事件；事件写失败（`recordEvent` 返回 false）不影响 HTTP 结果。`FaultEventService` 新增通用 `recordEvent(...)`，原 `recordContainerAction(...)` 委托到它，容器事件语义不变。
+
+### 4. 白名单与拒绝矩阵
+
+| 场景 | HTTP / 错误码 | 说明 |
+|---|---|---|
+| toxiproxy proxy 不在 `chaos.toxiproxy.proxies` | 404 / 40401 | `ToxiproxyService` 既有校验，动作未执行 |
+| `chaos.toxiproxy.enabled=false` | 503 / 50301 | 动作未执行 |
+| toxic 类型/参数非法、重复 toxic | 400 / 40001、409 / 40901 | 既有映射不变 |
+| thread 实例不在 `chaos.app-proxy.instances` | 404 / 40401 | 与 `/chaos/app/**` 同口径，未创建 operation |
+| thread mode 不在 7 个白名单 | 400 / 40001 | 未创建 operation |
+| thread action 不是 `stop\|pause\|resume` | 400 / 40001 | 未创建 operation |
+| app 返回非 2xx | 502 / 50201 | operation FAILED，消息含实例/状态，不含 token |
+| app 不可达 / 非 JSON | 503 / 50301、502 / 50201 | operation FAILED（既有代理异常映射） |
+| `runId` 非法 / 不存在 | 400 / 40001、404 / 40401 | 在 operation 创建前拒绝 |
+
+- 线程目标只由 `chaos.app-proxy.instances` 约束、app 路径为固定常量；toxiproxy 目标只由 `chaos.toxiproxy.proxies` 约束。未新增任意 URL/target，`lab=java-learn` 的 token 边界未改。
+- 本步未新增配置键，env wiring 数字不变。
+
+### 5. 与 B2-04c 的边界
+
+- 本步只提供后端契约（端点、头、operation、事件、拒绝矩阵）与单测；**不接 UI**、不改 dashboard/claims/compose/k6 脚本。
+- B2-04c/主会话负责：控制台改用新线程入口与 `X-Operation-Id`、pending 轮询 `GET /lab/operations/{operationId}`、以及真机验收（A09/A10/A12/A29）。
+
+### 6. 测试
+
+| 套件 | 结果 | 变化 |
+|---|---|---|
+| `mvn -f code/pom.xml -pl services/chaos-controller -am test` | **676 / 0 fail / 0 error / 0 skip**，BUILD SUCCESS（基线 651） | `ToxiproxyControllerTest` 12→21（每个写端点一次 operation + 原视图 + 头、回放、pending、runId/404/400、事件失败、reset-all 事件条件、错误映射）；新增 `ThreadFaultControllerTest` 16（三种入口转发方法/路径/body、实例/mode/action 拒绝、事件、非 2xx→FAILED 语义、pending/回放、runId） |
+| `node --test "code/lab/k6/test/"*.test.mjs` | **105 / 105 pass** | 未改 k6 脚本 |
+| `bash code/lab/scripts/test-chaos-env-wiring.sh` | **PASS**（8 chaos + 85 其它键） | 无新配置键 |
+
+### 7. 未验证项
+
+- **真机 A09/A10/A12/A29**：toxiproxy add/remove/reset/enable-disable/reset-all 与线程 fault/stop/pause/resume/stop-all 在真栈上的 operationId 返回、事件落库、reset-all 报告未跑；本步仅 Mockito + MockMvc 单测。
+- **真机 pending**：`sync-wait-ms` 超时后 202 OperationView 与后台结算需在真 MySQL 上复核；单测以 stub 覆盖分支。
+- **真实幂等窗口**：同一键跨进程/并发去重依赖 `lab_operation` 唯一索引，本步未做并发真机验证。
+- **UI**：控制台尚未消费新线程入口、`X-Operation-Id` 或 pending 视图；归 B2-04c。
+
+### 最新 commit
+
+- `44e8fa9` `feat(B2-04): unify toxiproxy and thread faults under the operation contract`
+- docs（本文件）单独提交，见 `git log -- doc/process/Stage2/step-S2-B2-04-fault-closure.md`
