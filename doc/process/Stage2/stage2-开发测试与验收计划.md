@@ -217,7 +217,8 @@ B1 收口交接：`step-S2-B1-00-closure.md`。
 
 - 开发：容器动作/Toxiproxy/线程故障统一到 operationId 契约；UI 可选目标×动作×TTL（含"不过期"手动保持，
   明示"不会自动恢复"）；`/chaos/actions` 返回 `paused/remainingMs`；`stop-all` 覆盖线程生命周期机、toxic、
-  暂停态故障、traffic、k6；故障事件写 run 时间线。
+  暂停态故障、traffic、k6；故障事件写 run 时间线；提供**人工确认/关闭 UNKNOWN 操作**的端点（B1 审核 M1：
+  重启恢复产生的 UNKNOWN 操作目前会永久阻断预检查 `operations.settled`）。
 - 测试：单测 + 真机注入→暂停→撤销→stop-all 全链路；**bandwidth 首期不做、UI 隐藏**（已确认 #5，Future），
   latency/timeout 走既有验证路径。
 - 验收：A09、A10、A12、A29。

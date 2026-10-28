@@ -80,3 +80,16 @@ B1 五个步骤全部合并并完成真机验证，批次闸门如下（2026-10-
 4. **重建与部署**：本机容器内到 Maven Central TLS 不通，Java 镜像需按 `~/.m2` 离线打包 + 运行时镜像；console 改动后需在主树 `npm run build`（nginx 挂主树 dist），再跑 `console-smoke.sh --no-build`。
 5. **演示数据**：run 前预检查会挡住"背景流量未停/残留故障/未结操作"；演练后跑 `reset-lab.sh --yes` 复位库存与订单，再跑回归。
 6. **审核**：按工程规约 §4 派独立 Qwen 会话对 B1 提交范围（`339bf4e..HEAD`）做批次审核，High/Medium 在隔离 worktree 修复后由主会话合并。
+
+# 独立审核结论（2026-10-28，review-B1）
+
+- 范围：`339bf4e..0b5668b`（B1 五步 + claims + 收口），隔离 worktree + `review/b1-fixes`。
+- 计数：**Critical 0 / High 1（已修）/ Medium 1（已登记，归属 B2-04）/ Minor 10（记录）**；结论：有条件通过 → 修复合并后通过。
+- 已修：
+  - `2a0d186`：B1-03 交接文档的实时序列数自相矛盾（25 项目录写成 24+3），按"文档数字必须与证据一致"改为 24 有序列 / `executor.rejected` 1 项无序列（B4-01 接线）。
+  - `ba1664b`：本文件缺陷表补登记 **UNKNOWN 操作无关闭路径**（见下），归属 B2-04。
+- 审核侧复跑：chaos 474/474、app 469/469、k6 79/79、claims 37/37、safety PASS、dashboard `npm ci && build` 成功；58+1 个新配置键三处一致、compose 嵌套默认渲染正确。verify/smoke/console-smoke 因禁碰共享栈未复跑（B1 未改 verify/smoke；smoke 重写经逐条比对无弱化），由主会话合并后兜底。
+- Minor（记录在案，不阻塞）：N1 写 run 锁无续期（TTL 1800s，B2-02 接真实 k6 时长后复核）；N2 指标串行查询最坏 25×connect-timeout；N3 反复查看 run 指标会累积 `lab_metric_window` 行（保留策略只按 run 级联）；N4 transition 部分写时时间线步可能永久缺失（状态不丢）；N5 `OperationService.view` 死分支；N6 启动恢复与 in-flight 非 strict 操作的窄竞态（first-verdict-wins 有意）；N7 stash 删文件失败的极端重复应用；N8 转移表是设计图的超集（B2 收口回写方案）；N9 接线回归只发现带默认值的键；N10 Tempo 链接未发布端口（已在缺陷表）。
+- 合并：`review/b1-fixes` 两笔纯文档提交已合入；B2 冲突热点预判 `ChaosController`/`RunLifecycleService`/`compose.base.yml`/`.env.example`/`console-smoke.mjs`。
+
+**B1 收口成立，B2 门禁解除。**
