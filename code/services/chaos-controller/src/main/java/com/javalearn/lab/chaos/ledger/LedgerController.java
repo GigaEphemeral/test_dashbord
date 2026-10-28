@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerRecoveryView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.LedgerStatusView;
+import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationCloseRequest;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationPageView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunCreateRequest;
@@ -94,6 +95,19 @@ public class LedgerController {
     @GetMapping("/lab/operations/{operationId}")
     public Result<OperationView> operation(@PathVariable String operationId) {
         return Result.success(operations.view(operationId));
+    }
+
+    /**
+     * B2-04a: close an UNKNOWN operation as RESTORED or FAILED. Only the
+     * operation row changes (last_error/restored_at); the run status and the
+     * write-run lock are untouched. Repeated close with the same verdict is 200
+     * idempotent, the other verdict is 409/40905, a missing operation is 404.
+     */
+    @PostMapping("/lab/operations/{operationId}/close")
+    public Result<OperationView> closeOperation(
+            @PathVariable String operationId,
+            @RequestBody(required = false) OperationCloseRequest request) {
+        return Result.success(operations.closeUnknown(operationId, request));
     }
 
     @GetMapping("/lab/operations")

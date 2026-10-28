@@ -216,6 +216,8 @@ class ChaosActionServiceTest {
         assertThat(start.status()).isEqualTo("completed");
         assertThat(start.ttlSeconds()).isNull();
         assertThat(start.revertAction()).isNull();
+        assertThat(start.paused()).isFalse();
+        assertThat(start.remainingMs()).isNull();
         assertThat(restart.status()).isEqualTo("completed");
         assertThat(resume.status()).isEqualTo("completed");
         assertThat(service.activeActions()).isEmpty();
@@ -249,6 +251,8 @@ class ChaosActionServiceTest {
         assertThat(service.activeActions()).allSatisfy(action -> {
             if ("failed".equals(action.status())) {
                 assertThat(action.lastError()).contains("IllegalStateException: docker start failed");
+                // B2-04a: a failed action has no meaningful countdown anymore.
+                assertThat(action.remainingMs()).isNull();
             }
         });
         assertThat(counter("chaos.reverts", "action", "kill", "result", "failed"))
@@ -334,6 +338,46 @@ class ChaosActionServiceTest {
         tasks.get(1).run();
         assertThat(gateway.calls).contains("start:" + APP);
         assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    @Test
+    void viewsExposePausedAndRemainingTtlConsistently() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", 30));
+        ChaosActionView running = frozen.activeActions().get(0);
+        assertThat(running.paused()).isFalse();
+        assertThat(running.remainingMs()).isEqualTo(TimeUnit.SECONDS.toMillis(30));
+
+        // Not paused: the countdown follows the injected clock.
+        clock.advance(Duration.ofSeconds(10));
+        assertThat(frozen.activeActions().get(0).remainingMs())
+                .isEqualTo(TimeUnit.SECONDS.toMillis(20));
+
+        frozen.pause();
+        ChaosActionView paused = frozen.activeActions().get(0);
+        assertThat(paused.paused()).isTrue();
+        assertThat(paused.remainingMs()).isEqualTo(TimeUnit.SECONDS.toMillis(20));
+
+        // Paused: the frozen remainder must not shrink while the clock moves on.
+        clock.advance(Duration.ofSeconds(60));
+        ChaosActionView frozenView = frozen.activeActions().get(0);
+        assertThat(frozenView.paused()).isTrue();
+        assertThat(frozenView.remainingMs()).isEqualTo(TimeUnit.SECONDS.toMillis(20));
+
+        frozen.resume();
+        ChaosActionView resumed = frozen.activeActions().get(0);
+        assertThat(resumed.paused()).isFalse();
+        assertThat(resumed.remainingMs()).isEqualTo(TimeUnit.SECONDS.toMillis(20));
+
+        // The POST response uses the same semantics as the list.
+        ChaosActionView post = frozen.execute(APP2, new ChaosActionRequest("freeze", 10));
+        assertThat(post.paused()).isFalse();
+        assertThat(post.remainingMs()).isEqualTo(TimeUnit.SECONDS.toMillis(10));
     }
 
     @Test

@@ -9,11 +9,15 @@ import com.javalearn.lab.chaos.error.ChaosConflictException;
 import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
+import com.javalearn.lab.chaos.ledger.FaultEventService;
 import com.javalearn.lab.chaos.ledger.LedgerViews;
+import com.javalearn.lab.chaos.ledger.OperationContext;
 import com.javalearn.lab.chaos.ledger.OperationExecution;
 import com.javalearn.lab.chaos.ledger.OperationOutcome;
 import com.javalearn.lab.chaos.ledger.OperationRecord;
+import com.javalearn.lab.chaos.ledger.OperationRequest;
 import com.javalearn.lab.chaos.ledger.OperationService;
 import com.javalearn.lab.chaos.ledger.OperationStatus;
 import com.javalearn.lab.chaos.ledger.OperationWork;
@@ -25,6 +29,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -64,13 +69,18 @@ class ChaosControllerTest {
     @MockitoBean
     private OperationService operations;
 
+    @MockitoBean
+    private FaultEventService faultEvents;
+
     @BeforeEach
     void setUp() {
         // doAnswer/doReturn never invoke the stubbed method while recording, so
         // a later override cannot accidentally run a null work.
         Answer<OperationExecution> settle = invocation -> {
             OperationWork work = invocation.getArgument(1);
-            OperationOutcome outcome = work.run();
+            // Bind the operation id like the real OperationService worker does, so
+            // a fault event recorded inside the work sees it (B2-04a).
+            OperationOutcome outcome = OperationContext.withOperation("op-1", work::run);
             return new OperationExecution(operation(OperationStatus.APPLIED), false, false,
                     outcome.payload());
         };
@@ -82,7 +92,8 @@ class ChaosControllerTest {
     void validActionReturns202WithViewAndOperationId() throws Exception {
         when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
                 .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
-                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null)
+                        .withRuntime(false, 30_000L));
 
         mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -96,9 +107,83 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.data.ttlSeconds").value(30))
                 .andExpect(jsonPath("$.data.revertAction").value("start"))
                 .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.paused").value(false))
+                .andExpect(jsonPath("$.data.remainingMs").value(30_000))
                 .andExpect(jsonPath("$.data.operationId").value("op-1"));
 
         verify(chaosActionService).execute(eq("jl-app-3"), any(ChaosActionRequest.class));
+    }
+
+    @Test
+    void aRunIdIsForwardedAndASuccessfulActionJoinsTheRunTimeline() throws Exception {
+        when(faultEvents.validateRun("run-20261028-001")).thenReturn("DRAFT");
+        when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
+                .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
+
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30,"
+                                + "\"runId\":\"run-20261028-001\"}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.operationId").value("op-1"));
+
+        ArgumentCaptor<OperationRequest> request = ArgumentCaptor.forClass(OperationRequest.class);
+        verify(operations).submit(request.capture(), any());
+        org.assertj.core.api.Assertions.assertThat(request.getValue().runId())
+                .isEqualTo("run-20261028-001");
+        verify(faultEvents).recordContainerAction("run-20261028-001", "op-1", "jl-app-3", "kill",
+                30, "active", Instant.parse("2026-10-26T10:00:30Z"), "DRAFT");
+    }
+
+    @Test
+    void withoutARunIdNothingIsValidatedOrWrittenToTheTimeline() throws Exception {
+        when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
+                .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
+
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30}"))
+                .andExpect(status().isAccepted());
+
+        verify(faultEvents, never()).validateRun(any());
+        verify(faultEvents, never()).recordContainerAction(any(), any(), any(), any(), any(),
+                any(), any(), any());
+    }
+
+    @Test
+    void anUnknownRunIdIsRejectedWith404BeforeAnyActionRuns() throws Exception {
+        when(faultEvents.validateRun("run-missing")).thenThrow(
+                new LedgerRunNotFoundException("run not found: run-missing"));
+
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30,\"runId\":\"run-missing\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("40401"))
+                .andExpect(jsonPath("$.message").value("run not found: run-missing"));
+
+        verify(operations, never()).submit(any(), any());
+        verify(chaosActionService, never()).execute(any(), any());
+    }
+
+    @Test
+    void aSkippedFaultEventKeepsTheAppliedActionResult() throws Exception {
+        when(faultEvents.validateRun("run-20261028-001")).thenReturn("RUNNING");
+        when(faultEvents.recordContainerAction(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(false);
+        when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
+                .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null));
+
+        mockMvc.perform(post("/chaos/instances/jl-app-3/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30,"
+                                + "\"runId\":\"run-20261028-001\"}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"));
     }
 
     @Test
@@ -239,18 +324,25 @@ class ChaosControllerTest {
     }
 
     @Test
-    void listReturnsActiveActions() throws Exception {
+    void listReturnsActiveActionsWithPauseAndRemainingTtl() throws Exception {
         when(chaosActionService.activeActions()).thenReturn(List.of(
                 new ChaosActionView("id-1", "jl-app-3", "kill", 30,
                         Instant.parse("2026-10-26T10:00:30Z"), "start", "failed",
-                        "IllegalStateException: docker start failed")));
+                        "IllegalStateException: docker start failed"),
+                new ChaosActionView("id-2", "jl-app-2", "kill", 30,
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null)
+                        .withRuntime(true, 12_000L)));
 
         mockMvc.perform(get("/chaos/actions"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].target").value("jl-app-3"))
                 .andExpect(jsonPath("$.data[0].revertAction").value("start"))
-                .andExpect(jsonPath("$.data[0].lastError").value("IllegalStateException: docker start failed"));
+                .andExpect(jsonPath("$.data[0].paused").value(false))
+                .andExpect(jsonPath("$.data[0].remainingMs").doesNotExist())
+                .andExpect(jsonPath("$.data[0].lastError").value("IllegalStateException: docker start failed"))
+                .andExpect(jsonPath("$.data[1].paused").value(true))
+                .andExpect(jsonPath("$.data[1].remainingMs").value(12_000));
     }
 
     @Test

@@ -227,7 +227,8 @@ public class ChaosActionService {
         if (!type.reverting()) {
             applyOneShot(type, target);
             ChaosActionView view = new ChaosActionView(UUID.randomUUID().toString(), target,
-                    type.wireName(), null, null, null, ChaosActionStatus.COMPLETED.wireName(), null);
+                    type.wireName(), null, null, null, ChaosActionStatus.COMPLETED.wireName(), null)
+                    .withRuntime(paused, null);
             safeAnnotate(oneShotTags(type, target), oneShotText(type, target));
             probeReadinessAsync(target, type);
             return view;
@@ -307,15 +308,28 @@ public class ChaosActionService {
                         + " ttl=" + ttl + "s"
                         + " expires=" + action.expiresAt()
                         + " revert=" + type.revertAction().wireName());
-        return action.toView();
+        return viewOf(action, clock.instant());
     }
 
     /** Snapshot of actions that still carry a pending or failed revert. */
     public List<ChaosActionView> activeActions() {
+        Instant now = clock.instant();
+        boolean pausedNow = paused;
         return active.values().stream()
                 .sorted(Comparator.comparing(ChaosAction::expiresAt))
-                .map(ChaosAction::toView)
+                .map(action -> action.toView().withRuntime(pausedNow,
+                        action.remainingViewMillis(now, pausedNow)))
                 .toList();
+    }
+
+    /**
+     * B2-04a: attach the pause flag and remaining TTL with the same semantics as
+     * {@link #activeActions()}, so the POST response and the list never disagree.
+     */
+    private ChaosActionView viewOf(ChaosAction action, Instant now) {
+        boolean pausedNow = paused;
+        return action.toView().withRuntime(pausedNow,
+                action.remainingViewMillis(now, pausedNow));
     }
 
     /** True while TTL reverts and watchdog retries are frozen. */

@@ -111,4 +111,41 @@ class ChaosActionStateMachineTest {
         // old kill's revert can never abort a freshly applied replacement.
         assertThat(oldAction.claimRevert()).isFalse();
     }
+
+    @Test
+    void viewRemainderIsNullOnceRevertedOrFailed() {
+        Instant now = Instant.parse("2026-10-26T10:00:00Z");
+        ChaosAction reverted = new ChaosAction("id-1", "jl-app-3", ChaosActionType.KILL, 1,
+                now, now.plusSeconds(1));
+        reverted.markApplied();
+        assertThat(reverted.remainingViewMillis(now, false)).isEqualTo(1000L);
+        reverted.markReverted();
+        assertThat(reverted.remainingViewMillis(now, false)).isNull();
+        assertThat(reverted.remainingViewMillis(now, true)).isNull();
+
+        ChaosAction failed = new ChaosAction("id-1", "jl-app-3", ChaosActionType.KILL, 1,
+                now, now.plusSeconds(1));
+        failed.markApplied();
+        failed.claimRevert();
+        failed.recordFailure(new IllegalStateException("docker start failed"));
+        assertThat(failed.remainingViewMillis(now, false)).isNull();
+    }
+
+    @Test
+    void viewRemainderUsesTheFrozenValueWhilePaused() {
+        Instant now = Instant.parse("2026-10-26T10:00:00Z");
+        ChaosAction action = new ChaosAction("id-1", "jl-app-3", ChaosActionType.KILL, 1,
+                now, now.plusSeconds(1));
+        action.markApplied();
+
+        assertThat(action.remainingViewMillis(now, false)).isEqualTo(1000L);
+        assertThat(action.freeze(now.plusMillis(400))).isEqualTo(600L);
+        // The live expiry would say 600ms only at the freeze instant; the frozen
+        // value must win regardless of how far the clock has moved.
+        assertThat(action.remainingViewMillis(now.plusSeconds(10), true)).isEqualTo(600L);
+        // An action that was never frozen has no remainder to report.
+        ChaosAction unfrozen = new ChaosAction("id-1", "jl-app-3", ChaosActionType.KILL, 1,
+                now, now.plusSeconds(1));
+        assertThat(unfrozen.remainingViewMillis(now, true)).isNull();
+    }
 }

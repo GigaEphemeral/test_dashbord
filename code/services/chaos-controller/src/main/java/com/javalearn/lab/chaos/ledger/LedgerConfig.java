@@ -156,6 +156,13 @@ public class LedgerConfig {
                 objectMapper, ledgerClock);
     }
 
+    /** B2-04a: fault actions join the run timeline; writes are best-effort. */
+    @Bean
+    public FaultEventService faultEventService(RunLedgerRepository repository,
+                                               ObjectMapper objectMapper, Clock ledgerClock) {
+        return new FaultEventService(repository, objectMapper, ledgerClock);
+    }
+
     @Bean
     public OperationService operationService(LedgerProperties properties, LedgerBootstrap bootstrap,
                                              RunLedgerRepository repository, LedgerWriter writer,

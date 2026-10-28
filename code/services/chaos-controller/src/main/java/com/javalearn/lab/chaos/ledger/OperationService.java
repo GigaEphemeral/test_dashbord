@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.error.OperationCloseConflictException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationCloseRequest;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationPageView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
 
@@ -56,6 +58,14 @@ import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
 public class OperationService {
 
     private static final Logger log = LoggerFactory.getLogger(OperationService.class);
+
+    /**
+     * B2-04a closure note cap. Deliberately a validation constant, not a
+     * configuration key: the note is a short operator verdict, and a configurable
+     * limit would have to be mirrored in application.yml / compose / .env.example
+     * for no operational gain. The value matches the last_error column budget.
+     */
+    public static final int MAX_CLOSE_NOTE_LENGTH = 512;
 
     private final LedgerProperties properties;
     private final LedgerBootstrap bootstrap;
@@ -205,6 +215,92 @@ public class OperationService {
             return view(execution.operation(), true);
         }
         return view(execution.operation(), false);
+    }
+
+    /**
+     * B2-04a: closes an operation restart recovery marked UNKNOWN.
+     *
+     * <p>Only UNKNOWN may be closed, and only as RESTORED or FAILED - the
+     * operator looked at the target and records which side it ended on. The note
+     * (optional, {@value #MAX_CLOSE_NOTE_LENGTH} chars max, no control
+     * characters) is stored in {@code last_error} when present; when omitted the
+     * recovery reason already in {@code last_error} is preserved. A RESTORED
+     * verdict stamps {@code restored_at}; FAILED leaves the timestamps alone.
+     * Idempotent per verdict: closing an operation that already has the requested
+     * terminal state returns its view untouched (200); the other terminal verdict
+     * is a conflict (409/40905), never a rewrite.</p>
+     *
+     * <p>This closes the operation verdict only. It does not touch the run row
+     * and does not take or release the write-run environment lock - the lock is
+     * released by the run stop/timeout path, so an UNKNOWN run keeps blocking a
+     * new start until the operator closes that run as well.</p>
+     */
+    public OperationView closeUnknown(String operationId, OperationCloseRequest request) {
+        LedgerReadiness.requireReady(properties, bootstrap);
+        OperationStatus target = parseCloseStatus(request == null ? null : request.status());
+        String note = closeNote(request == null ? null : request.note());
+        try {
+            OperationRecord current = require(operationId);
+            if (current.status() == target) {
+                // Repeated close with the same terminal verdict: no second write.
+                return view(current, false);
+            }
+            if (current.status() != OperationStatus.UNKNOWN) {
+                throw new OperationCloseConflictException("operation " + operationId + " is "
+                        + current.status() + "; only UNKNOWN operations can be closed as "
+                        + target + " (see GET /lab/ledger/recovery)");
+            }
+            int updated = repository.closeUnknownOperation(operationId, target, note,
+                    target == OperationStatus.RESTORED ? clock.instant() : null);
+            OperationRecord reloaded = repository.findOperation(operationId)
+                    .orElseThrow(() -> new OperationNotFoundException(
+                            "operation not found: " + operationId));
+            if (updated == 0 && reloaded.status() != target) {
+                // Lost a concurrent close with the other verdict; that verdict wins.
+                throw new OperationCloseConflictException("operation " + operationId
+                        + " was closed as " + reloaded.status() + " concurrently; requested "
+                        + target);
+            }
+            log.info("Closed UNKNOWN operation {} as {}{}", operationId, target,
+                    note == null ? "" : " (note " + note.length() + " chars)");
+            return view(reloaded, false);
+        } catch (DataAccessException e) {
+            throw LedgerReadiness.unavailable(bootstrap, e, "operation close");
+        }
+    }
+
+    private static OperationStatus parseCloseStatus(String status) {
+        if (status == null || status.isBlank()) {
+            throw new InvalidLedgerRequestException(
+                    "status is required; only RESTORED or FAILED may close an UNKNOWN operation");
+        }
+        OperationStatus parsed;
+        try {
+            parsed = OperationStatus.valueOf(status.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new InvalidLedgerRequestException("unknown operation status '" + status
+                    + "'; only RESTORED or FAILED may close an UNKNOWN operation");
+        }
+        if (parsed != OperationStatus.RESTORED && parsed != OperationStatus.FAILED) {
+            throw new InvalidLedgerRequestException("status must be RESTORED or FAILED (was '"
+                    + status + "'); REQUESTED/APPLIED/PENDING_CONFIRMATION/UNKNOWN are not close verdicts");
+        }
+        return parsed;
+    }
+
+    private static String closeNote(String note) {
+        if (note == null || note.isBlank()) {
+            return null;
+        }
+        if (note.length() > MAX_CLOSE_NOTE_LENGTH) {
+            throw new InvalidLedgerRequestException("note must be at most "
+                    + MAX_CLOSE_NOTE_LENGTH + " characters (was " + note.length() + ")");
+        }
+        if (note.chars().anyMatch(Character::isISOControl)) {
+            throw new InvalidLedgerRequestException(
+                    "note must not contain control characters (newlines/tabs included)");
+        }
+        return note;
     }
 
     private OperationExecution pendingResult(OperationRecord operation, long waitMs) {

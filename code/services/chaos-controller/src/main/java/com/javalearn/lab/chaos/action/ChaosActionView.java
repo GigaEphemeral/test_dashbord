@@ -16,6 +16,12 @@ import java.time.Instant;
  * @param operationId  B1-02 operation contract id ({@code lab_operation}); null only
  *                     for views produced inside {@code ChaosActionService}, which
  *                     does not know about the ledger
+ * @param paused       B2-04a: true while the guide has frozen TTL reverts; the
+ *                     countdown is frozen too
+ * @param remainingMs  B2-04a: remaining TTL in milliseconds. While paused this is
+ *                     the frozen remainder; otherwise {@code max(0, expiresAt - now)}.
+ *                     {@code null} for one-shot actions (no TTL) and for
+ *                     REVERTED/FAILED actions, whose countdown no longer matters
  */
 public record ChaosActionView(String id,
                               String target,
@@ -25,17 +31,37 @@ public record ChaosActionView(String id,
                               String revertAction,
                               String status,
                               String lastError,
-                              String operationId) {
+                              String operationId,
+                              boolean paused,
+                              Long remainingMs) {
 
-    /** Compatibility constructor for callers/tests that predate B1-02. */
+    /**
+     * Compatibility constructor for callers/tests that predate B2-04a: no
+     * pause/remainder information is attached.
+     */
     public ChaosActionView(String id, String target, String action, Integer ttlSeconds,
                            Instant expiresAt, String revertAction, String status, String lastError) {
-        this(id, target, action, ttlSeconds, expiresAt, revertAction, status, lastError, null);
+        this(id, target, action, ttlSeconds, expiresAt, revertAction, status, lastError,
+                null, false, null);
+    }
+
+    /** Compatibility constructor for callers/tests that predate B2-04a. */
+    public ChaosActionView(String id, String target, String action, Integer ttlSeconds,
+                           Instant expiresAt, String revertAction, String status, String lastError,
+                           String operationId) {
+        this(id, target, action, ttlSeconds, expiresAt, revertAction, status, lastError,
+                operationId, false, null);
     }
 
     /** Copy with the operation id attached by the REST layer. */
     public ChaosActionView withOperationId(String operationId) {
         return new ChaosActionView(id, target, action, ttlSeconds, expiresAt, revertAction, status,
-                lastError, operationId);
+                lastError, operationId, paused, remainingMs);
+    }
+
+    /** Copy with the B2-04a pause/remaining-TTL snapshot attached by the service. */
+    public ChaosActionView withRuntime(boolean paused, Long remainingMs) {
+        return new ChaosActionView(id, target, action, ttlSeconds, expiresAt, revertAction, status,
+                lastError, operationId, paused, remainingMs);
     }
 }

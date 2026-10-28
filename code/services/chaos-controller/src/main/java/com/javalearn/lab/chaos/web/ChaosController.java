@@ -5,7 +5,9 @@ import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionType;
 import com.javalearn.lab.chaos.action.ChaosActionView;
 import com.javalearn.lab.chaos.action.StopAllResult;
+import com.javalearn.lab.chaos.ledger.FaultEventService;
 import com.javalearn.lab.chaos.ledger.IdempotencyKeys;
+import com.javalearn.lab.chaos.ledger.OperationContext;
 import com.javalearn.lab.chaos.ledger.OperationExecution;
 import com.javalearn.lab.chaos.ledger.OperationOutcome;
 import com.javalearn.lab.chaos.ledger.OperationRequest;
@@ -41,6 +43,12 @@ import java.util.Map;
  * <p>Idempotent replay (200) returns the stored operation, not the original
  * action view: after a replay there is no new action and no new {@code id}.
  * Read-only {@code GET /chaos/actions} is unchanged.</p>
+ *
+ * <p>B2-04a: an optional {@code runId} attaches a successful fault to that run's
+ * timeline ({@code lab_fault_event}); the run must exist (404 otherwise) but does
+ * not have to be RUNNING. The action result never depends on the timeline write.
+ * {@code GET /chaos/actions} and the POST action view now carry {@code paused}
+ * and {@code remainingMs}.</p>
  */
 @RestController
 @RequestMapping("/chaos")
@@ -48,10 +56,13 @@ public class ChaosController {
 
     private final ChaosActionService chaosActionService;
     private final OperationService operations;
+    private final FaultEventService faultEvents;
 
-    public ChaosController(ChaosActionService chaosActionService, OperationService operations) {
+    public ChaosController(ChaosActionService chaosActionService, OperationService operations,
+                           FaultEventService faultEvents) {
         this.chaosActionService = chaosActionService;
         this.operations = operations;
+        this.faultEvents = faultEvents;
     }
 
     @PostMapping("/instances/{name}/actions")
@@ -65,17 +76,32 @@ public class ChaosController {
         String action = type != null ? type.wireName()
                 : (request == null || request.action() == null ? "unknown" : request.action());
         Integer ttl = request == null ? null : request.ttlSeconds();
+        String runId = normalize(request == null ? null : request.runId());
+        // 404 for a reachable ledger with no such run; a database outage lets the
+        // fault run without a timeline row (fault actions are non-strict by design).
+        String runStatus = runId == null ? null : faultEvents.validateRun(runId);
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("container", name);
         before.put("action", action);
+        if (runId != null) {
+            before.put("runId", runId);
+            before.put("runStatus", runStatus);
+        }
 
-        OperationExecution execution = operations.submit(new OperationRequest(null, "container", name,
+        OperationExecution execution = operations.submit(new OperationRequest(runId, "container", name,
                 action, ttl, key, before, false), () -> {
             ChaosActionView view = chaosActionService.execute(name, request);
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("container", view.target());
             after.put("actionStatus", view.status());
             after.put("expiresAt", view.expiresAt() == null ? null : view.expiresAt().toString());
+            if (runId != null) {
+                // APPLIED and RESTORED both mean "this fault really happened".
+                // A failed action throws before this point and writes no event.
+                faultEvents.recordContainerAction(runId,
+                        OperationContext.currentOperationId().orElse(null), view.target(), action,
+                        view.ttlSeconds(), view.status(), view.expiresAt(), runStatus);
+            }
             boolean restored = type == ChaosActionType.START || type == ChaosActionType.RESUME;
             return restored
                     ? OperationOutcome.restored(after, view)
@@ -121,5 +147,14 @@ public class ChaosController {
         HttpStatus status = execution.pending() ? HttpStatus.ACCEPTED
                 : execution.replay() ? HttpStatus.OK : settledStatus;
         return ResponseEntity.status(status).body(Result.success(operations.view(execution)));
+    }
+
+    /** Blank run ids are the same as no run id; the service validates the format. */
+    private static String normalize(String runId) {
+        if (runId == null) {
+            return null;
+        }
+        String trimmed = runId.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

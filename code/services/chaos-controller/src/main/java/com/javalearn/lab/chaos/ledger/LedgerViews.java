@@ -44,6 +44,19 @@ public final class LedgerViews {
                                 boolean idempotentReplay) {
     }
 
+    /**
+     * B2-04a: operator closure of an UNKNOWN operation. Only {@code RESTORED} and
+     * {@code FAILED} are accepted; {@code note} is optional (max 512 chars, no
+     * control characters) and becomes {@code last_error} when present.
+     */
+    public record OperationCloseRequest(String status, String note) {
+    }
+
+    /** B2-04a: one {@code lab_fault_event} row on the run timeline. */
+    public record FaultEventView(String operationId, String source, String target, String event,
+                                 String occurredAt, JsonNode detail) {
+    }
+
     public record OperationPageView(List<OperationView> items, long total, int limit, int offset) {
     }
 
@@ -51,7 +64,18 @@ public final class LedgerViews {
     }
 
     public record RunDetailView(RunView run, List<StepView> steps, List<EnvView> env,
-                                List<ParamView> params, List<CheckView> checks) {
+                                List<ParamView> params, List<CheckView> checks,
+                                List<FaultEventView> faults) {
+
+        public RunDetailView {
+            faults = faults == null ? List.of() : faults;
+        }
+
+        /** Compatibility constructor for callers that predate B2-04a. */
+        public RunDetailView(RunView run, List<StepView> steps, List<EnvView> env,
+                             List<ParamView> params, List<CheckView> checks) {
+            this(run, steps, env, params, checks, List.of());
+        }
     }
 
     public record LedgerStatusView(String state, String schemaVersion, long pendingStash,
