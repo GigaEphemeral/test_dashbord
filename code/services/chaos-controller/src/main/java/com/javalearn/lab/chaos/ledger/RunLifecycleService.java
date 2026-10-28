@@ -3,6 +3,8 @@ package com.javalearn.lab.chaos.ledger;
 import com.javalearn.lab.chaos.error.LedgerConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.precheck.PrecheckReport;
+import com.javalearn.lab.chaos.precheck.RunPrecheckGate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,13 +13,25 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Run start/stop as operations (B1-02).
+ * Run start/stop as operations (B1-02), gated by the B1-04 environment
+ * pre-check.
  *
- * <p><b>Start</b> takes the single-writer lock first, then advances the persisted
- * state machine DRAFT → VALIDATING → READY → RUNNING. A lock conflict is a
- * 409/40902 naming the holder; an illegal source state is a 409/40901. A failure
- * after the first transition closes the run as FAILED and releases the lock, so
- * a failed start never leaves a READY run squatting on the environment.</p>
+ * <p><b>Start order.</b> The run row is read and the source state is validated
+ * (read-only), then the B1-04 pre-check runs. Only when it passes does the call
+ * take the single-writer lock and advance the persisted state machine
+ * DRAFT → VALIDATING → READY → RUNNING. A blocking pre-check finding throws
+ * {@code PrecheckBlockedException} (409/40903) <em>before</em> any transition or
+ * lock insert, so the run stays DRAFT and the environment is untouched - the
+ * operator fixes it and retries. A lock conflict is a 409/40902 naming the
+ * holder; an illegal source state is a 409/40901. A failure after the first
+ * transition closes the run as FAILED and releases the lock, so a failed start
+ * never leaves a READY run squatting on the environment.</p>
+ *
+ * <p><b>Warnings.</b> Non-blocking pre-check items are stored in the start
+ * operation's after-summary ({@code precheckVerdict}, {@code precheckWarnings}),
+ * which is where the console reads them from; the full report stays available
+ * at {@code GET /lab/runs/{runId}/precheck}. The same report is also reachable
+ * from the 409 body.</p>
  *
  * <p><b>Stop</b> is RUNNING → STOPPING → COMPLETED and releases the lock; the
  * response's after-summary says whether this call really deleted the lock or it
@@ -25,10 +39,9 @@ import java.util.Map;
  * closed as ABORTED and its lock released - that is the operator cleanup path,
  * not a claim that the environment was restored.</p>
  *
- * <p><b>Contract-first boundary (B1-02).</b> There is no real pre-check (B1-04)
- * and no k6 execution (B2-02); VALIDATING/READY are persisted checkpoints that
- * the hooks will fill in. Stop does not yet stop any container for the same
- * reason. Do not read these states as evidence that traffic started or stopped.</p>
+ * <p><b>Still contract-first.</b> No k6 execution exists yet (B2-02);
+ * VALIDATING/READY are persisted checkpoints and the launch hook is a no-op. Do
+ * not read these states as evidence that traffic started.</p>
  */
 public class RunLifecycleService {
 
@@ -40,19 +53,21 @@ public class RunLifecycleService {
     private final LedgerWriter writer;
     private final EnvLockService envLock;
     private final OperationService operations;
+    private final RunPrecheckGate precheck;
     private final RunLifecycleHook hook;
     private final Clock clock;
 
     public RunLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
                                RunLedgerRepository repository, LedgerWriter writer,
                                EnvLockService envLock, OperationService operations,
-                               RunLifecycleHook hook, Clock clock) {
+                               RunPrecheckGate precheck, RunLifecycleHook hook, Clock clock) {
         this.properties = properties;
         this.bootstrap = bootstrap;
         this.repository = repository;
         this.writer = writer;
         this.envLock = envLock;
         this.operations = operations;
+        this.precheck = precheck;
         this.hook = hook == null ? RunLifecycleHook.none() : hook;
         this.clock = clock;
     }
@@ -73,13 +88,17 @@ public class RunLifecycleService {
 
     private OperationOutcome doStart(String runId) {
         RunRecord current = requireRun(runId);
+        // Read-only legality check first: a non-DRAFT run is a state conflict,
+        // not a dirty environment.
         requireTransition(current.status(), RunStatus.VALIDATING, "start");
+        // B1-04 gate: before any transition and before the write-run lock. A
+        // blocking finding leaves the run DRAFT and the lock untouched.
+        PrecheckReport report = precheck.enforce(runId);
         EnvLockService.LockHandle lock = envLock.acquire(runId);
         boolean mutated = false;
         try {
             transition(runId, current.status(), RunStatus.VALIDATING, "validate", null);
             mutated = true;
-            hook.precheck(runId);
             transition(runId, RunStatus.VALIDATING, RunStatus.READY, "ready", null);
             hook.launch(runId);
             transition(runId, RunStatus.READY, RunStatus.RUNNING, "start", null);
@@ -87,6 +106,12 @@ public class RunLifecycleService {
             after.put("runStatus", RunStatus.RUNNING.name());
             after.put("lockKey", lock.lockKey());
             after.put("lockExpiresAt", lock.expiresAt().toString());
+            after.put("precheckVerdict", report.verdict());
+            if (report.warningSummary() != null) {
+                // Non-blocking findings live in the operation summary (the full
+                // evidence stays at GET /lab/runs/{runId}/precheck).
+                after.put("precheckWarnings", report.warningSummary());
+            }
             return OperationOutcome.applied(after, null);
         } catch (RuntimeException e) {
             closeFailedStart(runId, mutated, e);

@@ -22,12 +22,14 @@ import com.javalearn.lab.chaos.error.LedgerConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
+import com.javalearn.lab.chaos.error.PrecheckBlockedException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
 import com.javalearn.lab.chaos.error.ToxiproxyNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyUnavailableException;
 import com.javalearn.lab.chaos.error.UnknownAppInstanceException;
+import com.javalearn.lab.chaos.precheck.PrecheckReport;
 import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
 import org.slf4j.Logger;
@@ -251,5 +253,17 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleOperationNotFound(OperationNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    /**
+     * B1-04: the run pre-check refused the start. 409 with its own code; the
+     * report (including {@code blocking[]}) is the response data, so the
+     * console can render the same evidence as {@code GET .../precheck}.
+     */
+    @ExceptionHandler(PrecheckBlockedException.class)
+    public ResponseEntity<Result<PrecheckReport>> handlePrecheckBlocked(PrecheckBlockedException ex) {
+        log.warn("Run start blocked by the pre-check: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.PRECHECK_BLOCKED, ex.getMessage(), ex.report()));
     }
 }

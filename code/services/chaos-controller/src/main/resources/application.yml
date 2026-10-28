@@ -118,6 +118,34 @@ lab:
     grafana-dashboard-uid: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:}
     catalog-location: ${LAB_METRICS_CATALOG_LOCATION:classpath:metrics/catalog.yml}
 
+  # Stage2 B1-04 run pre-check: a read-only gate executed by
+  # POST /lab/runs/{runId}/start BEFORE any transition and before the
+  # write-run lock. Blocking items answer 409/40903 and keep the run DRAFT;
+  # there is no force/skip parameter. `enabled=false` disables the whole gate
+  # (ledger-only stacks), never a single blocking item.
+  precheck:
+    enabled: ${LAB_PRECHECK_ENABLED:true}
+    # Background load container that must be stopped (compose `traffic`
+    # profile). Separate from chaos.traffic.container-name on purpose.
+    traffic-container: ${LAB_PRECHECK_TRAFFIC_CONTAINER:jl-traffic}
+    # Application containers whose RUNNING image ids must agree.
+    app-containers: ${LAB_PRECHECK_APP_CONTAINERS:jl-app-1,jl-app-2,jl-app-3}
+    # Prometheus instant-query budget for the monitoring check.
+    prometheus-timeout-seconds: ${LAB_PRECHECK_PROMETHEUS_TIMEOUT_SECONDS:5}
+    # Healthy up{job="seckill-app"} target count.
+    required-app-targets: ${LAB_PRECHECK_REQUIRED_APP_TARGETS:3}
+    # Memory rule: sum(mem_limit of running lab containers) + reserve must fit
+    # inside Docker Info.MemTotal, otherwise the start is blocked.
+    memory-reserve-mb: ${LAB_PRECHECK_MEMORY_RESERVE_MB:1024}
+    # Optional expected app image id (full id or a unique prefix). Blank = only
+    # check that the running instances agree.
+    expected-app-image-id: ${LAB_PRECHECK_EXPECTED_APP_IMAGE_ID:}
+    # Cap for blocking[] / warnings[] / passed[]; items[] stays complete.
+    max-listed-items: ${LAB_PRECHECK_MAX_LISTED_ITEMS:10}
+    # Wall-clock budget of one report; a check that cannot start in it is
+    # reported BLOCK (fail closed).
+    check-timeout-seconds: ${LAB_PRECHECK_CHECK_TIMEOUT_SECONDS:30}
+
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.
 chaos:

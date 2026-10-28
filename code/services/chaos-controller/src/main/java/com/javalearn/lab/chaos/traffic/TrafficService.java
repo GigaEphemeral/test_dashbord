@@ -32,7 +32,16 @@ public class TrafficService {
     }
 
     public TrafficStateView state() {
-        String container = containerName();
+        return state(containerName());
+    }
+
+    /**
+     * State of an explicitly named traffic container. The B1-04 pre-check uses
+     * it so the container it gates on is the one in {@code lab.precheck.*}
+     * rather than an implicit default; the API keeps using the configured
+     * {@code chaos.traffic.container-name}.
+     */
+    public TrafficStateView state(String container) {
         try {
             return view(containerGateway.inspectLabContainer(container));
         } catch (ContainerNotFoundException e) {

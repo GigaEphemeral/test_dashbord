@@ -1,6 +1,7 @@
 package com.javalearn.lab.chaos.ledger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javalearn.lab.chaos.precheck.RunPrecheckService;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
@@ -167,8 +168,8 @@ public class LedgerConfig {
     }
 
     /**
-     * B1-02 is contract-first: the pre-check (B1-04) and the k6 launch (B2-02)
-     * are still no-ops. A later step replaces this bean, not the state machine.
+     * B1-04 replaced the pre-check hook with a real gate; the remaining hook is
+     * the B2-02 k6 launch seam.
      */
     @Bean
     public RunLifecycleHook runLifecycleHook() {
@@ -180,10 +181,11 @@ public class LedgerConfig {
                                                    RunLedgerRepository repository, LedgerWriter writer,
                                                    EnvLockService envLockService,
                                                    OperationService operationService,
+                                                   RunPrecheckService precheck,
                                                    RunLifecycleHook runLifecycleHook,
                                                    Clock ledgerClock) {
         return new RunLifecycleService(properties, bootstrap, repository, writer, envLockService,
-                operationService, runLifecycleHook, ledgerClock);
+                operationService, precheck, runLifecycleHook, ledgerClock);
     }
 
     private static HikariDataSource pool(String name, String url, LedgerProperties properties) {

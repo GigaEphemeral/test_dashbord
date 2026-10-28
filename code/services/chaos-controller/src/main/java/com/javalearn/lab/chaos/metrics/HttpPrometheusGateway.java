@@ -37,11 +37,21 @@ public class HttpPrometheusGateway implements PrometheusGateway {
     private final Duration requestTimeout;
 
     public HttpPrometheusGateway(MetricsProperties properties, ObjectMapper objectMapper) {
+        this(properties.getPrometheusUrl(), properties.getConnectTimeoutSeconds(),
+                properties.getRequestTimeoutSeconds(), objectMapper);
+    }
+
+    /**
+     * Explicit-timeout variant. B1-04's pre-check reuses the parsing and error
+     * mapping with its own request budget instead of the aggregation one.
+     */
+    public HttpPrometheusGateway(String prometheusUrl, int connectTimeoutSeconds,
+                                 int requestTimeoutSeconds, ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
-        this.baseUrl = stripTrailingSlash(properties.getPrometheusUrl());
-        this.requestTimeout = Duration.ofSeconds(properties.getRequestTimeoutSeconds());
+        this.baseUrl = stripTrailingSlash(prometheusUrl);
+        this.requestTimeout = Duration.ofSeconds(requestTimeoutSeconds);
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(properties.getConnectTimeoutSeconds()))
+                .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
                 .build();
     }
 
@@ -53,6 +63,18 @@ public class HttpPrometheusGateway implements PrometheusGateway {
                 + "&start=" + startEpochSeconds
                 + "&end=" + endEpochSeconds
                 + "&step=" + stepSeconds);
+        return execute(uri, "range");
+    }
+
+    @Override
+    public PrometheusMatrix queryInstant(String query, long atEpochSeconds) {
+        URI uri = URI.create(baseUrl + "/api/v1/query"
+                + "?query=" + encode(query)
+                + "&time=" + atEpochSeconds);
+        return execute(uri, "instant");
+    }
+
+    private PrometheusMatrix execute(URI uri, String kind) {
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .timeout(requestTimeout)
                 .header("Accept", "application/json")
@@ -66,7 +88,7 @@ public class HttpPrometheusGateway implements PrometheusGateway {
                 throw new PrometheusQueryException("prometheus returned HTTP " + response.statusCode()
                         + ": " + snippet(body));
             }
-            return parse(body);
+            return parse(body, kind);
         } catch (HttpTimeoutException e) {
             throw new PrometheusQueryException("prometheus request timed out after "
                     + requestTimeout.toSeconds() + "s at " + baseUrl, e);
@@ -79,6 +101,10 @@ public class HttpPrometheusGateway implements PrometheusGateway {
     }
 
     PrometheusMatrix parse(String body) {
+        return parse(body, "range");
+    }
+
+    PrometheusMatrix parse(String body, String kind) {
         if (body == null || body.isBlank()) {
             throw new PrometheusQueryException("prometheus returned an empty body");
         }
@@ -96,6 +122,9 @@ public class HttpPrometheusGateway implements PrometheusGateway {
         }
         JsonNode data = root.path("data");
         String resultType = data.path("resultType").asText("");
+        if ("instant".equals(kind)) {
+            return parseVector(data, resultType);
+        }
         if (!"matrix".equals(resultType)) {
             throw new PrometheusQueryException("prometheus returned resultType '" + resultType
                     + "' for a range query, expected 'matrix'");
@@ -104,34 +133,64 @@ public class HttpPrometheusGateway implements PrometheusGateway {
         List<PrometheusSeries> series = new ArrayList<>();
         if (result.isArray()) {
             for (JsonNode item : result) {
-                Map<String, String> labels = new LinkedHashMap<>();
-                JsonNode metric = item.path("metric");
-                if (metric.isObject()) {
-                    metric.fields().forEachRemaining(entry ->
-                            labels.put(entry.getKey(), entry.getValue().asText()));
-                }
-                List<PrometheusPoint> points = new ArrayList<>();
-                JsonNode values = item.path("values");
-                if (values.isArray()) {
-                    for (JsonNode pair : values) {
-                        if (!pair.isArray() || pair.size() < 2) {
-                            continue;
-                        }
-                        double timestamp = pair.get(0).asDouble(Double.NaN);
-                        double value = parseValue(pair.get(1).asText(""));
-                        if (!Double.isFinite(timestamp) || !Double.isFinite(value)) {
-                            // NaN/+Inf are real Prometheus answers (e.g. an empty
-                            // histogram_quantile); they are not samples we can
-                            // average, so they never become a 0.
-                            continue;
-                        }
-                        points.add(new PrometheusPoint(timestamp, value));
-                    }
-                }
-                series.add(new PrometheusSeries(labels, points));
+                series.add(parseSeries(item, item.path("values")));
             }
         }
         return new PrometheusMatrix(series);
+    }
+
+    /** Instant vector: each {@code value} pair becomes a one-point series. */
+    private PrometheusMatrix parseVector(JsonNode data, String resultType) {
+        if (!"vector".equals(resultType)) {
+            throw new PrometheusQueryException("prometheus returned resultType '" + resultType
+                    + "' for an instant query, expected 'vector'");
+        }
+        JsonNode result = data.path("result");
+        List<PrometheusSeries> series = new ArrayList<>();
+        if (result.isArray()) {
+            for (JsonNode item : result) {
+                List<PrometheusPoint> points = new ArrayList<>();
+                JsonNode value = item.path("value");
+                if (value.isArray() && value.size() >= 2) {
+                    addPoint(points, value.get(0).asDouble(Double.NaN), value.get(1).asText(""));
+                }
+                series.add(new PrometheusSeries(labelsOf(item), points));
+            }
+        }
+        return new PrometheusMatrix(series);
+    }
+
+    private PrometheusSeries parseSeries(JsonNode item, JsonNode values) {
+        List<PrometheusPoint> points = new ArrayList<>();
+        if (values != null && values.isArray()) {
+            for (JsonNode pair : values) {
+                if (!pair.isArray() || pair.size() < 2) {
+                    continue;
+                }
+                addPoint(points, pair.get(0).asDouble(Double.NaN), pair.get(1).asText(""));
+            }
+        }
+        return new PrometheusSeries(labelsOf(item), points);
+    }
+
+    private static Map<String, String> labelsOf(JsonNode item) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        JsonNode metric = item.path("metric");
+        if (metric.isObject()) {
+            metric.fields().forEachRemaining(entry ->
+                    labels.put(entry.getKey(), entry.getValue().asText()));
+        }
+        return labels;
+    }
+
+    private static void addPoint(List<PrometheusPoint> points, double timestamp, String rawValue) {
+        double value = parseValue(rawValue);
+        if (!Double.isFinite(timestamp) || !Double.isFinite(value)) {
+            // NaN/+Inf are real Prometheus answers (e.g. an empty
+            // histogram_quantile); they are not samples we can average.
+            return;
+        }
+        points.add(new PrometheusPoint(timestamp, value));
     }
 
     private static double parseValue(String raw) {

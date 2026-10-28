@@ -18,6 +18,12 @@ public enum LabErrorCode implements ErrorCode {
      * remedy instead of a bare conflict.
      */
     ENV_LOCK_HELD("40902", "Write-run environment lock is held"),
+    /**
+     * Stage2 B1-04: the run pre-check found at least one blocking item, so the
+     * start is refused before any transition/lock. The response {@code data}
+     * carries the full report; there is no force override.
+     */
+    PRECHECK_BLOCKED("40903", "Run pre-check blocked the start"),
     METHOD_NOT_ALLOWED("40501", "Method not allowed"),
     PAYLOAD_TOO_LARGE("41301", "Payload too large"),
     BAD_GATEWAY("50201", "Bad gateway"),
