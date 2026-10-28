@@ -15,6 +15,10 @@
 # is resolved on the jl-net network by default, so BASE_URL=http://nginx.
 # Every runtime value can be overridden from the environment; no host paths,
 # URLs, ids or timeouts are hardcoded outside the defaults below.
+#
+# The accepted scenario names are NOT listed here: the single source of truth
+# is scenarios/manifest.json (view "run"), read through lib/scenario-manifest.mjs.
+# Override its location with LAB_SCENARIOS_MANIFEST.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,32 +39,55 @@ K6_REPORT_MOUNT="${K6_REPORT_MOUNT:-/reports}"
 # /scripts/scenarios must stay the k6 JavaScript directory.
 K6_SCENARIOS_DIR="${K6_SCENARIOS_DIR:-$SCRIPT_DIR/../scenarios}"
 K6_SCENARIOS_MOUNT="${K6_SCENARIOS_MOUNT:-/chaos-scenarios}"
+# Scenario whitelist (Stage2 B2-01): the single source of truth is
+# scenarios/manifest.json, read through lib/scenario-manifest.mjs. This runner
+# no longer keeps a case list; both the manifest path and the reader are
+# overridable so a host-side copy can be used without editing the script.
+MANIFEST_TOOL="${K6_MANIFEST_TOOL:-$SCRIPT_DIR/lib/scenario-manifest.mjs}"
 
 if [[ $# -gt 0 && "$1" != -* ]]; then
   SCENARIO="$1"
   shift
 fi
 
-# IS_CHAOS mounts the shared scenario JSON directory and forwards the
-# chaos-controller variables; IS_CACHE only forwards the internal lab API
-# settings (token + app base URL) for the cache experiment.
-IS_CHAOS=0
-IS_CACHE=0
-case "$SCENARIO" in
-  smoke|load|stress|spike|soak|d7) ;;
-  ha-failover|db-failover) IS_CHAOS=1 ;;
-  cache-lab) IS_CACHE=1 ;;
-  *)
-    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak|d7|ha-failover|db-failover|cache-lab).\n' "$SCENARIO" >&2
-    exit 2
-    ;;
-esac
-
 if [[ ! -d "$K6_DIR" ]]; then
   printf 'ERROR: k6 directory not found: %s\n' "$K6_DIR" >&2
   exit 2
 fi
 K6_DIR="$(cd "$K6_DIR" && pwd)"
+MANIFEST_FILE="${LAB_SCENARIOS_MANIFEST:-$K6_DIR/scenarios/manifest.json}"
+export LAB_SCENARIOS_MANIFEST="$MANIFEST_FILE"
+
+if ! command -v node >/dev/null 2>&1; then
+  printf 'ERROR: node is required to read the scenario manifest (%s).\n' "$MANIFEST_FILE" >&2
+  exit 2
+fi
+if [[ ! -f "$MANIFEST_TOOL" ]]; then
+  printf 'ERROR: scenario manifest reader not found: %s\n' "$MANIFEST_TOOL" >&2
+  exit 2
+fi
+
+# The reader owns the whitelist and its error messages (unknown scenario,
+# service-only traffic, manifest drift); the runner only maps any refusal to
+# exit code 2. On success it prints "<chaos> <cache>" as 0/1 flags.
+set +e
+manifest_state="$(node "$MANIFEST_TOOL" check-run "$SCENARIO" 2>&1)"
+manifest_status=$?
+set -e
+if [[ "$manifest_status" -ne 0 ]]; then
+  printf '%s\n' "$manifest_state" >&2
+  exit 2
+fi
+
+# IS_CHAOS mounts the shared scenario JSON directory and forwards the
+# chaos-controller variables; IS_CACHE only forwards the internal lab API
+# settings (token + app base URL) for the cache experiment.
+read -r IS_CHAOS IS_CACHE <<<"$manifest_state" || true
+if [[ "$IS_CHAOS" != "0" && "$IS_CHAOS" != "1" ]] || [[ "$IS_CACHE" != "0" && "$IS_CACHE" != "1" ]]; then
+  printf 'ERROR: scenario manifest returned an unreadable state "%s" for "%s".\n' \
+    "$manifest_state" "$SCENARIO" >&2
+  exit 2
+fi
 
 if [[ ! -f "$K6_DIR/scenarios/$SCENARIO.js" ]]; then
   printf 'ERROR: scenario file not found: %s\n' "$K6_DIR/scenarios/$SCENARIO.js" >&2

@@ -25,6 +25,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 K6_DIR="${BENCH_K6_DIR:-$ROOT_DIR/code/lab/k6}"
 K6_RUNNER="${BENCH_K6_RUNNER:-$K6_DIR/run.sh}"
+# Scenario whitelist (Stage2 B2-01): the bench view, its usage line and the
+# verdict flag come from the k6 scenario manifest, not from a local case list.
+MANIFEST_TOOL="${BENCH_MANIFEST_TOOL:-$K6_DIR/lib/scenario-manifest.mjs}"
+MANIFEST_FILE="${LAB_SCENARIOS_MANIFEST:-$K6_DIR/scenarios/manifest.json}"
 REPORT_SCRIPT="${BENCH_REPORT_SCRIPT:-$SCRIPT_DIR/bench-report.js}"
 RESET_SCRIPT="${BENCH_RESET_SCRIPT:-$SCRIPT_DIR/reset-lab.sh}"
 IMAGE_IDENTITY_SCRIPT="${BENCH_IMAGE_IDENTITY_SCRIPT:-$SCRIPT_DIR/image-identity.sh}"
@@ -55,9 +59,41 @@ HTTP_TIMEOUT="${BENCH_HTTP_TIMEOUT_SECONDS:-5}"
 RESET_BASELINE_STOCK="${RESET_BASELINE_STOCK:-100}"
 TRAFFIC_SERVICE="${BENCH_TRAFFIC_SERVICE:-traffic}"
 
+# The manifest reader and the manifest itself must exist before any argument is
+# validated: the usage text is generated from the manifest "bench" view and the
+# scenario check refuses anything outside it.
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node is required for the scenario manifest and report generation (no npm dependencies)." >&2
+  exit 2
+fi
+if [[ ! -f "$MANIFEST_TOOL" ]]; then
+  printf 'ERROR: scenario manifest reader not found: %s\n' "$MANIFEST_TOOL" >&2
+  exit 2
+fi
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+  printf 'ERROR: scenario manifest not found: %s\n' "$MANIFEST_FILE" >&2
+  exit 2
+fi
+
+manifest_env() {
+  LAB_SCENARIOS_MANIFEST="$MANIFEST_FILE" node "$MANIFEST_TOOL" "$@"
+}
+
+# Space-free "smoke|load|..." rendering of the manifest bench view, used by the
+# usage text and by the refusal messages owned by the manifest reader.
+bench_scenario_list() {
+  manifest_env list bench | tr '\n' '|' | sed 's/|$//'
+}
+
 usage() {
-  cat <<'EOF'
-Usage: bench.sh <smoke|load|stress|spike|soak> [options] [--] [k6 env overrides...]
+  local scenarios
+  if ! scenarios="$(bench_scenario_list)"; then
+    printf 'ERROR: cannot read the scenario manifest (%s); run "node %s validate".\n' \
+      "$MANIFEST_FILE" "$MANIFEST_TOOL" >&2
+    exit 2
+  fi
+  sed "s/@BENCH_SCENARIOS@/$scenarios/" <<'EOF'
+Usage: bench.sh <@BENCH_SCENARIOS@> [options] [--] [k6 env overrides...]
 
 Options:
   --run-id <id>   Archive id / k6 RUN_ID label (default: <timestamp>-<scenario>).
@@ -74,6 +110,10 @@ rejected (they would corrupt the archive or the runner): RUN_ID, SCENARIO,
 PATH/HOME, K6_DIR/K6_IMAGE/K6_NETWORK/K6_REPORT_DIR/K6_REPORT_MOUNT/
 K6_SUMMARY_EXPORT/K6_RUNNER/K6_FORWARD_ENV and any BENCH_*/RESET_* name.
 Set BENCH_*/RESET_* variables in the environment before invoking bench.sh.
+
+The accepted scenarios are the manifest "bench" view (default
+code/lab/k6/scenarios/manifest.json; override with LAB_SCENARIOS_MANIFEST).
+k6 itself must also accept the scenario (run.sh uses the manifest "run" view).
 
 The stack must already be running; bench.sh never starts it.
 
@@ -95,6 +135,9 @@ Environment (defaults):
   BENCH_TRAFFIC_SERVICE=traffic    BENCH_ALLOW_TRAFFIC=0 (1 = bench with the
                                    console background traffic still generating
                                    load)
+  LAB_SCENARIOS_MANIFEST=<repo>/code/lab/k6/scenarios/manifest.json
+                                   (scenario whitelist, defaults and the bench
+                                   view used by the usage line above)
 EOF
 }
 
@@ -171,14 +214,24 @@ if [[ -z "$SCENARIO" ]]; then
   usage >&2
   exit 2
 fi
-case "$SCENARIO" in
-  smoke|load|stress|spike|soak) ;;
-  *)
-    printf 'ERROR: unknown scenario "%s" (expected smoke|load|stress|spike|soak).\n' \
-      "$SCENARIO" >&2
-    exit 2
-    ;;
-esac
+# The manifest reader owns the whitelist and the reason text; any refusal
+# (unknown, outside the bench view, service-only traffic, manifest drift) is
+# exit code 2 here. On success it prints "thresholds-expected=<bool>", which
+# replaces the old per-scenario special case for stress.
+set +e
+bench_state="$(manifest_env check-bench "$SCENARIO" 2>&1)"
+bench_status=$?
+set -e
+if [[ "$bench_status" -ne 0 ]]; then
+  printf '%s\n' "$bench_state" >&2
+  exit 2
+fi
+thresholds_expected="$(sed -n 's/^thresholds-expected=//p' <<<"$bench_state")"
+if [[ "$thresholds_expected" != "true" && "$thresholds_expected" != "false" ]]; then
+  printf 'ERROR: scenario manifest returned an unreadable verdict flag "%s" for "%s".\n' \
+    "$bench_state" "$SCENARIO" >&2
+  exit 2
+fi
 
 if [[ -z "$RUN_ID" ]]; then
   RUN_ID="$(date +%Y%m%d-%H%M%S)-${SCENARIO}"
@@ -203,10 +256,6 @@ if [[ ! -f "$REPORT_SCRIPT" ]]; then
 fi
 if $DO_RESET && [[ ! -f "$RESET_SCRIPT" ]]; then
   printf 'ERROR: reset script not found: %s\n' "$RESET_SCRIPT" >&2
-  exit 2
-fi
-if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: node is required for report generation (no npm dependencies)." >&2
   exit 2
 fi
 if ! docker image inspect "$K6_IMAGE" >/dev/null 2>&1; then
@@ -410,12 +459,6 @@ finished_epoch="$(date +%s)"
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # --- Manifest / HTML / result doc ------------------------------------------
-if [[ "$SCENARIO" == "stress" ]]; then
-  thresholds_expected=false
-else
-  thresholds_expected=true
-fi
-
 report_args=(
   --summary "$RUN_DIR/summary.json"
   --log "$RUN_DIR/k6.log"
