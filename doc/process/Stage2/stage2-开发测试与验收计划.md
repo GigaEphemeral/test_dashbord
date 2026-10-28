@@ -1,6 +1,6 @@
 # Stage2 开发、测试与步骤验收计划
 
-> 版本：v1.2（2026-10-28）
+> 版本：v1.3（2026-10-28）
 > 分支基线：`feature/stage2-workbench`（从 `feature/ha-lab` HEAD `13d961e` 拉出）
 > 依据：`doc/design/Stage2/stage2-需求.md`（需求基线 v1，含 §十一 范围确认结论）、
 > `doc/design/Stage2/stage2改造方案.md`（v1.4）、
@@ -14,15 +14,15 @@
 
 每个步骤收尾必须至少跑所属模块的测试；每个批次收口必须跑全量闸门并记录新基线。
 
-| 闸门 | 命令 | Stage1 收口基线（起点） |
-|---|---|---|
-| Java 单测 | `mvn test`（reactor，仓库根 `code/pom.xml`） | 784 tests / BUILD SUCCESS |
-| k6 脚本回归 | `node --test "code/lab/k6/test/*.test.mjs"` | 79 pass / 0 fail |
-| 全栈验收 | `bash code/lab/scripts/verify.sh` | 109 PASS / 1 WARN / 0 FAIL（唯一 WARN = cAdvisor/WSL2） |
-| HTTP 冒烟 | `bash code/lab/scripts/smoke.sh` | 7/7，末行 `SMOKE PASSED.` |
-| 控制台冒烟 | `bash code/lab/scripts/console-smoke.sh`（Playwright） | 42 断言 / 0 失败 |
-| 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS |
-| 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 |
+| 闸门 | 命令 | Stage1 收口基线（起点） | B0 收口基线（现行，2026-10-28） |
+|---|---|---|---|
+| Java 单测 | `mvn test`（reactor，仓库根 `code/pom.xml`） | 784 tests / BUILD SUCCESS | **851 tests / BUILD SUCCESS**（app-jdk21 469 + chaos 296 + jdk8 59 + core 13 + platform 14） |
+| k6 脚本回归 | `node --test "code/lab/k6/test/*.test.mjs"` | 79 pass / 0 fail | 79 pass / 0 fail（未变） |
+| 全栈验收 | `bash code/lab/scripts/verify.sh` | 109 PASS / 1 WARN / 0 FAIL（唯一 WARN = cAdvisor/WSL2） | 109 PASS / 1 WARN / 0 FAIL（未变） |
+| HTTP 冒烟 | `bash code/lab/scripts/smoke.sh` | 7/7，末行 `SMOKE PASSED.` | 7/7（未变） |
+| 控制台冒烟 | `bash code/lab/scripts/console-smoke.sh`（Playwright） | 42 断言 / 0 失败 | 42 断言 / 0 失败（B0 未动 dashboard，收口时**未重跑**；B1 控制台重构起一次性重写） |
+| 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | 32/32 PASS（B0 未新增断言；指标字典抽样断言归 B1 起补） |
+| 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 | 通过 |
 
 规约要点（每一步都适用）：
 
@@ -45,6 +45,9 @@ B3 依赖 B0 的 stats/代理/TTL 修复；B4 依赖 B1 台账 + B2 执行层；
 ---
 
 ## 1. B0 · Stage1 基线修复与指标可用性审计（B1 的前置门禁）
+
+> **收口状态（2026-10-28）：已收口。** 8 个步骤全部合并、全量闸门见 §0 现行基线；
+> 真机补验台账见 `b0-live-verification.md`（R1 六项 + R2 四项 + 收口终验），有意顺延项已在该台账登记。
 
 **收口标准（改造方案 §10.4/§11）**：关键指标有真实序列或明确标记未接线；缓存 TTL/统计可核验；
 代理分页正常；router 复位目标正确。B0 未通过前，相关实验只能标 `DEGRADED/INVALID`，不得生成无条件 PASS。
@@ -404,3 +407,4 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.0 初版：B0–B5 步骤分解、闸门基线、A01–A32 映射、8 项待确认 |
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
+| 2026-10-28 | v1.3：B0 收口——§0 闸门表加「B0 收口基线（现行）」列（reactor 851 / app 469 / chaos 296；console-smoke 42 未重跑并标注原因）；§1 顶部登记收口状态与真机台账指针；顺延项（cursor E2E、db-ha 真 `--yes`、failure-container-check 细节）在 `b0-live-verification.md` 登记 |

@@ -886,3 +886,32 @@ cache:r2pfx:product:90001  TTL=53   ← 播种雪崩键，仍按 60s 口径
 | 两项复位（env、toggles、序列） | PASS（见上） |
 
 **结论：R2-4 PASS**（R1 §3.2/§4 的两条留白在真机补齐；新记录一条口径差别：总开关 vs stats 开关影响面不同）
+
+---
+
+## 收口终验（主会话，2026-10-28）
+
+R2 在配额内已完成全部实质提交（`6204e0e..21b6177`），终验由主会话执行：
+
+| 闸门 | 当场输出 | 结论 |
+|---|---|---|
+| `verify.sh` | `109 PASS / 1 WARN / 0 FAIL`，EXIT=0（唯一 WARN=cAdvisor/WSL2） | PASS |
+| `db-cluster` 哨兵 | `RESULT: ok - 3/3 node(s) answering, exactly one PRIMARY`；PRIMARY=mysql-1、探针=jl-mysql-3（compose 默认），互不重合 | PASS |
+| k6 单测 | `# pass 79 / # fail 0` | PASS |
+| `smoke.sh` | 末行 `SMOKE PASSED.`（7/7） | PASS |
+| `test-lab-safety.sh` | `LAB SAFETY TESTS PASSED.` | PASS |
+| `mvn test`（reactor，含探针 javadoc 澄清后复跑） | BUILD SUCCESS，EXIT=0；app-jdk21 **469** / jdk8 **59** / chaos **296** / core 13 / platform 14 = **851** | PASS |
+| claims | 32/32（B0 未新增断言，指标字典抽样断言归 B1 起补） | PASS |
+| console-smoke | **未重跑**：B0 未动 dashboard 文件；基线 42 沿用，B1 重构时随重写验收 | 豁免（已登记） |
+
+收口伴随的文档/注释修正（本次提交）：
+
+1. 计划 §0 闸门表新增「B0 收口基线（现行）」列，§1 顶部登记收口状态（v1.3）。
+2. `ProbeTargetGuard` javadoc 澄清双默认：代码回退值 `jl-mysql-1` 与 compose 现场默认 `jl-mysql-3`
+   （实验室栈内 compose 恒注入 env var，生效探针是 -3；`ProbeTargetIsolationTest` 已按此断言）。
+
+**有意顺延（不阻塞收口，已在计划/交接登记）**：
+`/lab/cache/keys?cursor=` E2E（等 B3 分页 UI）；db-ha 真 `reset-lab.sh --yes`（会清演示数据，按批次需要再做）；
+`failure-container-check` 真机细节行为（单元已覆盖）。
+
+**结论：B0 收口成立，B1 门禁解除。**

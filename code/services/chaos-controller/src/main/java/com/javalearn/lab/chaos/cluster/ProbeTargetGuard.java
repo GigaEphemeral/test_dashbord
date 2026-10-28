@@ -7,7 +7,9 @@ import com.javalearn.lab.chaos.config.ChaosProperties;
  * slice B, 方案 §10.4 / plan B0-08).
  *
  * <p><b>Why.</b> The membership probe execs into exactly one container
- * ({@code chaos.mysql-cluster.container}, lab default {@code jl-mysql-3}). The
+ * ({@code chaos.mysql-cluster.container}; the compose lab default is
+ * {@code jl-mysql-3}, the code fallback is {@code jl-mysql-1} - in the lab stack
+ * compose always injects the env var, so the effective probe is {@code jl-mysql-3}). The
  * db-failover drill kills the PRIMARY. If the drill's target and the probe's
  * home are the same container, the fault kills the observer as well:
  * {@code mysql_cluster_probe_up} and every {@code mysql_cluster_member_state}
