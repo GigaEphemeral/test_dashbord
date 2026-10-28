@@ -30,6 +30,11 @@
 > 真机证据见 `step-S2-B1-01-ledger-persistence.md` 附录 F、`step-S2-B1-02-operation-contract.md` 附录 E、
 > `step-S2-B1-03-metrics-aggregation.md` 与 `step-S2-B1-04-run-precheck.md` 的补充节。
 > 历史：B1-03 后 990/435；B1-02 后 939/384；B1-01 后 888/333；B0 收口 851/296。
+>
+> **B2 现行基线（2026-10-28，批次收口）**：reactor **1231**（chaos **676**、app 469、jdk8 59、core 13、
+> platform 14）、console-smoke **74/0**、k6 node **105**、claims **41**、verify 109/1、smoke 7/7、env 接线 93。
+> 真机 A01/A17/A20/A09/A12/A29 与遗留清单见 `step-S2-B2-00-closure.md`。
+> 历史：B2-04 后 chaos 676；B2-03 后 603；B2-02 后 591；B2-01 后 491；B1 收口 474。
 
 规约要点（每一步都适用）：
 
@@ -187,6 +192,9 @@ B1 收口交接：`step-S2-B1-00-closure.md`。
 ---
 
 ## 3. B2 · 统一 k6 执行、流量归因与故障闭环
+
+> **收口状态（2026-10-28）：已收口。** 4 个步骤全部合并并通过真机验证（A01/A17/A20/A09/A12/A29），
+> 批次闸门与遗留清单见 `step-S2-B2-00-closure.md` 与 §0 现行基线。
 
 **收口标准**：UI/CLI 场景清单一致；定向流量能到达指定实例；超时动作状态可追踪；清理覆盖所有故障资源。
 

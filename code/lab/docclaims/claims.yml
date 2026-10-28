@@ -506,3 +506,51 @@
     pattern: "id: 'runs'"
   expect: true
   last_verified: 2026-10-28
+- id: b2-scenario-manifest-single-source
+  polarity: positive
+  doc:
+    - code/lab/k6/README.md
+    - doc/process/Stage2/step-S2-B2-01-scenario-manifest.md
+  statement: "B2-01 起 k6 场景白名单的唯一事实源是 scenarios/manifest.json；run.sh、bench.sh 与 GET /lab/bench/scenarios 同源"
+  verify:
+    kind: shell
+    command: "test -f code/lab/k6/scenarios/manifest.json && grep -q check-run code/lab/k6/run.sh && grep -q check-bench code/lab/scripts/bench.sh && grep -q '/lab/bench/scenarios' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/BenchController.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b2-k6-executor-run-contract
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B2-02-k6-executor.md
+  statement: "B2-02 提供受控 k6 执行：launch planner、退出/超时看门狗与 GET /lab/runs/{runId}/k6 状态/日志/报告端点"
+  verify:
+    kind: shell
+    command: "grep -q 'lab/runs/{runId}/k6' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/BenchExecutionController.java && test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchLaunchPlanner.java && test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchRunWatchdog.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b2-traffic-modes-controlled
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B2-03-traffic-modes.md
+  statement: "B2-03 支持 via-nginx / target-instance 两种受控流量模式，目标只来自固定实例表，k6 每请求带 instance/traffic_mode 标签"
+  verify:
+    kind: shell
+    command: "grep -q MODE_TARGET_INSTANCE code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchLaunchPlanner.java && grep -q 'target-instance' code/lab/k6/lib/config.js && grep -q TARGET_INSTANCES code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchExecProperties.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-28
+
+- id: b2-fault-closure-contract
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B2-04-fault-closure.md
+  statement: "B2-04 的故障闭环：动作 paused/remainingMs、run 详情 faults 时间线、UNKNOWN 操作人工关闭、stop-all 覆盖容器/toxiproxy/traffic/线程/k6"
+  verify:
+    kind: shell
+    command: "grep -q 'lab/operations/{operationId}/close' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerController.java && test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/action/EnvironmentStopAllService.java && grep -q faults code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerViews.java && grep -q remainingMs code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/action/ChaosActionView.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-28
