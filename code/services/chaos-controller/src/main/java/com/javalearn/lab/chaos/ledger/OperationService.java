@@ -237,6 +237,11 @@ public class OperationService {
     }
 
     private OperationOutcome execute(OperationRecord operation, OperationWork work) {
+        return OperationContext.withOperation(operation.operationId(),
+                () -> executeInner(operation, work));
+    }
+
+    private OperationOutcome executeInner(OperationRecord operation, OperationWork work) {
         try {
             OperationOutcome outcome = work.run();
             Instant finishedAt = clock.instant();

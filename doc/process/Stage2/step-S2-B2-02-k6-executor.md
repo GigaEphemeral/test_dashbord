@@ -376,3 +376,11 @@ clock.instant() > deadline → 超时
 - **修正**：planner 增加元数据白名单 `note`/`source`：必须是 ≤200 字符、无控制字符的非空字符串；只留在 `lab_run_param`，**不渲染进 k6 容器环境**。未知参数仍拒绝；强制值仍拒绝。
 - **测试**：planner 新增 2 条（元数据被接受且不转发；非法元数据被拒），`BenchLaunchPlannerTest` **27/27**；全模块 **586 / 0 / 0 / 0**。
 - **口径**：console-smoke 用 `note=console-smoke` 作为自有 run 的清理 marker（不再依赖非白名单 scenario 前缀）。
+
+
+## 补充：预检查自我阻断修正（真机 A01 第二次启动发现，2026-10-28）
+
+- **问题**：start 的操作行在 worker 之前插入。预检查 `operations.settled` 只忽略 `REQUESTED` 的自身 start；一旦预检查耗时超过 3s 同步预算，自身操作已翻成 `PENDING_CONFIRMATION`，于是被判为"未结操作"而自我阻断（真机首次表现为 `PrecheckBlockedException: operations.settled (1 unsettled ... op-... start ... PENDING_CONFIRMATION)`，run 停在 DRAFT、operation FAILED）。
+- **修正**：新增 `OperationContext`（ThreadLocal），`OperationService` 在 worker 线程绑定当前 operationId；`RunPrecheckService.enforce` 按**精确 operationId** 排除自身（不论状态），GET 报告仍不忽略任何操作；无上下文时保留旧的 `REQUESTED` 启发式作为回退。其他 PENDING_CONFIRMATION/UNKNOWN 兄弟仍阻断。
+- **测试**：`RunPrecheckServiceTest` 新增 1 条（自身 PENDING_CONFIRMATION 被忽略、其他 PENDING 仍阻断）；全模块 **587 / 0 / 0 / 0**。
+- **口径**：这不是放宽门禁，只是把"自身 in-flight 操作"从"未结兄弟"里按 id 摘出来。

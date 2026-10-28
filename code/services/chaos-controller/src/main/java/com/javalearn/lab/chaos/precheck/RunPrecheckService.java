@@ -10,6 +10,7 @@ import com.javalearn.lab.chaos.error.ToxiproxyUnavailableException;
 import com.javalearn.lab.chaos.ledger.LedgerBootstrap;
 import com.javalearn.lab.chaos.ledger.LedgerProperties;
 import com.javalearn.lab.chaos.ledger.LedgerReadiness;
+import com.javalearn.lab.chaos.ledger.OperationContext;
 import com.javalearn.lab.chaos.ledger.OperationRecord;
 import com.javalearn.lab.chaos.ledger.OperationStatus;
 import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
@@ -57,9 +58,12 @@ import java.util.Set;
  *
  * <p><b>Own start operation.</b> The start path inserts its {@code lab_operation}
  * row before the work runs, so the operations check would otherwise always see
- * itself as REQUESTED. {@link #enforce(String)} therefore ignores an in-flight
- * {@code start} operation targeting this same run; a PENDING_CONFIRMATION or
- * UNKNOWN sibling still blocks. The GET report does not ignore anything.</p>
+ * itself. {@link #enforce(String)} therefore ignores the exact operation id
+ * bound by {@code OperationContext} (the worker's own row), whatever its status -
+ * a slow pre-check can outlive the sync budget and turn its own row into
+ * PENDING_CONFIRMATION before this check runs. A REQUESTED start for the same
+ * run is also ignored as a fallback for calls outside an operation; a different
+ * PENDING_CONFIRMATION or UNKNOWN sibling still blocks.</p>
  */
 public class RunPrecheckService implements RunPrecheckGate {
 
@@ -127,7 +131,12 @@ public class RunPrecheckService implements RunPrecheckGate {
      */
     @Override
     public PrecheckReport enforce(String runId) {
-        PrecheckReport report = inspect(runId, true);
+        // The operation worker binds its own id; excluding that exact row is
+        // what keeps a slow pre-check from blocking on its own
+        // PENDING_CONFIRMATION after the sync budget expires. Calls outside an
+        // operation (tests, direct use) fall back to the REQUESTED heuristic.
+        PrecheckReport report = inspect(runId, true,
+                OperationContext.currentOperationId().orElse(null));
         if (report.blocked()) {
             throw new PrecheckBlockedException(report);
         }
@@ -135,6 +144,11 @@ public class RunPrecheckService implements RunPrecheckGate {
     }
 
     private PrecheckReport inspect(String runId, boolean ignoreOwnStartOperation) {
+        return inspect(runId, ignoreOwnStartOperation, null);
+    }
+
+    private PrecheckReport inspect(String runId, boolean ignoreOwnStartOperation,
+                                   String ignoreOperationId) {
         LedgerReadiness.requireReady(ledgerProperties, bootstrap);
         requireRun(runId);
         Instant checkedAt = clock.instant();
@@ -146,7 +160,7 @@ public class RunPrecheckService implements RunPrecheckGate {
         items.add(trafficCheck(deadline));
         items.add(chaosCheck(deadline));
         items.add(toxiproxyCheck(deadline));
-        items.add(operationsCheck(runId, ignoreOwnStartOperation, deadline));
+        items.add(operationsCheck(runId, ignoreOwnStartOperation, ignoreOperationId, deadline));
         items.add(monitoringCheck(deadline));
         items.add(resourcesCheck(deadline));
         items.add(imagesCheck(deadline));
@@ -286,7 +300,8 @@ public class RunPrecheckService implements RunPrecheckGate {
         }
     }
 
-    private PrecheckItem operationsCheck(String runId, boolean ignoreOwnStart, Instant deadline) {
+    private PrecheckItem operationsCheck(String runId, boolean ignoreOwnStart,
+                                         String ignoreOperationId, Instant deadline) {
         if (budgetExhausted(deadline)) {
             return skipped(KEY_OPERATIONS, deadline);
         }
@@ -302,6 +317,9 @@ public class RunPrecheckService implements RunPrecheckGate {
         }
         List<OperationRecord> relevant = new ArrayList<>();
         for (OperationRecord operation : unsettled) {
+            if (ignoreOperationId != null && ignoreOperationId.equals(operation.operationId())) {
+                continue;
+            }
             if (ignoreOwnStart && isOwnStartOperation(operation, runId)) {
                 continue;
             }

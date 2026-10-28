@@ -11,6 +11,7 @@ import com.javalearn.lab.chaos.error.PrecheckBlockedException;
 import com.javalearn.lab.chaos.error.ToxiproxyUnavailableException;
 import com.javalearn.lab.chaos.ledger.LedgerBootstrap;
 import com.javalearn.lab.chaos.ledger.LedgerProperties;
+import com.javalearn.lab.chaos.ledger.OperationContext;
 import com.javalearn.lab.chaos.ledger.OperationRecord;
 import com.javalearn.lab.chaos.ledger.OperationStatus;
 import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
@@ -272,6 +273,28 @@ class RunPrecheckServiceTest {
         assertThat(item.status()).isEqualTo(PrecheckStatus.BLOCK);
         assertThat(item.message()).contains("op-stuck");
         assertThat(item.detail()).containsEntry("unsettledOperations", 1);
+    }
+
+    @Test
+    void theExecutingOperationIsIgnoredEvenAfterItFlippedToPendingConfirmation() {
+        OperationRecord ownPending = new OperationRecord("op-own", RUN, "run", RUN, "start",
+                OperationStatus.PENDING_CONFIRMATION, null, NOW, null, null, null, "local",
+                null, null);
+        when(repository.findRecentOperationsByStatuses(any(), anyInt()))
+                .thenReturn(List.of(ownPending));
+
+        assertThat(OperationContext.withOperation("op-own", () -> service.enforce(RUN)).verdict())
+                .isEqualTo("PASS");
+
+        OperationRecord otherPending = new OperationRecord("op-other", "run-20261028-002", "run",
+                "run-20261028-002", "stop", OperationStatus.PENDING_CONFIRMATION, null, NOW,
+                null, null, null, "local", null, null);
+        when(repository.findRecentOperationsByStatuses(any(), anyInt()))
+                .thenReturn(List.of(ownPending, otherPending));
+
+        assertThatThrownBy(() ->
+                OperationContext.withOperation("op-own", () -> service.enforce(RUN)))
+                .isInstanceOf(PrecheckBlockedException.class);
     }
 
     // --------------------------------------------------------------- monitoring
