@@ -18,6 +18,15 @@ import org.springframework.stereotype.Component;
  * whose bind source is empty. The run lifecycle (B2-02b-2) is what feeds the
  * resolved value into the planner.</p>
  *
+ * <p>Stage2 B2-03a adds the traffic-mode knobs: {@code nginx-base-url}
+ * ({@code LAB_BENCH_EXEC_NGINX_BASE_URL}, the {@code via-nginx} entry),
+ * {@code target-instances} ({@code LAB_BENCH_EXEC_TARGET_INSTANCES}, the fixed
+ * service-name table a {@code target-instance} run may pin to) and
+ * {@code target-port} ({@code LAB_BENCH_EXEC_TARGET_PORT}). The old
+ * {@code base-url} key is retired: {@code nginx-base-url} carries the same
+ * default ({@code http://nginx}) and is the only {@code BASE_URL} source for
+ * {@code via-nginx}.
+ *
  * <p>The image is a configuration value, never a request field: a launch
  * request cannot override it (see {@link BenchLaunchPlanner}).</p>
  */
@@ -32,7 +41,12 @@ public class BenchExecProperties {
     private String reportsMount = "/reports";
     private String reportsVolume = "jl-k6-reports";
     private String prometheusRwUrl = "http://prometheus:9090/api/v1/write";
-    private String baseUrl = "http://nginx";
+    /** {@code BASE_URL} for {@code via-nginx} runs; never taken from a request. */
+    private String nginxBaseUrl = "http://nginx";
+    /** Comma-separated service names a {@code target-instance} run may pin to. */
+    private String targetInstances = "app-1,app-2,app-3";
+    /** Port appended to the pinned service name ({@code http://<target>:<port>}). */
+    private int targetPort = 8080;
     private String containerPrefix = "jl-k6-";
     private int maxVus = 1000;
     private int maxDurationSeconds = 3600;
@@ -121,12 +135,28 @@ public class BenchExecProperties {
         this.prometheusRwUrl = prometheusRwUrl;
     }
 
-    public String getBaseUrl() {
-        return baseUrl;
+    public String getNginxBaseUrl() {
+        return nginxBaseUrl;
     }
 
-    public void setBaseUrl(String baseUrl) {
-        this.baseUrl = baseUrl;
+    public void setNginxBaseUrl(String nginxBaseUrl) {
+        this.nginxBaseUrl = nginxBaseUrl;
+    }
+
+    public String getTargetInstances() {
+        return targetInstances;
+    }
+
+    public void setTargetInstances(String targetInstances) {
+        this.targetInstances = targetInstances;
+    }
+
+    public int getTargetPort() {
+        return targetPort;
+    }
+
+    public void setTargetPort(int targetPort) {
+        this.targetPort = targetPort;
     }
 
     public String getContainerPrefix() {

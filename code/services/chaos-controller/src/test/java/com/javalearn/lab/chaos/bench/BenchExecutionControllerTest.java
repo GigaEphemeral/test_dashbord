@@ -71,14 +71,16 @@ class BenchExecutionControllerTest {
     @Test
     void stateReturnsTheFullContract() throws Exception {
         when(executor.state(RUN_ID)).thenReturn(new BenchExecutionState("EXITED",
-                "jl-k6-" + RUN_ID, "abc123", "smoke", 0, "2026-10-28T10:00:00Z",
-                "2026-10-28T10:05:00Z", true, 42L, null));
+                "jl-k6-" + RUN_ID, "abc123", "smoke", "target-instance", "app-2", 0,
+                "2026-10-28T10:00:00Z", "2026-10-28T10:05:00Z", true, 42L, null));
 
         mvc.perform(get("/lab/runs/{runId}/k6", RUN_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("EXITED"))
                 .andExpect(jsonPath("$.data.containerId").value("abc123"))
                 .andExpect(jsonPath("$.data.scenario").value("smoke"))
+                .andExpect(jsonPath("$.data.trafficMode").value("target-instance"))
+                .andExpect(jsonPath("$.data.targetInstance").value("app-2"))
                 .andExpect(jsonPath("$.data.exitCode").value(0))
                 .andExpect(jsonPath("$.data.startedAt").value("2026-10-28T10:00:00Z"))
                 .andExpect(jsonPath("$.data.finishedAt").value("2026-10-28T10:05:00Z"))

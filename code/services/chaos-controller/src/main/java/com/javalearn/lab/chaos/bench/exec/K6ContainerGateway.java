@@ -8,15 +8,22 @@ import java.util.List;
  * network are never taken from a request.
  *
  * <p>Every created container carries the existing safety label
- * {@code lab=java-learn} plus {@code lab.role=k6}, {@code lab.run-id} and
- * {@code lab.scenario}. Log reads and stop/remove re-check the label so the k6
- * layer cannot touch other lab containers.</p>
+ * {@code lab=java-learn} plus {@code lab.role=k6}, {@code lab.run-id},
+ * {@code lab.scenario}, and since Stage2 B2-03a {@code lab.traffic-mode} /
+ * {@code lab.target-instance} (see {@link #LABEL_TRAFFIC_MODE} and
+ * {@link #LABEL_TARGET_INSTANCE}). Log reads and stop/remove re-check the label
+ * so the k6 layer cannot touch other lab containers.</p>
  *
  * <p>Statuses are upper-case ({@code RUNNING}/{@code EXITED}/{@code CREATED}/
  * {@code RESTARTING}/{@code PAUSED}/{@code DEAD}); an unknown run is
  * {@code ABSENT}, never an exception.</p>
  */
 public interface K6ContainerGateway {
+
+    /** Stage2 B2-03a attribution label written by the planner. */
+    String LABEL_TRAFFIC_MODE = "lab.traffic-mode";
+    /** Stage2 B2-03a attribution label written by the planner. */
+    String LABEL_TARGET_INSTANCE = "lab.target-instance";
 
     String STATUS_RUNNING = "RUNNING";
     String STATUS_EXITED = "EXITED";
@@ -86,18 +93,35 @@ public interface K6ContainerGateway {
     /**
      * One inspected k6 run.
      *
-     * @param status      upper-case status or {@link #STATUS_ABSENT}
-     * @param exitCode    Docker exit code, {@code null} while running/absent
-     * @param startedAt   Docker ISO timestamp, {@code null} when never started
-     * @param finishedAt  Docker ISO timestamp, {@code null} when still running
-     * @param image       image reported by Docker, {@code null} when absent
-     * @param scenario    {@code lab.scenario} label, {@code null} when absent
+     * @param status          upper-case status or {@link #STATUS_ABSENT}
+     * @param exitCode        Docker exit code, {@code null} while running/absent
+     * @param startedAt       Docker ISO timestamp, {@code null} when never started
+     * @param finishedAt      Docker ISO timestamp, {@code null} when still running
+     * @param image           image reported by Docker, {@code null} when absent
+     * @param scenario        {@code lab.scenario} label, {@code null} when absent
+     * @param trafficMode     {@code lab.traffic-mode} label, {@code null} when
+     *                        absent or written by a pre-B2-03a build
+     * @param targetInstance  {@code lab.target-instance} label, {@code null}
+     *                        when absent or written by a pre-B2-03a build
      */
     record Snapshot(String status, String containerName, String containerId, Integer exitCode,
-                    String startedAt, String finishedAt, String image, String scenario) {
+                    String startedAt, String finishedAt, String image, String scenario,
+                    String trafficMode, String targetInstance) {
 
+        /** A container that does not exist: no attribution labels either. */
         public static Snapshot absent(String containerName) {
-            return new Snapshot(STATUS_ABSENT, containerName, null, null, null, null, null, null);
+            return new Snapshot(STATUS_ABSENT, containerName, null, null, null, null, null, null,
+                    null, null);
+        }
+
+        /**
+         * Snapshot without traffic attribution (labels unread by older fakes).
+         * The real gateway always fills the two attribution labels.
+         */
+        public Snapshot(String status, String containerName, String containerId, Integer exitCode,
+                        String startedAt, String finishedAt, String image, String scenario) {
+            this(status, containerName, containerId, exitCode, startedAt, finishedAt, image,
+                    scenario, null, null);
         }
 
         public boolean isAbsent() {

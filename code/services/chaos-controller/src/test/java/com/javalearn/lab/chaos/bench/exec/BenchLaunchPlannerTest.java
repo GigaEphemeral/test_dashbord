@@ -95,7 +95,8 @@ class BenchLaunchPlannerTest {
         assertFalse(reports.readOnly());
 
         assertEquals(Map.of("lab", "java-learn", "lab.role", "k6",
-                "lab.run-id", RUN_ID, "lab.scenario", "smoke"), plan.labels());
+                "lab.run-id", RUN_ID, "lab.scenario", "smoke",
+                "lab.traffic-mode", "via-nginx", "lab.target-instance", "nginx"), plan.labels());
     }
 
     @Test
@@ -289,7 +290,9 @@ class BenchLaunchPlannerTest {
         properties.setReportsMount("/r");
         properties.setReportsVolume("reports-vol");
         properties.setSummaryFile("out.json");
-        properties.setBaseUrl("http://gateway");
+        properties.setNginxBaseUrl("http://gateway");
+        properties.setTargetInstances("gw-1,gw-2");
+        properties.setTargetPort(9090);
         properties.setPrometheusRwUrl("http://prom:9090/api/v1/write");
         properties.setMaxVus(10);
         properties.setMaxDurationSeconds(60);
@@ -311,6 +314,137 @@ class BenchLaunchPlannerTest {
 
         assertRejected("spike", Map.of("SPIKE_VUS", 11), "max-vus");
         assertRejected("spike", Map.of("SPIKE_DURATION", "61s"), "max-duration-seconds");
+    }
+
+    // ---------------------------------------------------------- traffic mode
+
+    @Test
+    void defaultTrafficModeGoesThroughNginx() {
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of());
+
+        assertEquals("via-nginx", plan.traffic().mode());
+        assertEquals("nginx", plan.traffic().targetInstance());
+        assertEquals("http://nginx", plan.traffic().baseUrl());
+        assertFalse(plan.traffic().bypassNginx());
+        assertFalse(plan.traffic().mixed());
+        assertEquals("app-1:8080=1,app-2:8080=1,app-3:8080=1", plan.traffic().upstream());
+
+        assertEquals("http://nginx", plan.env().get("BASE_URL"));
+        assertEquals("via-nginx", plan.env().get("TRAFFIC_MODE"));
+        assertEquals("nginx", plan.env().get("TARGET_INSTANCE"));
+        assertEquals("via-nginx", plan.labels().get("lab.traffic-mode"));
+        assertEquals("nginx", plan.labels().get("lab.target-instance"));
+    }
+
+    @Test
+    void targetInstancePinsOneServiceNameAndBypassesNginx() {
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "load",
+                Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "app-2"));
+
+        assertEquals("target-instance", plan.traffic().mode());
+        assertEquals("app-2", plan.traffic().targetInstance());
+        assertEquals("http://app-2:8080", plan.traffic().baseUrl());
+        assertTrue(plan.traffic().bypassNginx());
+        assertFalse(plan.traffic().mixed());
+        assertEquals("app-1:8080=1,app-2:8080=1,app-3:8080=1", plan.traffic().upstream());
+
+        assertEquals("http://app-2:8080", plan.env().get("BASE_URL"));
+        assertEquals("target-instance", plan.env().get("TRAFFIC_MODE"));
+        assertEquals("app-2", plan.env().get("TARGET_INSTANCE"));
+        assertEquals("target-instance", plan.labels().get("lab.traffic-mode"));
+        assertEquals("app-2", plan.labels().get("lab.target-instance"));
+        // The selectors are runner keys, not scenario params: no extra env.
+        assertFalse(plan.env().containsKey("note"));
+    }
+
+    @Test
+    void targetInstanceRequiresTheFixedTableEntry() {
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance"), "requires TARGET_INSTANCE");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "  "),
+                "requires TARGET_INSTANCE");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "app-4"),
+                "unknown target instance");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance",
+                "TARGET_INSTANCE", "app-2:8080"), "unknown target instance");
+    }
+
+    @Test
+    void unknownTrafficModeIsRejected() {
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "direct"), "unknown traffic mode");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "VIA-NGINX"), "unknown traffic mode");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", ""), "unknown traffic mode");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", 1), "must be a string");
+        assertRejected("smoke", Map.of("TARGET_INSTANCE", 2), "must be a string");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "via-nginx\n"), "control characters");
+    }
+
+    @Test
+    void viaNginxRefusesAnExplicitTarget() {
+        BenchLaunchRejectedException error = assertThrows(BenchLaunchRejectedException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of("TARGET_INSTANCE", "app-2")));
+        assertTrue(error.getMessage().contains("must be omitted"), error.getMessage());
+        assertTrue(error.getMessage().contains("target-instance"), error.getMessage());
+
+        // A blank target is the same as omitting it.
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "smoke",
+                Map.of("TARGET_INSTANCE", "  "));
+        assertEquals("nginx", plan.traffic().targetInstance());
+    }
+
+    @Test
+    void urlHostAndPortInjectionAreRefused() {
+        // No request field exists for a URL/host/port: unknown parameters die
+        // before any traffic resolution.
+        assertRejected("smoke", Map.of("TARGET_URL", "http://app-2:8080"), "unknown parameter");
+        assertRejected("smoke", Map.of("TARGET_PORT", 8080), "unknown parameter");
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance",
+                "TARGET_URL", "http://app-2:8080"), "unknown parameter");
+        // A URL smuggled into the target selector is not a table entry.
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance",
+                "TARGET_INSTANCE", "http://app-2:8080"), "unknown target instance");
+        // BASE_URL stays forced in both modes.
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance",
+                "TARGET_INSTANCE", "app-2", "BASE_URL", "http://evil"), "forced");
+    }
+
+    @Test
+    void targetTableAndPortAreConfigurable() {
+        properties.setTargetInstances(" gw-1 , gw-2 ");
+        properties.setTargetPort(9090);
+
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "smoke",
+                Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "gw-2"));
+        assertEquals("http://gw-2:9090", plan.env().get("BASE_URL"));
+        assertEquals("gw-1:9090=1,gw-2:9090=1", plan.traffic().upstream());
+
+        // app-2 is no longer in the configured table.
+        assertRejected("smoke", Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "app-2"),
+                "unknown target instance");
+    }
+
+    @Test
+    void brokenTargetConfigurationIsUnavailableNotRejected() {
+        properties.setTargetInstances("app-1,http://app-2:8080");
+        assertThrows(BenchUnavailableException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of()));
+
+        properties.setTargetInstances("app-1,../etc");
+        assertThrows(BenchUnavailableException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of()));
+
+        properties.setTargetInstances("   ");
+        assertThrows(BenchUnavailableException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of()));
+
+        properties.setTargetInstances("app-1");
+        properties.setTargetPort(70000);
+        assertThrows(BenchUnavailableException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of()));
+
+        properties.setTargetPort(8080);
+        properties.setNginxBaseUrl("nginx:8080");
+        assertThrows(BenchUnavailableException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke", Map.of()));
     }
 
     // -------------------------------------------------------------- duration

@@ -32,7 +32,10 @@ import java.util.Optional;
  * <p>Details returned to the service use a {@code k6*} prefix:
  * {@code k6Container}, {@code k6ContainerId}, {@code k6Scenario},
  * {@code k6ReportPath}, {@code k6Status}, {@code k6Stopped},
- * {@code k6ExitCode}, {@code k6ReportAvailable}.</p>
+ * {@code k6ExitCode}, {@code k6ReportAvailable}; since Stage2 B2-03a also
+ * {@code k6TrafficMode}, {@code k6TargetInstance}, {@code k6BypassNginx},
+ * {@code k6TrafficMixed} and {@code k6Upstream} (the mirrored Nginx upstream
+ * weights).</p>
  */
 public class BenchRunLifecycleHook implements RunLifecycleHook {
 
@@ -80,8 +83,16 @@ public class BenchRunLifecycleHook implements RunLifecycleHook {
             details.put("k6Scenario", plan.scenario());
             details.put("k6ReportPath", plan.reportContainerPath());
             details.put("k6Status", state.status());
-            log.info("Launched k6 for run {}: container={}, scenario={}, hostDir={}",
-                    run.runId(), state.containerName(), plan.scenario(), hostDir);
+            BenchLaunchPlan.Traffic traffic = plan.traffic();
+            details.put("k6TrafficMode", traffic.mode());
+            details.put("k6TargetInstance", traffic.targetInstance());
+            details.put("k6BypassNginx", traffic.bypassNginx());
+            details.put("k6TrafficMixed", traffic.mixed());
+            details.put("k6Upstream", traffic.upstream());
+            log.info("Launched k6 for run {}: container={}, scenario={}, trafficMode={}, "
+                            + "target={}, hostDir={}",
+                    run.runId(), state.containerName(), plan.scenario(), traffic.mode(),
+                    traffic.targetInstance(), hostDir);
             return new LaunchResult(details);
         } catch (BenchUnavailableException e) {
             throw launchUnavailable(run, hostDir, e);

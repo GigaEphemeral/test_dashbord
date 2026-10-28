@@ -82,7 +82,34 @@ class BenchRunLifecycleHookTest {
                 .containsEntry("k6ContainerId", "cid-" + RUN_ID)
                 .containsEntry("k6Scenario", "load")
                 .containsEntry("k6ReportPath", "/reports/" + RUN_ID + "/summary.json")
-                .containsEntry("k6Status", "RUNNING");
+                .containsEntry("k6Status", "RUNNING")
+                .containsEntry("k6TrafficMode", "via-nginx")
+                .containsEntry("k6TargetInstance", "nginx")
+                .containsEntry("k6BypassNginx", false)
+                .containsEntry("k6TrafficMixed", false)
+                .containsEntry("k6Upstream", "app-1:8080=1,app-2:8080=1,app-3:8080=1");
+    }
+
+    @Test
+    void launchRecordsADirectedRunInTheDetails() {
+        when(repository.findParams(RUN_ID)).thenReturn(List.of(
+                new RunLedgerRepository.RunParamRow("request",
+                        "{\"TRAFFIC_MODE\":\"target-instance\",\"TARGET_INSTANCE\":\"app-2\"}", NOW)));
+        when(executor.start(any())).thenReturn(state("RUNNING", 0, null));
+
+        RunLifecycleHook.LaunchResult result = hook.launch(RUN_ID);
+
+        ArgumentCaptor<BenchLaunchPlan> plan = ArgumentCaptor.forClass(BenchLaunchPlan.class);
+        verify(executor).start(plan.capture());
+        assertThat(plan.getValue().env())
+                .containsEntry("BASE_URL", "http://app-2:8080")
+                .containsEntry("TRAFFIC_MODE", "target-instance")
+                .containsEntry("TARGET_INSTANCE", "app-2");
+        assertThat(result.details())
+                .containsEntry("k6TrafficMode", "target-instance")
+                .containsEntry("k6TargetInstance", "app-2")
+                .containsEntry("k6BypassNginx", true)
+                .containsEntry("k6TrafficMixed", false);
     }
 
     @Test

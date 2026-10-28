@@ -9,6 +9,7 @@ import com.javalearn.lab.chaos.error.BenchUnavailableException;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,12 +34,29 @@ import java.util.regex.Pattern;
  * {@link BenchExecProperties} only. {@code RUN_ID}, {@code BASE_URL} and the
  * three {@code K6_PROMETHEUS_RW_*} names are forced values and cannot appear in
  * the request parameters.</p>
+ *
+ * <p>Stage2 B2-03a adds two controlled <em>traffic selectors</em>:
+ * {@code TRAFFIC_MODE} ({@code via-nginx} by default, or
+ * {@code target-instance}) and {@code TARGET_INSTANCE}. They are runner keys,
+ * not k6 scenario parameters: only the mode enum and a service name from the
+ * configured fixed table are accepted, and both are always re-rendered into the
+ * container environment. {@code BASE_URL} is resolved from the mode (the Nginx
+ * entry or {@code http://<target>:<port>}) and still cannot be supplied by a
+ * request; there is no request field for a URL, host, port or network target.</p>
  */
 @Component
 public class BenchLaunchPlanner {
 
     public static final String RUN_ID = "RUN_ID";
     public static final String BASE_URL = "BASE_URL";
+    /** Traffic selector: {@code via-nginx} (default) or {@code target-instance}. */
+    public static final String TRAFFIC_MODE = "TRAFFIC_MODE";
+    /** Traffic selector: a service name from the configured fixed table. */
+    public static final String TARGET_INSTANCE = "TARGET_INSTANCE";
+    public static final String MODE_VIA_NGINX = "via-nginx";
+    public static final String MODE_TARGET_INSTANCE = "target-instance";
+    /** Instance tag used when the run goes through the Nginx upstream. */
+    public static final String NGINX_INSTANCE = "nginx";
     public static final String PROMETHEUS_RW_SERVER_URL = "K6_PROMETHEUS_RW_SERVER_URL";
     public static final String PROMETHEUS_RW_TREND_STATS = "K6_PROMETHEUS_RW_TREND_STATS";
     public static final String PROMETHEUS_RW_PUSH_INTERVAL = "K6_PROMETHEUS_RW_PUSH_INTERVAL";
@@ -53,6 +71,14 @@ public class BenchLaunchPlanner {
 
     private static final Set<String> FORCED_KEYS = Set.of(RUN_ID, BASE_URL, PROMETHEUS_RW_SERVER_URL,
             PROMETHEUS_RW_TREND_STATS, PROMETHEUS_RW_PUSH_INTERVAL);
+    private static final Set<String> TRAFFIC_KEYS = Set.of(TRAFFIC_MODE, TARGET_INSTANCE);
+    private static final Set<String> TRAFFIC_MODES = Set.of(MODE_VIA_NGINX, MODE_TARGET_INSTANCE);
+    private static final int TRAFFIC_SELECTOR_MAX_LENGTH = 64;
+    /** One fixed target: a plain Docker service name, never a URL/host/port. */
+    private static final Pattern SERVICE_NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
+    private static final Pattern HTTP_URL = Pattern.compile("https?://\\S+");
+    private static final int MIN_PORT = 1;
+    private static final int MAX_PORT = 65535;
     /**
      * Run metadata, not k6 parameters: accepted on purpose, validated as a short
      * string and never rendered into the container environment. {@code note} is
@@ -119,6 +145,7 @@ public class BenchLaunchPlanner {
         Scenario definition = uiScenario(snapshot, scenario);
         String safeRunId = sanitizeRunId(runId);
         Map<String, Object> effective = effectiveParams(scenario, definition, params);
+        BenchLaunchPlan.Traffic traffic = resolveTraffic(params);
 
         String hostDir = scriptsHostDir == null ? "" : scriptsHostDir.trim();
         if (hostDir.isEmpty()) {
@@ -128,7 +155,7 @@ public class BenchLaunchPlanner {
                     + "LAB_BENCH_EXEC_SCRIPTS_HOST_DIR (B2-02b resolves the real host path)");
         }
 
-        Map<String, String> env = renderEnv(definition, effective, safeRunId);
+        Map<String, String> env = renderEnv(definition, effective, safeRunId, traffic);
         String reportPath = join(properties.getReportsMount(), safeRunId, properties.getSummaryFile());
         String scriptPath = properties.getScriptsMount() + "/" + definition.script();
         List<String> argv = List.of(
@@ -145,9 +172,11 @@ public class BenchLaunchPlanner {
         labels.put(LABEL_ROLE, "k6");
         labels.put(LABEL_RUN_ID, safeRunId);
         labels.put(LABEL_SCENARIO, scenario);
+        labels.put(K6ContainerGateway.LABEL_TRAFFIC_MODE, traffic.mode());
+        labels.put(K6ContainerGateway.LABEL_TARGET_INSTANCE, traffic.targetInstance());
         return new BenchLaunchPlan(safeRunId, scenario, properties.getContainerPrefix() + safeRunId,
                 properties.getK6Image(), argv, env, binds, labels, properties.getNetwork(),
-                reportPath, reportPath);
+                reportPath, reportPath, traffic);
     }
 
     /**
@@ -275,6 +304,11 @@ public class BenchLaunchPlanner {
             if (METADATA_KEYS.contains(key)) {
                 validateMetadata(key, entry.getValue());
                 // Metadata stays in lab_run_param; it is never a k6 env value.
+                continue;
+            }
+            if (TRAFFIC_KEYS.contains(key)) {
+                // Validated by resolveTraffic: a controlled selector rendered
+                // as forced env, never a scenario parameter.
                 continue;
             }
             if (!definition.params().containsKey(key)) {
@@ -438,16 +472,156 @@ public class BenchLaunchPlanner {
                 + "' " + reason);
     }
 
+    // ---------------------------------------------------------- traffic mode
+
+    /**
+     * Resolves the traffic mode (Stage2 B2-03a).
+     *
+     * <ul>
+     *   <li>{@code via-nginx} (default): {@code BASE_URL} is the configured
+     *       Nginx entry and {@code TARGET_INSTANCE} must be omitted — a target
+     *       here would look like a directed run without being one.</li>
+     *   <li>{@code target-instance}: {@code TARGET_INSTANCE} is required and
+     *       must be a service name from {@code LAB_BENCH_EXEC_TARGET_INSTANCES};
+     *       {@code BASE_URL} becomes {@code http://<target>:<port>}. There is
+     *       no request field for a URL, host or port.</li>
+     * </ul>
+     *
+     * <p>A broken fixed table or port is a configuration problem
+     * ({@link BenchUnavailableException}, 503/50303), not a bad request.</p>
+     */
+    private BenchLaunchPlan.Traffic resolveTraffic(Map<String, Object> params) {
+        Map<String, Object> request = params == null ? Map.of() : params;
+        String mode = MODE_VIA_NGINX;
+        if (request.containsKey(TRAFFIC_MODE)) {
+            mode = trafficSelector(TRAFFIC_MODE, request.get(TRAFFIC_MODE));
+            if (!TRAFFIC_MODES.contains(mode)) {
+                throw new BenchLaunchRejectedException("unknown traffic mode '" + mode
+                        + "'; accepted: " + MODE_VIA_NGINX + ", " + MODE_TARGET_INSTANCE);
+            }
+        }
+        String target = null;
+        if (request.containsKey(TARGET_INSTANCE)) {
+            String requested = trafficSelector(TARGET_INSTANCE, request.get(TARGET_INSTANCE));
+            target = requested.isBlank() ? null : requested;
+        }
+        List<String> instances = configuredTargetInstances();
+        int port = configuredTargetPort();
+        String upstream = upstream(instances, port);
+        if (MODE_VIA_NGINX.equals(mode)) {
+            if (target != null) {
+                throw new BenchLaunchRejectedException("traffic mode '" + MODE_VIA_NGINX
+                        + "' goes through the Nginx upstream, so TARGET_INSTANCE must be omitted; got '"
+                        + target + "'. Send " + TRAFFIC_MODE + "=" + MODE_TARGET_INSTANCE
+                        + " to pin one instance (a target here would look directed without being one)");
+            }
+            return new BenchLaunchPlan.Traffic(mode, NGINX_INSTANCE,
+                    requireNginxBaseUrl(), false, false, upstream);
+        }
+        if (target == null) {
+            throw new BenchLaunchRejectedException("traffic mode '" + MODE_TARGET_INSTANCE
+                    + "' requires " + TARGET_INSTANCE + " from the fixed table ("
+                    + String.join(", ", instances) + ")");
+        }
+        if (!instances.contains(target)) {
+            throw new BenchLaunchRejectedException("unknown target instance '" + target
+                    + "'; the fixed table comes from LAB_BENCH_EXEC_TARGET_INSTANCES: "
+                    + String.join(", ", instances) + " (service names only, never URLs, hosts "
+                    + "or ports)");
+        }
+        return new BenchLaunchPlan.Traffic(mode, target, "http://" + target + ":" + port, true,
+                false, upstream);
+    }
+
+    /** One traffic selector value: a short, control-free string, never a URL. */
+    private static String trafficSelector(String key, Object value) {
+        if (!(value instanceof String text)) {
+            throw new BenchLaunchRejectedException("parameter '" + key + "' is a traffic selector and "
+                    + "must be a string; got " + (value == null ? "null" : describe(value)));
+        }
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < 0x20 || c == 0x7f) {
+                throw new BenchLaunchRejectedException("parameter '" + key + "' is a traffic selector "
+                        + "and must not contain newlines or control characters");
+            }
+        }
+        if (text.length() > TRAFFIC_SELECTOR_MAX_LENGTH) {
+            throw new BenchLaunchRejectedException("parameter '" + key + "' is a traffic selector and "
+                    + "must be at most " + TRAFFIC_SELECTOR_MAX_LENGTH + " characters; got "
+                    + text.length());
+        }
+        return text;
+    }
+
+    private List<String> configuredTargetInstances() {
+        String raw = properties.getTargetInstances();
+        if (raw == null || raw.isBlank()) {
+            throw new BenchUnavailableException("lab.bench.exec.target-instances is blank: the fixed "
+                    + "table a target-instance run may pin to is unknown; set env "
+                    + "LAB_BENCH_EXEC_TARGET_INSTANCES (comma-separated service names)");
+        }
+        Set<String> names = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            String name = part.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            if (!SERVICE_NAME.matcher(name).matches()) {
+                throw new BenchUnavailableException("LAB_BENCH_EXEC_TARGET_INSTANCES entry '" + name
+                        + "' is not a plain Docker service name (lowercase letters, digits and '-', "
+                        + "starting with a letter); the fixed target table never contains a URL, "
+                        + "host, port or path");
+            }
+            names.add(name);
+        }
+        if (names.isEmpty()) {
+            throw new BenchUnavailableException("lab.bench.exec.target-instances has no usable "
+                    + "service name; set env LAB_BENCH_EXEC_TARGET_INSTANCES");
+        }
+        return List.copyOf(names);
+    }
+
+    private int configuredTargetPort() {
+        int port = properties.getTargetPort();
+        if (port < MIN_PORT || port > MAX_PORT) {
+            throw new BenchUnavailableException("lab.bench.exec.target-port (" + port + ") is not a "
+                    + "valid TCP port; set env LAB_BENCH_EXEC_TARGET_PORT (default 8080)");
+        }
+        return port;
+    }
+
+    private String requireNginxBaseUrl() {
+        String url = properties.getNginxBaseUrl() == null ? "" : properties.getNginxBaseUrl().trim();
+        if (!HTTP_URL.matcher(url).matches()) {
+            throw new BenchUnavailableException("lab.bench.exec.nginx-base-url must be an absolute "
+                    + "http(s) URL; set env LAB_BENCH_EXEC_NGINX_BASE_URL (default http://nginx)");
+        }
+        return url;
+    }
+
+    /** Mirrors the Nginx upstream weights: every instance weight 1. */
+    private static String upstream(List<String> instances, int port) {
+        StringBuilder upstream = new StringBuilder();
+        for (String instance : instances) {
+            if (upstream.length() > 0) {
+                upstream.append(',');
+            }
+            upstream.append(instance).append(':').append(port).append("=1");
+        }
+        return upstream.toString();
+    }
+
     // ---------------------------------------------------------------- render
 
     private Map<String, String> renderEnv(Scenario definition, Map<String, Object> effective,
-                                          String safeRunId) {
+                                          String safeRunId, BenchLaunchPlan.Traffic traffic) {
         Map<String, String> env = new LinkedHashMap<>();
         for (String name : definition.env()) {
             if (RUN_ID.equals(name)) {
                 env.put(name, safeRunId);
             } else if (BASE_URL.equals(name)) {
-                env.put(name, properties.getBaseUrl());
+                env.put(name, traffic.baseUrl());
             } else if (effective.containsKey(name)) {
                 env.put(name, stringify(name, effective.get(name)));
             }
@@ -455,7 +629,12 @@ public class BenchLaunchPlanner {
         // Identity and runtime values are always present, even if a future
         // scenario forgot to list them in env.
         env.putIfAbsent(RUN_ID, safeRunId);
-        env.putIfAbsent(BASE_URL, properties.getBaseUrl());
+        env.putIfAbsent(BASE_URL, traffic.baseUrl());
+        // Attribution is owned by the runner: k6 tags every request with these
+        // two values, so they are re-rendered here instead of being trusted
+        // from the scenario env list.
+        env.put(TRAFFIC_MODE, traffic.mode());
+        env.put(TARGET_INSTANCE, traffic.targetInstance());
         env.put(PROMETHEUS_RW_SERVER_URL, properties.getPrometheusRwUrl());
         env.put(PROMETHEUS_RW_TREND_STATS, DEFAULT_TREND_STATS);
         env.put(PROMETHEUS_RW_PUSH_INTERVAL, DEFAULT_PUSH_INTERVAL);

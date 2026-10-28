@@ -12,6 +12,11 @@ package com.javalearn.lab.chaos.bench.exec;
  *                        the name it would have
  * @param containerId     Docker id, {@code null} when absent
  * @param scenario        {@code lab.scenario} label, {@code null} when absent
+ * @param trafficMode     {@code lab.traffic-mode} label (Stage2 B2-03a),
+ *                        {@code null} for an absent container or a container
+ *                        created by a pre-B2-03a build
+ * @param targetInstance  {@code lab.target-instance} label, {@code null} for
+ *                        an absent container or a pre-B2-03a container
  * @param exitCode        Docker exit code, {@code null} while running/absent
  * @param startedAt       Docker ISO timestamp, {@code null} when never started
  * @param finishedAt      Docker ISO timestamp, {@code null} when still running
@@ -21,7 +26,20 @@ package com.javalearn.lab.chaos.bench.exec;
  *                        report); {@code null} when there is nothing to add
  */
 public record BenchExecutionState(String status, String containerName, String containerId,
-                                  String scenario, Integer exitCode, String startedAt,
-                                  String finishedAt, boolean reportAvailable, long reportBytes,
-                                  String note) {
+                                  String scenario, String trafficMode, String targetInstance,
+                                  Integer exitCode, String startedAt, String finishedAt,
+                                  boolean reportAvailable, long reportBytes, String note) {
+
+    /**
+     * State without traffic attribution (absent containers and legacy
+     * fixtures): both attribution fields stay {@code null}, which the JSON
+     * contract documents as "unknown".
+     */
+    public BenchExecutionState(String status, String containerName, String containerId,
+                               String scenario, Integer exitCode, String startedAt,
+                               String finishedAt, boolean reportAvailable, long reportBytes,
+                               String note) {
+        this(status, containerName, containerId, scenario, null, null, exitCode, startedAt,
+                finishedAt, reportAvailable, reportBytes, note);
+    }
 }
