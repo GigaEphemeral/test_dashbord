@@ -435,3 +435,11 @@ clock.instant() > deadline → 超时
 ### 最新 commit
 
 `f1813a1`（UI k6 卡 / views.ui 提示 / 常驻口径）、`e31fa01`（空日志占位）、`c0c3996`（终态再读一次）、`199c343`（console-smoke）、`787e1a8`（基线注释）；本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log -1`）。
+
+
+## 补充：真机 A01 挂载与报告缺陷（2026-10-28）
+
+- **挂载读写反转**：docker-java 的 `AccessMode.fromBoolean(true)` 语义是 **rw**，网关把 plan 的 `readOnly` 直接传进去，导致 k6 容器 `scripts` 变 rw、`reports` 变 ro。真机表现为 k6 日志 `could not open '/reports/<runId>/summary.json': read-only file system`，但 k6 仍 exit 0。修法：`DockerK6ContainerGateway.toBind` 显式 `readOnly ? ro : rw`，并加 2 条 bind 单测。
+- **无报告仍判完成**：退出 0 但 summary 缺失时旧看门狗直接 COMPLETED。现在若 manifest 场景 `thresholdsExpected=true` 且 `reportAvailable=false`，转 `RUNNING→FAILED`（step `k6-report-missing`）并释放锁；新增单测。`thresholdsExpected=false`（stress 等）不受影响。
+- **测试**：全模块 **590 / 0 / 0 / 0**（新增 bind 2 + 报告缺失 1）。
+- **真机复验**：修正后需重跑 A01，确认 k6 容器 `scripts:ro`、`reports:rw`，summary 落盘并可下载。
