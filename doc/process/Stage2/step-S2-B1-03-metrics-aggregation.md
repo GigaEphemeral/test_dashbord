@@ -274,7 +274,8 @@ docker compose --env-file code/lab/docker/.env.example \
 |---|---|
 | `4139097` | `feat(B1-03): aggregate catalog metrics over run windows`（实现/目录/配置/接线脚本） |
 | `98d8cbe` | `test(B1-03): prove quality states, caps, deep links and ledger rows`（7 个测试类，51 用例） |
-| 本笔 | `docs(B1-03): hand off the metrics aggregation step` |
+| `f8f7daa` | `docs(B1-03): hand off the metrics aggregation step`（本交接） |
+| `fc398b4` | `fix(B1-03): keep query_range points inside the configured cap`（step 预留首尾端点 + instance 值防护） |
 
 ## C. 关键文件
 
