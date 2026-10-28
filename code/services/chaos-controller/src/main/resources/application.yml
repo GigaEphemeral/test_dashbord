@@ -28,6 +28,47 @@ lab:
     max-connections: ${LAB_DOCKER_MAX_CONNECTIONS:16}
     connection-timeout-seconds: ${LAB_DOCKER_CONNECTION_TIMEOUT_SECONDS:5}
     response-timeout-seconds: ${LAB_DOCKER_RESPONSE_TIMEOUT_SECONDS:30}
+  # Stage2 B1-01 ledger: run/operation/snapshot/fault/audit rows live in the
+  # stack MySQL's dedicated `lab_ledger` database (standalone mysql:3306; db-ha
+  # through mysql-router:6446, the same topology switch as the app tier and
+  # reset-lab.sh). The controller starts even when MySQL is down: Hikari never
+  # connects at pool creation, Flyway retries on a daemon scheduler, and a
+  # failure only marks the ledger DEGRADED. Account: root, because the business
+  # `seckill` account only owns seckill.* and cannot CREATE DATABASE; the
+  # controller already holds the Docker socket, so this widens no boundary.
+  # Passwords never appear in a URL and are never logged.
+  ledger:
+    enabled: ${LAB_LEDGER_ENABLED:true}
+    mysql-mode: ${LAB_LEDGER_MYSQL_MODE:${MYSQL_MODE:standalone}}
+    standalone-url: "${LAB_LEDGER_STANDALONE_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/lab_ledger?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+    router-url: "${LAB_LEDGER_ROUTER_URL:jdbc:mysql://${MYSQL_ROUTER_HOST:mysql-router}:6446/lab_ledger?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+    schema: ${LAB_LEDGER_SCHEMA:lab_ledger}
+    user: ${LAB_LEDGER_USER:root}
+    password: "${LAB_LEDGER_PASSWORD:${MYSQL_ROOT_PASSWORD:labroot}}"
+    source-commit: ${LAB_SOURCE_COMMIT:unknown}
+    operator: ${LAB_LEDGER_OPERATOR:local}
+    max-pool-size: ${LAB_LEDGER_MAX_POOL_SIZE:4}
+    min-idle: ${LAB_LEDGER_MIN_IDLE:1}
+    connection-timeout-ms: ${LAB_LEDGER_CONNECTION_TIMEOUT_MS:3000}
+    validation-timeout-ms: ${LAB_LEDGER_VALIDATION_TIMEOUT_MS:1000}
+    # CREATE DATABASE / Flyway retry period while MySQL is unreachable.
+    bootstrap-retry-seconds: ${LAB_LEDGER_BOOTSTRAP_RETRY_SECONDS:15}
+    bootstrap-thread-name: ${LAB_LEDGER_BOOTSTRAP_THREAD_NAME:ledger-bootstrap}
+    flyway-locations: ${LAB_LEDGER_FLYWAY_LOCATIONS:classpath:db/ledger}
+    # File-backed write-behind buffer; the directory is a compose named volume.
+    stash-dir: ${LAB_LEDGER_STASH_DIR:/app/ledger-stash}
+    stash-max-files: ${LAB_LEDGER_STASH_MAX_FILES:500}
+    stash-max-bytes: ${LAB_LEDGER_STASH_MAX_BYTES:262144}
+    stash-replay-interval-seconds: ${LAB_LEDGER_STASH_REPLAY_INTERVAL_SECONDS:20}
+    # Keep the newest N runs; children cascade.
+    retention-runs: ${LAB_LEDGER_RETENTION_RUNS:50}
+    retention-interval-minutes: ${LAB_LEDGER_RETENTION_INTERVAL_MINUTES:30}
+    # Startup scan: RUNNING/STOPPING/VERIFYING -> UNKNOWN.
+    recovery-enabled: ${LAB_LEDGER_RECOVERY_ENABLED:true}
+    query-default-limit: ${LAB_LEDGER_QUERY_DEFAULT_LIMIT:50}
+    query-max-limit: ${LAB_LEDGER_QUERY_MAX_LIMIT:200}
+    max-payload-bytes: ${LAB_LEDGER_MAX_PAYLOAD_BYTES:65536}
+    run-id-max-attempts: ${LAB_LEDGER_RUN_ID_MAX_ATTEMPTS:10}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;
 # compose passes the same keys with the same defaults.

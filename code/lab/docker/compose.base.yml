@@ -486,6 +486,41 @@ services:
       CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT: ${CHAOS_MYSQL_CLUSTER_EXPECTED_MEMBER_COUNT:-3}
       CHAOS_MYSQL_CLUSTER_THREAD_NAME: ${CHAOS_MYSQL_CLUSTER_THREAD_NAME:-mysql-cluster-probe}
       CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS: ${CHAOS_MYSQL_CLUSTER_SHUTDOWN_TIMEOUT_SECONDS:-5}
+      # Stage2 B1-01 ledger: runs/operations/snapshots/faults/audit go to the
+      # dedicated `lab_ledger` database in the same MySQL instance (standalone
+      # `mysql:3306`; db-ha through `mysql-router:6446`). Defaults are identical
+      # to application.yml and .env.example. The controller deliberately has no
+      # depends_on: mysql, so it starts (ledger DEGRADED) during a primary kill.
+      LAB_LEDGER_ENABLED: ${LAB_LEDGER_ENABLED:-true}
+      LAB_LEDGER_MYSQL_MODE: ${LAB_LEDGER_MYSQL_MODE:-${MYSQL_MODE:-standalone}}
+      LAB_LEDGER_STANDALONE_URL: "${LAB_LEDGER_STANDALONE_URL:-jdbc:mysql://${MYSQL_HOST:-mysql}:3306/lab_ledger?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+      LAB_LEDGER_ROUTER_URL: "${LAB_LEDGER_ROUTER_URL:-jdbc:mysql://${MYSQL_ROUTER_HOST:-mysql-router}:6446/lab_ledger?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+      LAB_LEDGER_SCHEMA: ${LAB_LEDGER_SCHEMA:-lab_ledger}
+      # root: the business `seckill` account cannot CREATE DATABASE lab_ledger,
+      # and the controller already holds the Docker socket (root-equivalent).
+      # The password defaults to MYSQL_ROOT_PASSWORD; it is never in the URL.
+      LAB_LEDGER_USER: ${LAB_LEDGER_USER:-root}
+      LAB_LEDGER_PASSWORD: ${LAB_LEDGER_PASSWORD:-${MYSQL_ROOT_PASSWORD:-labroot}}
+      LAB_SOURCE_COMMIT: ${LAB_SOURCE_COMMIT:-unknown}
+      LAB_LEDGER_OPERATOR: ${LAB_LEDGER_OPERATOR:-local}
+      LAB_LEDGER_MAX_POOL_SIZE: ${LAB_LEDGER_MAX_POOL_SIZE:-4}
+      LAB_LEDGER_MIN_IDLE: ${LAB_LEDGER_MIN_IDLE:-1}
+      LAB_LEDGER_CONNECTION_TIMEOUT_MS: ${LAB_LEDGER_CONNECTION_TIMEOUT_MS:-3000}
+      LAB_LEDGER_VALIDATION_TIMEOUT_MS: ${LAB_LEDGER_VALIDATION_TIMEOUT_MS:-1000}
+      LAB_LEDGER_BOOTSTRAP_RETRY_SECONDS: ${LAB_LEDGER_BOOTSTRAP_RETRY_SECONDS:-15}
+      LAB_LEDGER_BOOTSTRAP_THREAD_NAME: ${LAB_LEDGER_BOOTSTRAP_THREAD_NAME:-ledger-bootstrap}
+      LAB_LEDGER_FLYWAY_LOCATIONS: ${LAB_LEDGER_FLYWAY_LOCATIONS:-classpath:db/ledger}
+      LAB_LEDGER_STASH_DIR: ${LAB_LEDGER_STASH_DIR:-/app/ledger-stash}
+      LAB_LEDGER_STASH_MAX_FILES: ${LAB_LEDGER_STASH_MAX_FILES:-500}
+      LAB_LEDGER_STASH_MAX_BYTES: ${LAB_LEDGER_STASH_MAX_BYTES:-262144}
+      LAB_LEDGER_STASH_REPLAY_INTERVAL_SECONDS: ${LAB_LEDGER_STASH_REPLAY_INTERVAL_SECONDS:-20}
+      LAB_LEDGER_RETENTION_RUNS: ${LAB_LEDGER_RETENTION_RUNS:-50}
+      LAB_LEDGER_RETENTION_INTERVAL_MINUTES: ${LAB_LEDGER_RETENTION_INTERVAL_MINUTES:-30}
+      LAB_LEDGER_RECOVERY_ENABLED: ${LAB_LEDGER_RECOVERY_ENABLED:-true}
+      LAB_LEDGER_QUERY_DEFAULT_LIMIT: ${LAB_LEDGER_QUERY_DEFAULT_LIMIT:-50}
+      LAB_LEDGER_QUERY_MAX_LIMIT: ${LAB_LEDGER_QUERY_MAX_LIMIT:-200}
+      LAB_LEDGER_MAX_PAYLOAD_BYTES: ${LAB_LEDGER_MAX_PAYLOAD_BYTES:-65536}
+      LAB_LEDGER_RUN_ID_MAX_ATTEMPTS: ${LAB_LEDGER_RUN_ID_MAX_ATTEMPTS:-10}
     volumes:
       # Read-write socket is required for later fault actions. Lab-only: the
       # token filter and the lab=java-learn whitelist are enforced in Java.
@@ -493,6 +528,9 @@ services:
       # Shared schema-v1 scenarios (read-only). Paths inside them are validated
       # before any Docker call.
       - ../scenarios:/app/scenarios:ro
+      # Write-behind ledger stash (B1-01): events that could not be written
+      # while MySQL was down survive a controller restart and replay in order.
+      - jl-ledger-stash-data:/app/ledger-stash
     expose:
       - "8081"
     networks:
@@ -772,6 +810,8 @@ volumes:
     name: jl-grafana-data
   jl-tempo-data:
     name: jl-tempo-data
+  jl-ledger-stash-data:
+    name: jl-ledger-stash-data
 
 networks:
   jl-net:

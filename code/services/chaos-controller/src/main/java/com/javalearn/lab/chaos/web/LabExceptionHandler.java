@@ -11,10 +11,14 @@ import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
 import com.javalearn.lab.chaos.error.InvalidTailException;
 import com.javalearn.lab.chaos.error.InvalidToxiproxyRequestException;
 import com.javalearn.lab.chaos.error.LabErrorCode;
+import com.javalearn.lab.chaos.error.LedgerConflictException;
+import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
+import com.javalearn.lab.chaos.error.LedgerUnavailableException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
@@ -192,5 +196,33 @@ public class LabExceptionHandler {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Result.failure(LabErrorCode.METHOD_NOT_ALLOWED,
                         "Method '" + ex.getMethod() + "' is not allowed; the proxy forwards GET and POST only"));
+    }
+
+    // -------------------------------------------------------------- ledger
+
+    /** Ledger DEGRADED/NO_DATA or a live query failure: 503 with its own code. */
+    @ExceptionHandler(LedgerUnavailableException.class)
+    public ResponseEntity<Result<Void>> handleLedgerUnavailable(LedgerUnavailableException ex) {
+        log.warn("Ledger unavailable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Result.failure(LabErrorCode.LEDGER_UNAVAILABLE, ex.getMessage()));
+    }
+
+    @ExceptionHandler(LedgerRunNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleLedgerRunNotFound(LedgerRunNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidLedgerRequestException.class)
+    public ResponseEntity<Result<Void>> handleInvalidLedgerRequest(InvalidLedgerRequestException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    @ExceptionHandler(LedgerConflictException.class)
+    public ResponseEntity<Result<Void>> handleLedgerConflict(LedgerConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(CommonErrorCode.CONFLICT, ex.getMessage()));
     }
 }
