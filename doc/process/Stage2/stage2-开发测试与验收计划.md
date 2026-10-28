@@ -24,6 +24,10 @@
 | 文档断言 | `bash code/lab/scripts/check-doc-claims.sh` | 32/32 PASS | 32/32 PASS（B0 未新增断言；指标字典抽样断言归 B1 起补） |
 | 安全静态检查 | `bash code/lab/scripts/test-lab-safety.sh` | 通过 | 通过 |
 
+> **B1-01 后现行基线（2026-10-28）**：reactor **888 tests**（chaos-controller **333**，含 Testcontainers `LedgerSchemaIT`；
+> app 469 / jdk8 59 / core 13 / platform 分别 10+4），其余闸门不变（verify 109 PASS/1 WARN、smoke 7/7、k6 79、
+> claims 32、console-smoke 42 未重跑）。真机证据见 `step-S2-B1-01-ledger-persistence.md` 附录 F。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、

@@ -197,3 +197,67 @@ docker compose --env-file code/lab/docker/.env.example \
 - DDL：`code/services/chaos-controller/src/main/resources/db/ledger/V1__lab_ledger.sql`
 - 配置：`.../src/main/resources/application.yml`、`code/lab/docker/compose.base.yml`、`code/lab/docker/.env.example`
 - 测试：`.../src/test/java/com/javalearn/lab/chaos/ledger/`
+
+## F. 补充：主会话真机演练（2026-10-28，合并 `8d93d6e` 后）
+
+本节的实测结果关闭了上文「存在缺陷项&TODO」中的真机三项（A21、Router 6446 写入、镜像重建），仅"杀主写入窗口时序"仍只有单测证据。
+
+### F.1 镜像与控制器重建
+
+- 现场栈：`compose.base.yml + compose.dev.yml`（`MYSQL_MODE=standalone`），34 容器健康。
+- **构建口径偏差（环境所致，非代码缺陷）**：`docker compose build chaos-controller` 在 builder 容器内连 Maven Central 失败
+  （`SSL peer shut down incorrectly`，host 网络模式同样失败；本机 Maven 正常）。改用同一 Maven reactor 在
+  `maven:3.9-eclipse-temurin-21` 内离线构建（挂载本机 `~/.m2`）：
+  `mvn -o -B -pl services/chaos-controller -am -DskipTests package` → BUILD SUCCESS（JDK 21 编译通过）。
+  随后用仅含运行时阶段的临时 Dockerfile（`tmp/ledger-image/`，未入库）把同一个 jar 打成
+  `java-learn-lab/chaos-controller:jdk21`，imageId **`5a6ae18d9aa4`**。仓库内 Dockerfile 未改动；网络恢复后
+  应按原 Dockerfile 重建一次以恢复构建溯源（不影响 B0 的 tag+imageId 最小闭环口径）。
+- `up -d --no-deps --force-recreate chaos-controller`：自动创建卷 `jl-ledger-stash-data`；容器 healthy 后
+  `LAB_LEDGER_MYSQL_MODE=standalone`、`LAB_LEDGER_STANDALONE_URL=jdbc:mysql://mysql:3306/lab_ledger?...`。
+
+### F.2 台账落地（standalone）
+
+```
+GET /lab/ledger/status → {"state":"OK","schemaVersion":"1","pendingStash":0,"mode":"standalone"}
+jl-mysql: information_schema 统计 lab_ledger 共 11 张表（10 张台账表 + flyway_schema_history）
+flyway_schema_history: V1 "lab ledger" success=1
+```
+
+### F.3 A21 重启恢复（真机 PASS）
+
+| 步骤 | 结果 |
+|---|---|
+| `POST /lab/runs {"scenario":"b1-a21-drill","params":{"vus":10,...}}` | 201 `run-20261028-001` / `DRAFT` |
+| SQL 置 `RUNNING`（本步尚无 start 端点） | `started_at=03:43:51.623` |
+| `docker restart jl-chaos-controller` → healthy | — |
+| `GET /lab/runs/run-20261028-001` | `status=UNKNOWN`，step `recovery RUNNING→UNKNOWN`，`detail.reason=controller restart`，params 快照仍在 |
+| `GET /lab/ledger/recovery` | `unknownRuns` 含该 run；`cleanupSuggestions` 给出"检查残留 k6/traffic 与 toxic 后按 FAILED/ABORTED 收口" |
+
+### F.4 db-ha 口径（Router 6446，真机 PASS）
+
+以 `LAB_LEDGER_MYSQL_MODE=router` 覆盖重建控制器（shell env 优先于 `.env`）：
+
+```
+GET /lab/ledger/status → {"state":"OK","mode":"router"}          # 经 mysql-router:6446 建库+迁移成功
+POST /lab/runs {"scenario":"b1-router-drill"} → run-20261028-001  # 新库独立序号
+jl-mysql (standalone) lab_ledger.lab_run:  只有 b1-a21-drill / UNKNOWN   ← 未被写入
+jl-mysql-2 (PRIMARY)  lab_ledger.lab_run:  b1-router-drill / DRAFT       ← 经 Router 落到集群
+```
+
+随后不带覆盖重建回 `standalone`，`GET /lab/runs` 仍能读到原 UNKNOWN run。两套拓扑各自物理隔离，符合"台账库与业务库物理分库"。
+
+### F.5 回归闸门（重建后）
+
+| 闸门 | 结果 |
+|---|---|
+| `mvn -pl services/chaos-controller -am test`（主树复跑） | 333 / 0 fail / 0 error / 0 skip |
+| `smoke.sh` | 7/7，`SMOKE PASSED.` |
+| `verify.sh` | **109 PASS / 1 WARN / 0 FAIL**（唯一 WARN 仍是 cAdvisor/WSL2） |
+| `test-chaos-env-wiring.sh` | 扩展为"8 个 CHAOS 键 + 27 个台账键"，全 PASS |
+
+### F.6 遗留（有意保留）
+
+- 演练数据未清理：standalone `run-20261028-001`（UNKNOWN，A21 样本）与集群 `b1-router-drill`（DRAFT，Router 样本），
+  保留作 B1-05 台账页的实样；保留策略 50 run 会自动轮换。
+- 杀主写入窗口的**真实时序**仍未演练（暂存/补写只有单测）：需要 `docker stop` 掉业务主库，影响演示链路，留 B1 收口或专项演练。
+- 保留策略（50 run 级联删除）只有单测，未在真机造 51 笔 run。
