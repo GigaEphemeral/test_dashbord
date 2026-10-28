@@ -171,8 +171,8 @@ runId 空白/不安全/清洗；`scripts-host-dir` 空白 → `BenchUnavailableE
 > 任务/步骤：Stage2 **B2-02b-1 Docker 启停/状态/日志/报告端点 + 宿主脚本目录解析**
 > 分支：`feature/stage2-workbench`（隔离 worktree `agent-general-purpose-010140d1`，基线 `b6be7b7`）
 > 隔离自证：`git rev-parse --show-toplevel` → `D:/000CODE/JAVA-LEARN/.qoder/worktrees/agent-general-purpose-010140d1`，不等于主工作树 `D:/000CODE/JAVA-LEARN`
-> 最新代码提交：`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（yml/compose/.env.example 六个新键 + `jl-k6-reports` 卷挂载）；本文件随 `docs(B2-02)` 提交落盘
-> 测试：`mvn -f code/pom.xml -pl services/chaos-controller -am test` → **559 tests, 0 failures, 0 errors, 0 skipped；BUILD SUCCESS**（B2-02a 基线 516，本步 +43：`BenchExecutionControllerTest` 12、`BenchScriptsHostDirResolverTest` 7、`BenchRunExecutorTest` 24）
+> 最新代码提交：`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（yml/compose/.env.example 六个新键 + `jl-k6-reports` 卷挂载）、`db3b31c`（summary 路径约束）；本文件随 `docs(B2-02)` 提交落盘
+> 测试：`mvn -f code/pom.xml -pl services/chaos-controller -am test` → **560 tests, 0 failures, 0 errors, 0 skipped；BUILD SUCCESS**（B2-02a 基线 516，本步 +44：`BenchExecutionControllerTest` 12、`BenchScriptsHostDirResolverTest` 7、`BenchRunExecutorTest` 25）
 > 接线：`bash code/lab/scripts/test-chaos-env-wiring.sh` → **86 PASS / 0 FAIL**，汇总行 `CHAOS ENV WIRING PASSED (8 chaos keys + 78 ledger/metrics/precheck/bench keys)`（B2-02a 后为 80，本步 +6）
 > 未执行任何 docker/compose 生命周期命令（无 build/up/down/restart/rm/pull），未启动真实 k6；真容器、卷与端点真机验证留给 B2-02b-2
 
@@ -245,7 +245,7 @@ controller 在容器内运行，`/app/k6` 只是 bind 挂载点；Docker daemon 
 ## 6. 单测
 
 - `BenchScriptsHostDirResolverTest`（7）：单挂载命中、显式覆盖优先且不 inspect、无匹配、多个匹配、空 source、controller 不存在传播 503、controller-k6-mount 空白提前拒绝。
-- `BenchRunExecutorTest`（24）：start 建目录+create/start、镜像缺失拒绝（不建目录/不创建）、RUNNING 冲突、EXITED 重建、状态映射、ABSENT/运行中提示、日志夹取与默认值、日志 404、报告读取/缺失/超限、runId 穿越（含手工 plan）、stop 幂等、cleanup stop+remove、sweepOrphans 只返回 k6 清单且不删除。
+- `BenchRunExecutorTest`（25）：start 建目录+create/start、镜像缺失拒绝（不建目录/不创建）、RUNNING 冲突、EXITED 重建、状态映射、ABSENT/运行中提示、日志夹取与默认值、日志 404、报告读取/缺失/超限、runId 穿越（含手工 plan）、stop 幂等、cleanup stop+remove、sweepOrphans 只返回 k6 清单且不删除；`summary-file` 越出 run 目录被拒绝。
 - `BenchExecutionControllerTest`（12）：ABSENT 200、完整字段、logs 形状与无参默认、报告下载/404/413、40002/40904/50303、日志 404、非数字 tail 400。
 - 全部不启 Docker、不启 Spring 上下文、不读库；报告目录用 `@TempDir`。
 
@@ -259,4 +259,4 @@ controller 在容器内运行，`/app/k6` 只是 bind 挂载点；Docker daemon 
 
 ## 最新 commit
 
-`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（六个新键 + `jl-k6-reports` 卷）、本文件随 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -3`）。
+`5caadeb`（网关/执行器/端点/解析器 + 单测）、`bd667f3`（六个新键 + `jl-k6-reports` 卷）、`db3b31c`（summary 路径约束）、本文件随 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -5`）。
