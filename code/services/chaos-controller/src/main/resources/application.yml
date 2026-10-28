@@ -197,6 +197,7 @@ lab:
       watchdog-enabled: ${LAB_BENCH_EXEC_WATCHDOG_ENABLED:true}
       watchdog-interval-seconds: ${LAB_BENCH_EXEC_WATCHDOG_INTERVAL_SECONDS:5}
       timeout-grace-seconds: ${LAB_BENCH_EXEC_TIMEOUT_GRACE_SECONDS:30}
+      stopping-settle-grace-seconds: ${LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS:30}
       orphan-cleanup-enabled: ${LAB_BENCH_EXEC_ORPHAN_CLEANUP_ENABLED:true}
 
 # Chaos actions (Task 21). Every TTL/timeout/URL/credential is externalized;

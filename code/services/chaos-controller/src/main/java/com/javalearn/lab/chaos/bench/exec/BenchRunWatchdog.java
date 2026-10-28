@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
@@ -143,6 +144,7 @@ public class BenchRunWatchdog {
             return;
         }
         sweepRunningRuns();
+        sweepStoppingRuns();
         if (!properties.isOrphanCleanupEnabled()) {
             orphanSweepDone.set(true);
         } else if (!orphanSweepDone.get()) {
@@ -173,7 +175,63 @@ public class BenchRunWatchdog {
         }
     }
 
+    /**
+     * A run left in STOPPING (the second transition was stashed, or a stop hook
+     * crashed) is invisible to the RUNNING sweep. Once it is older than the
+     * settle grace, close it as COMPLETED when its container is gone or exited;
+     * a live container is left to the operator's stop. The grace deliberately
+     * keeps the watchdog out of the normal stop window (STOPPING is written
+     * before the container stop).
+     */
+    private void sweepStoppingRuns() {
+        List<RunRecord> runs;
+        try {
+            runs = repository.findRunsByStatuses(List.of(RunStatus.STOPPING));
+        } catch (RuntimeException e) {
+            log.warn("k6 run watchdog could not list STOPPING runs: {}", e.toString());
+            return;
+        }
+        for (RunRecord run : runs) {
+            try {
+                settleStopping(run);
+            } catch (RuntimeException e) {
+                log.warn("k6 run watchdog could not settle STOPPING run {}: {}",
+                        run.runId(), e.toString());
+            }
+        }
+    }
+
+    private void settleStopping(RunRecord run) {
+        Instant updatedAt = run.updatedAt();
+        long ageSeconds = updatedAt == null ? Long.MAX_VALUE
+                : Duration.between(updatedAt, clock.instant()).getSeconds();
+        if (ageSeconds < properties.getStoppingSettleGraceSeconds()) {
+            log.debug("k6 run watchdog: run {} has been STOPPING for {}s (< {}s grace); leaving it",
+                    run.runId(), ageSeconds, properties.getStoppingSettleGraceSeconds());
+            return;
+        }
+        BenchExecutionState state = executor.state(run.runId());
+        String status = state.status();
+        if (!K6ContainerGateway.STATUS_ABSENT.equals(status)
+                && !K6ContainerGateway.STATUS_EXITED.equals(status)) {
+            log.debug("k6 run watchdog: STOPPING run {} still has a {} container; leaving it",
+                    run.runId(), status);
+            return;
+        }
+        Map<String, Object> detail = outcomeDetail(state);
+        detail.put("settledFromStopping", true);
+        detail.put("stoppingAgeSeconds", ageSeconds);
+        if (!transition(run.runId(), RunStatus.STOPPING, RunStatus.COMPLETED, "complete", detail)) {
+            return;
+        }
+        releaseLock(run.runId(), "COMPLETED (settled STOPPING)");
+    }
+
     private void settle(RunRecord run, Snapshot snapshot) {
+        if (run.status() != RunStatus.RUNNING) {
+            // STOPPING is settled by sweepStoppingRuns after its grace.
+            return;
+        }
         BenchExecutionState state = executor.state(run.runId());
         String status = state.status();
         if (K6ContainerGateway.STATUS_ABSENT.equals(status)) {

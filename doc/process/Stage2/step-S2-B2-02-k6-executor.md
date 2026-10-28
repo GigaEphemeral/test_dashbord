@@ -359,3 +359,12 @@ clock.instant() > deadline → 超时
 ## 最新 commit
 
 `60ea3a6`（hook 契约 / 真实 hook / watchdog / planner 重载 / 单测）、`045d650`（四个配置键三处外置），本文件随后续 `docs(B2-02)` 提交落盘（hash 见 `git log --oneline -4`）。
+
+
+## 补充：STOPPING 卡死修正（主会话抽查，2026-10-28）
+
+- **问题**：自然结束走 `RUNNING→STOPPING→COMPLETED` 两跳。若第二跳遇到台账暂存（`transition` 返回 false）或停容器 hook 后进程异常，run 会停在 STOPPING 且继续持有写 run 锁；原看门狗只扫 RUNNING，下一 tick 不会重试，只能等控制器重启标 UNKNOWN。
+- **修正**：看门狗新增 STOPPING 扫描。run 在 STOPPING 超过 `LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS`（默认 30s）后，若 k6 容器 ABSENT/EXITED，则 `STOPPING→COMPLETED`（step `complete`，detail 记 `settledFromStopping`/`stoppingAgeSeconds`）并释放锁；容器仍 RUNNING/CREATED 时留给操作员 stop，不抢判。宽限期用于避开正常 stop 窗口（STOPPING 先于停容器写入）。`settle()` 增加 status 守卫，STOPPING 只走新路径。
+- **配置**：`LAB_BENCH_EXEC_STOPPING_SETTLE_GRACE_SECONDS` 三处同默认 30（yml/compose/.env.example），env 接线自动发现。
+- **测试**：`BenchRunWatchdogTest` 新增 4 条（STOPPING 过宽限完成、宽限内不动、容器仍活不动、第二跳暂存后下一 tick 补完成）；全模块 **584 / 0 / 0 / 0**，env 接线 **91 PASS**。
+- **仍未验证**：真实台账暂存窗口下的 STOPPING 恢复（真机 A20 会覆盖常规 stop/超时路径，台账故障注入不在本步）。

@@ -55,6 +55,13 @@ public class BenchExecProperties {
     private int watchdogIntervalSeconds = 5;
     /** Extra time a k6 run may overrun its requested duration before FAILED. */
     private int timeoutGraceSeconds = 30;
+    /**
+     * How long a run may stay in STOPPING before the watchdog closes it. The
+     * grace keeps the watchdog out of the operator's stop window (STOPPING is
+     * written before the container stop); a stashed second transition or a
+     * crashed stop is recovered once the grace expires.
+     */
+    private int stoppingSettleGraceSeconds = 30;
     /** Remove lab.role=k6 containers without a live RUNNING run at startup. */
     private boolean orphanCleanupEnabled = true;
 
@@ -224,6 +231,14 @@ public class BenchExecProperties {
 
     public void setTimeoutGraceSeconds(int timeoutGraceSeconds) {
         this.timeoutGraceSeconds = timeoutGraceSeconds;
+    }
+
+    public int getStoppingSettleGraceSeconds() {
+        return stoppingSettleGraceSeconds;
+    }
+
+    public void setStoppingSettleGraceSeconds(int stoppingSettleGraceSeconds) {
+        this.stoppingSettleGraceSeconds = stoppingSettleGraceSeconds;
     }
 
     public boolean isOrphanCleanupEnabled() {

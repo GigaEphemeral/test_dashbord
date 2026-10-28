@@ -221,6 +221,67 @@ class BenchRunWatchdogTest {
         verify(executor, times(1)).sweepOrphans();
     }
 
+    // ------------------------------------------------------- stopping recovery
+
+    @Test
+    void aStoppingRunPastTheGraceWithAnExitedContainerIsCompleted() {
+        when(repository.findRunsByStatuses(any()))
+                .thenReturn(List.of(stoppingRecord(NOW.minusSeconds(60))));
+        when(executor.state(RUN_ID)).thenReturn(exited(0));
+        when(writer.transition(anyString(), any(), any(), anyString(), any(), anyString()))
+                .thenReturn(true);
+
+        watchdog.tick();
+
+        verify(writer).transition(eq(RUN_ID), eq(RunStatus.STOPPING), eq(RunStatus.COMPLETED),
+                eq("complete"), any(), anyString());
+        verify(envLock).release(RUN_ID);
+    }
+
+    @Test
+    void aStoppingRunInsideTheGraceIsLeftAlone() {
+        when(repository.findRunsByStatuses(any()))
+                .thenReturn(List.of(stoppingRecord(NOW.minusSeconds(5))));
+        when(executor.state(RUN_ID)).thenReturn(exited(0));
+
+        watchdog.tick();
+
+        verify(writer, never()).transition(anyString(), any(), any(), anyString(), any(),
+                anyString());
+        verify(envLock, never()).release(anyString());
+    }
+
+    @Test
+    void aStoppingRunWithALiveContainerIsLeftAlone() {
+        when(repository.findRunsByStatuses(any()))
+                .thenReturn(List.of(stoppingRecord(NOW.minusSeconds(60))));
+        when(executor.state(RUN_ID)).thenReturn(running(NOW.minusSeconds(60)));
+
+        watchdog.tick();
+
+        verify(writer, never()).transition(anyString(), any(), any(), anyString(), any(),
+                anyString());
+        verify(envLock, never()).release(anyString());
+    }
+
+    @Test
+    void aSecondHopStashIsSettledOnceTheStoppingGraceExpires() {
+        when(executor.state(RUN_ID)).thenReturn(exited(0));
+        when(writer.transition(anyString(), any(), any(), anyString(), any(), anyString()))
+                .thenReturn(true, false, true);
+
+        watchdog.tick();
+        verify(envLock, never()).release(anyString());
+
+        when(repository.findRunsByStatuses(any()))
+                .thenReturn(List.of(stoppingRecord(NOW.minusSeconds(60))));
+        watchdog.tick();
+
+        verify(writer, times(2)).transition(eq(RUN_ID), eq(RunStatus.STOPPING),
+                eq(RunStatus.COMPLETED), eq("complete"), any(), anyString());
+        verify(envLock).release(RUN_ID);
+    }
+
     // ---------------------------------------------------------- duration sum
 
     @Test
@@ -274,6 +335,11 @@ class BenchRunWatchdogTest {
 
     private static RunRecord record(String runId, RunStatus status) {
         return new RunRecord(runId, "smoke", status, "sha", "local", NOW, NOW, NOW, null);
+    }
+
+    private static RunRecord stoppingRecord(Instant updatedAt) {
+        return new RunRecord(RUN_ID, "smoke", RunStatus.STOPPING, "sha", "local",
+                NOW.minusSeconds(120), updatedAt, NOW.minusSeconds(120), null);
     }
 
     private static K6ContainerGateway.ContainerSummary summary(String container, String runId,
