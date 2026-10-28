@@ -74,6 +74,8 @@ B2 四个步骤全部合并并完成真机验证，批次闸门如下（2026-10-
 | stress/soak UI | 已确认首期不进 UI，CLI 保留 | Future |
 | bandwidth 毒性 | 已确认首期隐藏 | Future |
 
+> 最终交互稿（需求/设计/计划对齐、含 B3–B5 规划项与参数中文说明）见 `stage2-最终交互稿.md`。
+
 # 独立审核结论（2026-10-28，review-B2）
 
 - 范围：`3bee92b..3012120`（B2-01…04 + 收口 + claims），隔离 worktree，审核会话只跑单元/Testcontainers 与静态脚本，未碰共享栈。
