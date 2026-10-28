@@ -4,6 +4,7 @@ import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionType;
 import com.javalearn.lab.chaos.action.ChaosActionView;
+import com.javalearn.lab.chaos.action.EnvironmentStopAllService;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.ledger.FaultEventService;
 import com.javalearn.lab.chaos.ledger.IdempotencyKeys;
@@ -49,18 +50,31 @@ import java.util.Map;
  * not have to be RUNNING. The action result never depends on the timeline write.
  * {@code GET /chaos/actions} and the POST action view now carry {@code paused}
  * and {@code remainingMs}.</p>
+ *
+ * <p>B2-04b1: {@code POST /chaos/stop-all} is delegated to
+ * {@link EnvironmentStopAllService}, which keeps the container + Toxiproxy
+ * rollback here and extends the same button to background traffic, the thread
+ * lab and k6 run containers. The operation contract is unchanged: still
+ * {@code submitBlocking} with the caller's idempotency key and the
+ * {@code environment/lab/stop-all} target. The after-summary now also records
+ * the traffic/thread/k6 outcomes so a replayed operation explains what was
+ * cleaned even though the sub-steps do not run again.</p>
  */
 @RestController
 @RequestMapping("/chaos")
 public class ChaosController {
 
     private final ChaosActionService chaosActionService;
+    private final EnvironmentStopAllService environmentStopAllService;
     private final OperationService operations;
     private final FaultEventService faultEvents;
 
-    public ChaosController(ChaosActionService chaosActionService, OperationService operations,
+    public ChaosController(ChaosActionService chaosActionService,
+                           EnvironmentStopAllService environmentStopAllService,
+                           OperationService operations,
                            FaultEventService faultEvents) {
         this.chaosActionService = chaosActionService;
+        this.environmentStopAllService = environmentStopAllService;
         this.operations = operations;
         this.faultEvents = faultEvents;
     }
@@ -127,11 +141,16 @@ public class ChaosController {
         String key = IdempotencyKeys.normalize(idempotencyKey);
         OperationExecution execution = operations.submitBlocking(new OperationRequest(null, "environment",
                 "lab", "stop-all", null, key, Map.of("scope", "all"), false), () -> {
-            StopAllResult result = chaosActionService.stopAll();
+            StopAllResult result = environmentStopAllService.stopAll();
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("reverted", result.reverted());
             after.put("failed", result.failed());
             after.put("pending", result.pending());
+            after.put("traffic", result.traffic());
+            after.put("threads", result.threads());
+            after.put("k6Stopped", result.k6Stopped());
+            after.put("k6Cleaned", result.k6Cleaned());
+            after.put("k6Failed", result.k6Failed());
             return OperationOutcome.restored(after, result);
         });
         if (execution.settledWithPayload()) {

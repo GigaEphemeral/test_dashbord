@@ -3,6 +3,7 @@ package com.javalearn.lab.chaos;
 import com.javalearn.lab.chaos.action.ChaosActionRequest;
 import com.javalearn.lab.chaos.action.ChaosActionService;
 import com.javalearn.lab.chaos.action.ChaosActionView;
+import com.javalearn.lab.chaos.action.EnvironmentStopAllService;
 import com.javalearn.lab.chaos.action.NetworkResetReport;
 import com.javalearn.lab.chaos.action.StopAllResult;
 import com.javalearn.lab.chaos.error.ChaosConflictException;
@@ -35,7 +36,10 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -65,6 +69,9 @@ class ChaosControllerTest {
 
     @MockitoBean
     private ChaosActionService chaosActionService;
+
+    @MockitoBean
+    private EnvironmentStopAllService environmentStopAllService;
 
     @MockitoBean
     private OperationService operations;
@@ -347,7 +354,7 @@ class ChaosControllerTest {
 
     @Test
     void stopAllReturnsRevertedCountAndTheOperationId() throws Exception {
-        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(2, 0, 1));
+        when(environmentStopAllService.stopAll()).thenReturn(new StopAllResult(2, 0, 1));
 
         mockMvc.perform(post("/chaos/stop-all"))
                 .andExpect(status().isOk())
@@ -360,7 +367,7 @@ class ChaosControllerTest {
 
     @Test
     void stopAllAlsoReportsNetworkReset() throws Exception {
-        when(chaosActionService.stopAll()).thenReturn(new StopAllResult(1, 0, 0,
+        when(environmentStopAllService.stopAll()).thenReturn(new StopAllResult(1, 0, 0,
                 new NetworkResetReport(NetworkResetReport.STATUS_RESET, 2, 2, List.of())));
 
         mockMvc.perform(post("/chaos/stop-all"))
@@ -369,6 +376,59 @@ class ChaosControllerTest {
                 .andExpect(jsonPath("$.data.toxiproxy.proxiesReset").value(2))
                 .andExpect(jsonPath("$.data.toxiproxy.proxiesTotal").value(2))
                 .andExpect(jsonPath("$.data.toxiproxy.errors.length()").value(0));
+    }
+
+    @Test
+    void stopAllReportsTrafficThreadsAndK6InTheResponseAndAfterSummary() throws Exception {
+        NetworkResetReport network = new NetworkResetReport(
+                NetworkResetReport.STATUS_RESET, 2, 2, List.of());
+        when(environmentStopAllService.stopAll()).thenReturn(new StopAllResult(2, 0, 0,
+                network, null, StopAllResult.TRAFFIC_STOPPED,
+                Map.of("app-1", "ok", "app-2", "failed"), 1, 2, 1));
+
+        AtomicReference<OperationOutcome> captured = new AtomicReference<>();
+        doAnswer(invocation -> {
+            OperationWork work = invocation.getArgument(1);
+            OperationOutcome outcome = OperationContext.withOperation("op-1", work::run);
+            captured.set(outcome);
+            return new OperationExecution(operation(OperationStatus.APPLIED), false, false,
+                    outcome.payload());
+        }).when(operations).submitBlocking(any(), any());
+
+        mockMvc.perform(post("/chaos/stop-all"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reverted").value(2))
+                .andExpect(jsonPath("$.data.operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.traffic").value("stopped"))
+                .andExpect(jsonPath("$.data.threads.app-1").value("ok"))
+                .andExpect(jsonPath("$.data.threads.app-2").value("failed"))
+                .andExpect(jsonPath("$.data.k6Stopped").value(1))
+                .andExpect(jsonPath("$.data.k6Cleaned").value(2))
+                .andExpect(jsonPath("$.data.k6Failed").value(1));
+
+        assertThat(captured.get().afterSummary())
+                .containsEntry("reverted", 2)
+                .containsEntry("traffic", StopAllResult.TRAFFIC_STOPPED)
+                .containsEntry("threads", Map.of("app-1", "ok", "app-2", "failed"))
+                .containsEntry("k6Stopped", 1)
+                .containsEntry("k6Cleaned", 2)
+                .containsEntry("k6Failed", 1);
+        verify(environmentStopAllService).stopAll();
+    }
+
+    @Test
+    void anIdempotentStopAllReplayDoesNotCleanTheEnvironmentAgain() throws Exception {
+        OperationExecution replay = new OperationExecution(operation(OperationStatus.APPLIED),
+                true, false, null);
+        doReturn(replay).when(operations).submitBlocking(any(), any());
+        when(operations.view(replay)).thenReturn(operationView(OperationStatus.APPLIED, true));
+
+        mockMvc.perform(post("/chaos/stop-all").header("Idempotency-Key", "stop-all-key-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.operationId").value("op-1"))
+                .andExpect(jsonPath("$.data.idempotentReplay").value(true));
+
+        verify(environmentStopAllService, never()).stopAll();
     }
 
     private static OperationRecord operation(OperationStatus status) {
