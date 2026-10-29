@@ -138,7 +138,9 @@ public class InstanceConfigService {
         return new InstanceViews.InstanceConfigView(instance, result.config(),
                 saved.status().name(), saved.revision(), result.jvmArgs(), result.warnings(),
                 result.limitedObservability(), result.requiredMemoryMb(), result.memoryLimitMb(),
-                text(saved.updatedAt()), text(saved.appliedAt()), saved.lastError());
+                text(saved.updatedAt()), text(saved.appliedAt()), saved.lastError(),
+                text(saved.stableUntil()), text(saved.lastApplyAt()), saved.appliedImageTag(),
+                saved.appliedImageId(), saved.previousImageTag(), saved.previousImageId());
     }
 
     /**
@@ -213,7 +215,9 @@ public class InstanceConfigService {
                     stored.status().name(), stored.revision(), result.jvmArgs(),
                     result.warnings(), result.limitedObservability(), result.requiredMemoryMb(),
                     result.memoryLimitMb(), text(stored.updatedAt()), text(stored.appliedAt()),
-                    stored.lastError());
+                    stored.lastError(), text(stored.stableUntil()), text(stored.lastApplyAt()),
+                    stored.appliedImageTag(), stored.appliedImageId(), stored.previousImageTag(),
+                    stored.previousImageId());
         } catch (InvalidInstanceConfigException e) {
             // A deploy-time limit change must not make GET fail: show the stored
             // config with the current rejection as a warning.

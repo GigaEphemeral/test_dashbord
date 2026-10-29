@@ -53,8 +53,8 @@ class InstanceConfigValidatorTest {
         assertThat(result.config().gcCollector()).isEqualTo("G1");
         assertThat(result.config().g1HeapRegionSize()).isEqualTo("4m");
         assertThat(result.config().rejectionPolicy()).isEqualTo("AbortPolicy");
-        assertThat(result.config().gcLogPath()).isEqualTo("/app/logs/gc-app-1.log");
-        assertThat(result.config().heapDumpPath()).isEqualTo("/app/logs/heap-app-1.hprof");
+        assertThat(result.config().gcLogPath()).isEqualTo("/app/lab-snapshots/gc-app-1.log");
+        assertThat(result.config().heapDumpPath()).isEqualTo("/app/lab-snapshots/heap-app-1.hprof");
         assertThat(result.limitedObservability()).isFalse();
         assertThat(result.requiredMemoryMb()).isEqualTo(256 + 128 + 64 + 64 + 64);
         assertThat(result.jvmArgs()).containsExactly(
@@ -64,8 +64,8 @@ class InstanceConfigValidatorTest {
                 "-XX:G1NewSizePercent=5", "-XX:G1MaxNewSizePercent=60",
                 "-XX:G1HeapRegionSize=4m", "-XX:InitiatingHeapOccupancyPercent=45",
                 "-XX:NewRatio=2", "-XX:SurvivorRatio=8",
-                "-Xlog:gc*:file=/app/logs/gc-app-1.log:time,level,tags:filecount=5,filesize=20m",
-                "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=/app/logs/heap-app-1.hprof",
+                "-Xlog:gc*:file=/app/lab-snapshots/gc-app-1.log:time,level,tags:filecount=5,filesize=20m",
+                "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=/app/lab-snapshots/heap-app-1.hprof",
                 "-Dfile.encoding=UTF-8", "-XX:+UseStringDeduplication");
     }
 
@@ -194,7 +194,7 @@ class InstanceConfigValidatorTest {
                 """));
         assertThat(result.limitedObservability()).isTrue();
         assertThat(result.warnings()).anyMatch(w -> w.contains("LIMITED-OBSERVABILITY"));
-        assertThat(result.jvmArgs()).contains("-Xloggc:/app/logs/gc-app-1.log");
+        assertThat(result.jvmArgs()).contains("-Xloggc:/app/lab-snapshots/gc-app-1.log");
 
         assertThatThrownBy(() -> validator.validate("app-1", config("""
                 {"jdkVersion":8,"extraJvmArgs":["-Xlog:gc*"]}
@@ -221,7 +221,7 @@ class InstanceConfigValidatorTest {
                 .isInstanceOf(InvalidInstanceConfigException.class)
                 .hasMessageContaining("escapes the allow-listed root");
         assertThatThrownBy(() -> validator.validate("app-1", config("""
-                {"jdkVersion":21,"gcLogEnabled":true,"gcLogPath":"/app/logs/a;rm.log"}
+                {"jdkVersion":21,"gcLogEnabled":true,"gcLogPath":"/app/lab-snapshots/a;rm.log"}
                 """)))
                 .isInstanceOf(InvalidInstanceConfigException.class)
                 .hasMessageContaining("must match");

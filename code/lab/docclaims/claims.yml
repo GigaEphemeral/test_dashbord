@@ -732,3 +732,16 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b4-gc-log-readback
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-03-gc-logs.md
+  statement: "B4-03：JDK21 -Xlog:gc* / JDK8 -Xloggc 版本适配，日志写在 app 可写快照目录，控制器经 docker exec 回读"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceLogsService.java && grep -q '/lab/instances/{instance}/logs/gc' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceLogsController.java && grep -q 'UseGCLogFileRotation' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigValidator.java && grep -q 'gc-log-root: ${LAB_INSTANCE_GC_LOG_ROOT:/app/lab-snapshots}' code/services/chaos-controller/src/main/resources/application.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

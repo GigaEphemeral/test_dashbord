@@ -26,7 +26,7 @@ public class InstanceConfigProperties {
     private static final String GC_LOG_ROOT = "/[A-Za-z0-9._/-]*";
 
     /** Instances this controller owns; anything else is a 404. */
-    private List<String> names = new ArrayList<>(List.of("app-1", "app-2", "app-3"));
+    private List<String> names = new ArrayList<>(List.of("app-1", "app-2", "app-3", "seckill-app-jdk8"));
 
     /** Container name prefix; {@code jl-app-1} for {@code app-1}. */
     private String containerPrefix = "jl-";
@@ -56,7 +56,12 @@ public class InstanceConfigProperties {
     private List<String> imageTags = new ArrayList<>(List.of("jdk21", "jdk8"));
 
     /** Allow-listed root for GC-log and heap-dump paths (POSIX container path). */
-    private String gcLogRoot = "/app/logs";
+    private String gcLogRoot = "/app/lab-snapshots";
+    /** B4-03 GC-log readback bounds. */
+    private int gcLogDefaultLines = 200;
+    private int gcLogMaxLines = 2000;
+    private int gcLogMaxBytes = 262144;
+    private int gcLogTailTimeoutSeconds = 5;
 
     // ------------------------------------------------------- B4-02 rebuild
 
@@ -130,6 +135,22 @@ public class InstanceConfigProperties {
                 throw new IllegalStateException("lab.instance.image-tags entry '" + tag
                         + "' must match " + IMAGE_TAG + "; env LAB_INSTANCE_IMAGE_TAGS");
             }
+        }
+        if (gcLogDefaultLines < 1 || gcLogDefaultLines > gcLogMaxLines) {
+            throw new IllegalStateException("lab.instance.gc-log-default-lines must be between 1 and "
+                    + "gc-log-max-lines (env LAB_INSTANCE_GC_LOG_DEFAULT_LINES)");
+        }
+        if (gcLogMaxLines < 1 || gcLogMaxLines > 100000) {
+            throw new IllegalStateException("lab.instance.gc-log-max-lines must be between 1 and 100000"
+                    + " (env LAB_INSTANCE_GC_LOG_MAX_LINES)");
+        }
+        if (gcLogMaxBytes < 1024) {
+            throw new IllegalStateException("lab.instance.gc-log-max-bytes must be at least 1024"
+                    + " (env LAB_INSTANCE_GC_LOG_MAX_BYTES)");
+        }
+        if (gcLogTailTimeoutSeconds < 1 || gcLogTailTimeoutSeconds > 120) {
+            throw new IllegalStateException("lab.instance.gc-log-tail-timeout-seconds must be"
+                    + " between 1 and 120 (env LAB_INSTANCE_GC_LOG_TAIL_TIMEOUT_SECONDS)");
         }
         if (gcLogRoot == null || !gcLogRoot.matches(GC_LOG_ROOT)
                 || gcLogRoot.contains("..") || gcLogRoot.endsWith("/") && gcLogRoot.length() > 1) {
@@ -276,6 +297,38 @@ public class InstanceConfigProperties {
 
     public void setImageTags(List<String> imageTags) {
         this.imageTags = imageTags;
+    }
+
+    public int getGcLogDefaultLines() {
+        return gcLogDefaultLines;
+    }
+
+    public void setGcLogDefaultLines(int gcLogDefaultLines) {
+        this.gcLogDefaultLines = gcLogDefaultLines;
+    }
+
+    public int getGcLogMaxLines() {
+        return gcLogMaxLines;
+    }
+
+    public void setGcLogMaxLines(int gcLogMaxLines) {
+        this.gcLogMaxLines = gcLogMaxLines;
+    }
+
+    public int getGcLogMaxBytes() {
+        return gcLogMaxBytes;
+    }
+
+    public void setGcLogMaxBytes(int gcLogMaxBytes) {
+        this.gcLogMaxBytes = gcLogMaxBytes;
+    }
+
+    public int getGcLogTailTimeoutSeconds() {
+        return gcLogTailTimeoutSeconds;
+    }
+
+    public void setGcLogTailTimeoutSeconds(int gcLogTailTimeoutSeconds) {
+        this.gcLogTailTimeoutSeconds = gcLogTailTimeoutSeconds;
     }
 
     public String getGcLogRoot() {

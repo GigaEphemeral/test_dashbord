@@ -52,6 +52,9 @@
 > apply（384m/池 2-4-10）与 rollback（512m/池 4-8-50）9 项检查全 PASS，app-2/3 未变；失败自动恢复 2 次。
 > Nginx `/lab-api` 超时 300s、apply 240s、health 150s。交接 `step-S2-B4-02-controlled-rebuild.md`。
 
+> **B4-03 基线（2026-10-29）**：chaos 定向 **20/0**（logs 5 + controller 2 + validator 13）；真机 GC 日志生成/回读/回滚保留；
+> `LAB_INSTANCE_NAMES` 增加 `seckill-app-jdk8`。交接 `step-S2-B4-03-gc-logs.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -374,6 +377,10 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 - 开发：GC 日志选项由版本适配器生成（JDK8 `-Xloggc` / 21 `-Xlog:gc*`），路径外置；OOM/堆转储事件进 run 时间线。
 - 测试：两种 JDK 各起一次，日志文件生成且路径正确。
 - 验收：报告能引用 GC 日志证据。
+> **实现状态（2026-10-29）：已完成代码与真机验证。** GC 日志根目录改为 app 可写的 `/app/lab-snapshots`；
+> JDK21 `-Xlog:gc*`、JDK8 `-Xloggc`+轮转由版本适配器生成；`GET /lab/instances/{id}/logs/gc?lines=` 经
+> `docker exec tail` 回读（OK/DISABLED/NO_CONFIG/NO_DATA，路径限白名单根、字节截断只留尾部）。
+> 真机 apply 后返回真实 GC 事件、文件 55,664B；rollback 后文件保留。交接 `step-S2-B4-03-gc-logs.md`。
 
 ### B4-04 实例配置页 UI + JDK 8/21 对照（jdk-matrix）
 
@@ -507,6 +514,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v1.9：B4-03 实现——GC 日志版本适配/可写路径/回读端点；§0 记录 B4-03 基线 |
 | 2026-10-29 | v1.8：B4-02 实现——受控重建/健康门禁/自动回滚/稳定期/ROLLED_BACK；Nginx 超时放宽；§0 记录 B4-02 基线 |
 | 2026-10-29 | v1.7：B4-01 实现——app 业务池/Caffeine 启动参数、控制器实例配置 schema/预算/草稿存储/回读；§0 记录 B4-01 基线 |
 | 2026-10-29 | v1.6：B3-01..04 实现——独立 L1 开关、10,000 商品基线 + SCAN 键浏览/单键/重置、A/B 对照面板、业务对账；§0 记录 B3 批次基线 |

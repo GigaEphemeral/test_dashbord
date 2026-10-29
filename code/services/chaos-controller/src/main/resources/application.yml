@@ -33,7 +33,7 @@ lab:
   # names. The memory budget is xmx + metaspace + direct + maxPoolSize*stack +
   # native reserve and must fit in memory-limit-mb.
   instance:
-    names: ${LAB_INSTANCE_NAMES:app-1,app-2,app-3}
+    names: ${LAB_INSTANCE_NAMES:app-1,app-2,app-3,seckill-app-jdk8}
     container-prefix: ${LAB_INSTANCE_CONTAINER_PREFIX:jl-}
     memory-limit-mb: ${LAB_INSTANCE_MEMORY_LIMIT_MB:768}
     thread-stack-mb: ${LAB_INSTANCE_THREAD_STACK_MB:1}
@@ -45,7 +45,11 @@ lab:
     # Only verified image tags are accepted; UI options must come from here.
     image-tags: ${LAB_INSTANCE_IMAGE_TAGS:jdk21,jdk8}
     # GC-log/heap-dump paths must resolve inside this root; arbitrary paths are rejected.
-    gc-log-root: ${LAB_INSTANCE_GC_LOG_ROOT:/app/logs}
+    gc-log-root: ${LAB_INSTANCE_GC_LOG_ROOT:/app/lab-snapshots}
+    gc-log-default-lines: ${LAB_INSTANCE_GC_LOG_DEFAULT_LINES:200}
+    gc-log-max-lines: ${LAB_INSTANCE_GC_LOG_MAX_LINES:2000}
+    gc-log-max-bytes: ${LAB_INSTANCE_GC_LOG_MAX_BYTES:262144}
+    gc-log-tail-timeout-seconds: ${LAB_INSTANCE_GC_LOG_TAIL_TIMEOUT_SECONDS:5}
     # Stage2 B4-02 controlled rebuild: stable period, health gates and the
     # fixed image repository. The applied image ref is always
     # <image-repository>:<stored imageTag>; a request never supplies a repo/tag

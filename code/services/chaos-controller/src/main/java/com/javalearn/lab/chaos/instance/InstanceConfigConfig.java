@@ -42,6 +42,18 @@ public class InstanceConfigConfig {
     }
 
     @Bean
+    public InstanceLogsService instanceLogsService(
+            InstanceConfigProperties properties,
+            InstanceConfigRepository repository,
+            org.springframework.beans.factory.ObjectProvider<
+                    com.javalearn.lab.chaos.gateway.ContainerGateway> containerGatewayProvider,
+            LedgerProperties ledgerProperties, LedgerBootstrap ledgerBootstrap,
+            ObjectMapper objectMapper) {
+        return new InstanceLogsService(properties, repository, containerGatewayProvider,
+                ledgerProperties, ledgerBootstrap, objectMapper);
+    }
+
+    @Bean
     public InstanceConfigService instanceConfigService(InstanceConfigProperties properties,
                                                        InstanceConfigValidator validator,
                                                        InstanceConfigRepository repository,

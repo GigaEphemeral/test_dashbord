@@ -17,7 +17,20 @@ public final class InstanceViews {
                                      int revision, List<String> jvmArgs, List<String> warnings,
                                      boolean limitedObservability, int requiredMemoryMb,
                                      int memoryLimitMb, String updatedAt, String appliedAt,
-                                     String lastError) {
+                                     String lastError, String stableUntil, String lastApplyAt,
+                                     String appliedImageTag, String appliedImageId,
+                                     String previousImageTag, String previousImageId) {
+
+        /** B4-01 shape: apply/stable fields empty until B4-02 runs. */
+        public InstanceConfigView(String instance, InstanceConfig config, String status,
+                                  int revision, List<String> jvmArgs, List<String> warnings,
+                                  boolean limitedObservability, int requiredMemoryMb,
+                                  int memoryLimitMb, String updatedAt, String appliedAt,
+                                  String lastError) {
+            this(instance, config, status, revision, jvmArgs, warnings, limitedObservability,
+                    requiredMemoryMb, memoryLimitMb, updatedAt, appliedAt, lastError,
+                    null, null, null, null, null, null);
+        }
     }
 
     /** Dry-run validation; nothing is stored and the ledger is not required. */
