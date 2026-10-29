@@ -322,6 +322,14 @@ public final class CacheExperimentDataService {
      * One SCAN page over a whitelisted prefix. The returned cursor is the raw
      * Redis cursor, so the caller can resume the same iteration; {@code "0"}
      * marks completion. {@code KEYS} is never used.
+     *
+     * <p>A batch's keys beyond {@code limit} could never be resumed (the raw
+     * cursor continues after the whole batch), so the Redis COUNT hint is
+     * clamped to the page's remaining capacity: a batch then normally returns
+     * no more keys than the page can display. Because COUNT is a hint only,
+     * Redis may still overshoot and such keys are counted in {@code scanned}
+     * without being listed; page with a larger {@code limit} (or the reset +
+     * reseed drill) when a complete enumeration matters.</p>
      */
     public CacheKeysPageResponse scanKeys(String requestedPrefix, String cursor,
                                           Integer requestedLimit) {
@@ -337,7 +345,8 @@ public final class CacheExperimentDataService {
         String next = resumeFrom;
         int scanned = 0;
         for (int i = 0; i < batches; i++) {
-            KeyScanPage page = keyScanSource.scan(prefix + "*", next, scanCount);
+            int hint = Math.max(1, Math.min(scanCount, limit - items.size()));
+            KeyScanPage page = keyScanSource.scan(prefix + "*", next, hint);
             scanned += page.keys().size();
             for (String key : page.keys()) {
                 if (items.size() >= limit) {
@@ -622,8 +631,11 @@ public final class CacheExperimentDataService {
      * {@code batchUpdate} unless {@code rewriteBatchedStatements} is set on the
      * URL, and 10k single-row round trips exceed the console proxy budget; a
      * chunked VALUES list keeps a 10k seed inside a few seconds without
-     * changing every datasource URL. INSERT IGNORE keeps a retried or
-     * caller (seed is synchronized) already filtered existing ids.
+     * changing every datasource URL. The rows come from {@link #seed}'s
+     * missing-id pre-filter (and the JVM-wide {@code synchronized} guard), so
+     * a sequential re-seed never re-inserts an id; two different instances
+     * seeding the same range concurrently can still race on the primary key
+     * (documented limitation in the B3 handover).
      */
     private int batchInsert(List<Object[]> rows, int batchSize) {
         int inserted = 0;
@@ -643,19 +655,6 @@ public final class CacheExperimentDataService {
             inserted += jdbcTemplate.update(sql.toString(), args.toArray());
         }
         return inserted;
-    }
-
-    /**
-     * {@code batchUpdate} reports a per-statement count, or
-     * {@code SUCCESS_NO_INFO} (-2) on some drivers; a driver that does not
-     * report still seeded its rows, so the caller uses {@code rowsInRange}.
-     */
-    private static int sumCounts(int[] counts) {
-        int total = 0;
-        for (int count : counts) {
-            total += Math.max(count, 0);
-        }
-        return total;
     }
 
     private long requiredCount(long startId, long endId) {

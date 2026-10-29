@@ -111,3 +111,25 @@ bash code/lab/scripts/check-doc-claims.sh                # 52/52 PASS
 - 前端：`CacheLab.vue`、`CacheKeysPanel.vue`、`CacheABPanel.vue`、`RunReconciliation.vue`、`BenchmarkPanel.vue`、`MonitorPage.vue`、`RunLedger.vue`、`api.js`
 - 脚本：`reset-lab.sh`、`verify.sh`、`smoke.sh`、`console-smoke.{sh,mjs}`、`test-reset-topology.sh`
 - 配置：`compose.base.yml`、`.env.example`（cache seed/keys、reconcile、proxy timeout）
+
+# Fix Report（B3 独立审核修复，2026-10-29）
+
+- 修复 finding（Medium）：`GET /lab/cache/keys` 游标分页在 SCAN 单批返回键数超过页内剩余容量时，
+  该批未展示的键会被游标永久跳过（生产默认 scan-count 500 > limit 100，翻页可整段漏键）。
+  `CacheExperimentDataService.scanKeys` 现将每批 Redis COUNT 提示钳制为
+  `min(keys.scan-count, limit - 已取条数)`，并如实记录残余口径：COUNT 只是提示，Redis 仍可能超发，
+  超发键计入 `scanned` 但不列出；需要完整枚举时加大 `limit`（或 reset+重播种）。
+- 顺带清理（Minor）：`batchInsert` javadoc 移除与实现不符的 "INSERT IGNORE" 描述（实际是缺失集合预过滤 +
+  同 JVM `synchronized`，跨实例并发仍为已记录限制）；删除无调用方的 `sumCounts` 死代码。
+- 测试：新增 `CacheExperimentKeysTest.scanKeysClampsTheScanHintToTheRemainingPageCapacity`
+  （断言 hint 序列 4/3/1，页满即停）。
+- 命令与输出（worktree，JDK 21）：
+  - `mvn -o -pl services/seckill-app-jdk21 -am test -Dtest='CacheExperimentKeysTest,TwoLevelCacheL1SwitchTest,TwoLevelCacheManagerL1SwitchTest,LabCacheL1ControllerTest,LabCacheControllerTest,LabCachePropertiesTest'`
+    → 43 tests / 0 fail（Keys 12、L1 缓存 4、Manager 2、L1 控制器 4、LabCache 10、Properties 11）
+  - `mvn -o -pl services/seckill-app-jdk21 -am test -Dtest='ProductRepositoryIT,InventoryRepositoryIT'`（Testcontainers）
+    → 14 tests / 0 fail（V4 幂等重放、10,000 基线与公式断言通过）
+  - `mvn -o -pl services/chaos-controller -am test -Dtest='FaultSchedule*,RunLifecycleFaultScheduleTest,RunLedgerServiceFaultScheduleTest,ChaosActionServiceTest,ChaosActionStateMachineTest,EnvironmentStopAllServiceTest,Reconciliation*,ReconcilePropertiesTest,RunPrecheckServiceTest,BenchLaunchPlannerTest,AppProxyServiceTest,LedgerControllerTest,LedgerRetentionTest'`
+    → 259 tests / 0 fail
+  - `node --test "code/lab/k6/test/*.test.mjs"` → 113 pass / 0 fail
+- 自检：修复仅触及 `scanKeys` 的 hint 计算与两处注释/死代码；分页响应契约（游标透传、limit 硬上限、
+  前缀白名单、有界批次）不变；未运行 verify/console-smoke（worktree 规则禁止），真机闸门由控制器合并后复跑。

@@ -58,6 +58,7 @@ class CacheExperimentKeysTest {
     private final LabCacheProperties properties = TestLabCacheProperties.defaults();
     private final Deque<CacheExperimentDataService.KeyScanPage> pages = new ArrayDeque<>();
     private final List<String> patterns = new ArrayList<>();
+    private final List<Integer> scanHints = new ArrayList<>();
     private final StringRedisTemplate template = mock(StringRedisTemplate.class);
     @SuppressWarnings("unchecked")
     private final ValueOperations<String, String> values = mock(ValueOperations.class);
@@ -95,6 +96,7 @@ class CacheExperimentKeysTest {
 
         CacheExperimentDataService.KeyScanSource source = (pattern, cursor, count) -> {
             patterns.add(pattern);
+            scanHints.add(count);
             CacheExperimentDataService.KeyScanPage page = pages.pollFirst();
             if (page == null) {
                 throw new AssertionError("unexpected extra SCAN call");
@@ -149,6 +151,28 @@ class CacheExperimentKeysTest {
 
         assertThat(page.cursor()).isEqualTo("0");
         assertThat(page.items()).hasSize(1);
+    }
+
+    @Test
+    void scanKeysClampsTheScanHintToTheRemainingPageCapacity() {
+        // The configured COUNT hint (500) is far above the page limit: keys a
+        // batch returns beyond the limit would be skipped forever, because the
+        // raw cursor continues AFTER the whole batch. The hint must therefore
+        // shrink with the remaining capacity of the page.
+        properties.getKeys().setScanBatches(3);
+        pages.add(new CacheExperimentDataService.KeyScanPage("11", List.of(PREFIX + 1)));
+        pages.add(new CacheExperimentDataService.KeyScanPage("12",
+                List.of(PREFIX + 2, PREFIX + 3)));
+        pages.add(new CacheExperimentDataService.KeyScanPage("13", List.of(PREFIX + 4)));
+        when(template.getExpire(anyString(), any(TimeUnit.class))).thenReturn(5L);
+
+        CacheKeysPageResponse page = service.scanKeys(PREFIX, null, 4);
+
+        assertThat(page.items()).hasSize(4);
+        assertThat(page.cursor()).isEqualTo("13");
+        // First batch: min(500, 4 free). Second: min(500, 4-1=3). Third: min(500, 4-3=1)
+        // but the page already holds 4 keys after batch 3, so the loop stops.
+        assertThat(scanHints).containsExactly(4, 3, 1);
     }
 
     @Test
