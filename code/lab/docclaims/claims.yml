@@ -886,3 +886,40 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b5-03-run-report
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-03-single-run-report.md
+    - doc/design/Stage2/b5-03-单次统计与导出.md
+  statement: "B5-03：GET /lab/runs/{runId}/report 与 …/export 返回单次报告（run/环境/k6/分流/KPI/缺失项），POST …/clone 复制为新 DRAFT；单次结果固定标注未重复验证"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/report/RunReportService.java && grep -q '/lab/runs/{runId}/export' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/report/RunReportController.java && grep -q '/lab/runs/{runId}/clone' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/report/RunReportController.java && grep -q 'repeatVerified' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/report/RunReportViews.java && grep -q 'report-keys' code/services/chaos-controller/src/main/resources/application.yml && test -f code/lab/dashboard/src/components/RunResultPanel.vue && test -f code/lab/dashboard/src/components/RunTimelines.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-03-monitor-charts
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-03-single-run-report.md
+  statement: "B5-03：实时监控六张时间线（请求/k6/JVM 堆/GC 按实例×minor-major/线程池/连接池按实例），实验记录按 run 窗口展示 k6/JVM/GC"
+  verify:
+    kind: shell
+    command: "grep -q 'chart-gc' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'chart-threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'jvm_gc_pause_seconds_count' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'run-chart-gc' code/lab/dashboard/src/components/RunTimelines.vue && test -f code/lab/dashboard/src/components/TimelineChart.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: grafana-admin-default
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-03-single-run-report.md
+  statement: "Grafana 默认管理员凭据为 admin/admin（.env.example），运行实例已按该凭据重置"
+  verify:
+    kind: shell
+    command: "grep -q 'GRAFANA_ADMIN_PASSWORD=admin' code/lab/docker/.env.example"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

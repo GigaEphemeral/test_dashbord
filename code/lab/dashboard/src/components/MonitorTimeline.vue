@@ -1,13 +1,25 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import TimelineChart from './TimelineChart.vue'
 import { describeError, queryPromRange } from '../api'
+import {
+  COLORS,
+  compact,
+  gcActionName,
+  instanceColor,
+  seriesPoints,
+  splitSeriesPoints
+} from '../timeline'
 
 /**
- * Four hand-drawn SVG timelines over the last 15 minutes (B3-00d).
+ * Six hand-drawn SVG timelines over the last 15 minutes (B3-00d, B5-01c).
+ *
+ * JVM heap and GC are separate charts because they share no unit; GC lines are
+ * split per instance AND per GC action (minor solid / major dashed), and the
+ * pool charts are split per instance so one saturated node is visible.
  *
  * Every series is one PromQL range query; a failed query only removes its own
- * line and puts the error in the notice, so one broken metric never blanks the
- * page. An absent series is "无数据", never a synthetic 0.
+ * line and puts the error in the notice. An absent series is "无数据".
  */
 const props = defineProps({
   active: { type: Boolean, default: false },
@@ -16,22 +28,10 @@ const props = defineProps({
 
 const WINDOW_SECONDS = 900
 const STEP_SECONDS = 15
-const SCRAPE_SECONDS = 5
 const REFRESH_SECONDS = Math.max(1, Math.round(
   Number(import.meta.env.VITE_LAB_SYNC_INTERVAL_MS || 5000) / 1000
 ))
 const APP_JOB = import.meta.env.VITE_LAB_PROM_JOB || 'seckill-app'
-
-const COLORS = ['#38d39f', '#5aa9e6', '#e6b45a', '#e06b6b']
-// One colour per JVM instance, so 堆 and GC keep the same hue per instance and
-// only the stroke style (solid/dashed) tells the two metrics apart.
-const INSTANCE_COLORS = ['#38d39f', '#5aa9e6', '#e6b45a', '#e06b6b', '#a78bfa', '#5eead4']
-const SVG_W = 600
-const SVG_H = 140
-const PAD_L = 54
-const PAD_R = 10
-const PAD_T = 12
-const PAD_B = 22
 
 const JOB = `job="${APP_JOB}"`
 const requestsTotal = `sum(rate(http_server_requests_seconds_count{${JOB}}[1m]))`
@@ -41,13 +41,11 @@ const CHARTS = [
     id: 'requests',
     testid: 'chart-requests',
     title: '请求性能',
-    axis: compact,
     series: [
       {
         key: 'rps',
         label: 'RPS',
         expr: requestsTotal,
-        factor: 1,
         format: (value) => `${value.toFixed(2)} req/s`
       },
       {
@@ -70,20 +68,17 @@ const CHARTS = [
     id: 'k6',
     testid: 'chart-k6',
     title: 'k6 负载',
-    axis: compact,
     series: [
       {
         key: 'vus',
         label: 'VU',
         expr: 'sum(k6_vus{run_id!=""})',
-        factor: 1,
         format: (value) => `${value.toFixed(0)} VU`
       },
       {
         key: 'iterations',
         label: 'iterations/s',
         expr: 'sum(rate(k6_iterations_total{run_id!=""}[1m]))',
-        factor: 1,
         format: (value) => `${value.toFixed(2)} /s`
       }
     ]
@@ -91,28 +86,55 @@ const CHARTS = [
   {
     id: 'jvm',
     testid: 'chart-jvm',
-    title: 'JVM 堆 / GC（按实例）',
-    axis: compact,
+    title: 'JVM 堆（按实例）',
+    note: '每实例一条',
     series: [
       {
         key: 'heap',
         label: '堆',
-        // jvm_memory_used_bytes is bytes; the chart plots MB. One line per JVM
-        // (app-1/2/3) instead of a summed total, so a single instance's heap
-        // growth stays visible next to its peers.
         expr: `sum by (instance) (jvm_memory_used_bytes{${JOB},area="heap"})`,
         factor: 1 / (1024 * 1024),
         format: (value) => `${value.toFixed(1)} MB`,
+        split: true
+      }
+    ]
+  },
+  {
+    id: 'gc',
+    testid: 'chart-gc',
+    title: 'GC 次数（按实例 · minor/major）',
+    note: '实线 minor · 虚线 major',
+    series: [
+      {
+        key: 'count',
+        label: 'GC',
+        expr: `sum by (instance, action) (increase(jvm_gc_pause_seconds_count{${JOB}}[1m]))`,
+        format: (value) => `${value.toFixed(0)} 次/分`,
         split: true,
-        dash: ''
+        groupBy: ['instance', 'action'],
+        nameFor: (labels, instance) => `${instance} ${gcActionName(labels.action)}`,
+        dashFor: (labels) => (labels.action === 'end of major GC' ? '5 3' : '')
+      }
+    ]
+  },
+  {
+    id: 'threads',
+    testid: 'chart-threads',
+    title: '业务线程池（按实例）',
+    note: '实线 active · 虚线 queue',
+    series: [
+      {
+        key: 'active',
+        label: 'active',
+        expr: `sum by (instance) (executor_active_threads{${JOB}})`,
+        format: (value) => value.toFixed(0),
+        split: true
       },
       {
-        key: 'gc',
-        label: 'GC 暂停/s',
-        // jvm_gc_pause_seconds_sum is a counter of seconds spent paused.
-        expr: `sum by (instance) (rate(jvm_gc_pause_seconds_sum{${JOB}}[1m]))`,
-        factor: 1000,
-        format: (value) => `${value.toFixed(2)} ms/s`,
+        key: 'queued',
+        label: 'queue',
+        expr: `sum by (instance) (executor_queued_tasks{${JOB}})`,
+        format: (value) => value.toFixed(0),
         split: true,
         dash: '5 3'
       }
@@ -121,37 +143,23 @@ const CHARTS = [
   {
     id: 'pool',
     testid: 'chart-pool',
-    title: '线程池 / 连接池',
-    axis: compact,
+    title: '连接池（按实例）',
+    note: '实线 active · 虚线 pending',
     series: [
       {
         key: 'active',
-        label: '线程池活跃',
-        expr: `sum(executor_active_threads{${JOB}})`,
-        factor: 1,
-        format: (value) => value.toFixed(0)
-      },
-      {
-        key: 'poolSize',
-        label: '线程池大小',
-        // Spring's name is executor_pool_size_threads (not executor_pool_size).
-        expr: `sum(executor_pool_size_threads{${JOB}})`,
-        factor: 1,
-        format: (value) => value.toFixed(0)
-      },
-      {
-        key: 'queued',
-        label: '线程池队列',
-        expr: `sum(executor_queued_tasks{${JOB}})`,
-        factor: 1,
-        format: (value) => value.toFixed(0)
+        label: 'Hikari active',
+        expr: `sum by (instance) (hikaricp_connections_active{${JOB}})`,
+        format: (value) => value.toFixed(0),
+        split: true
       },
       {
         key: 'pending',
-        label: '连接池 pending',
-        expr: `sum(hikaricp_connections_pending{${JOB}})`,
-        factor: 1,
-        format: (value) => value.toFixed(0)
+        label: 'Hikari pending',
+        expr: `sum by (instance) (hikaricp_connections_pending{${JOB}})`,
+        format: (value) => value.toFixed(0),
+        split: true,
+        dash: '5 3'
       }
     ]
   }
@@ -164,7 +172,6 @@ const lastSync = ref(null)
 const loading = ref(false)
 
 let inFlight = false
-let queued = false
 let disposed = false
 
 const chartErrors = computed(() => {
@@ -182,157 +189,43 @@ const dataTimeLabel = computed(() => (
   lastSync.value ? lastSync.value.toLocaleTimeString('zh-CN', { hour12: false }) : '—'
 ))
 
-function compact(value) {
-  if (!Number.isFinite(value)) return '—'
-  if (Math.abs(value) >= 1000) return value.toFixed(0)
-  if (Math.abs(value) >= 100) return value.toFixed(0)
-  if (Math.abs(value) >= 10) return value.toFixed(1)
-  return value.toFixed(2)
-}
-
-function niceCeil(value) {
-  if (!Number.isFinite(value) || value <= 0) return 1
-  const exponent = Math.floor(Math.log10(value))
-  const base = 10 ** exponent
-  const normalized = value / base
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
-  return step * base
-}
-
-function clockLabel(stamp) {
-  const date = new Date(stamp * 1000)
-  return date.toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-function clockWithSeconds(stamp) {
-  return clockLabel(stamp)
-}
-
-/** Matrix responses are transformed to [{ t, v }] with the series factor applied. */
-function seriesPoints(result, factor) {
-  const byTime = new Map()
-  for (const series of result || []) {
-    for (const [rawStamp, rawValue] of series.values || []) {
-      const stamp = Number(rawStamp)
-      const value = Number(rawValue)
-      if (!Number.isFinite(stamp) || !Number.isFinite(value)) continue
-      const scaled = value * factor
-      byTime.set(stamp, (byTime.get(stamp) || 0) + scaled)
-    }
-  }
-  return [...byTime.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([t, v]) => ({ t, v }))
-}
-
-/** "instance" is host:port (app-1:8080); the chart only needs the host. */
-function instanceName(labels) {
-  const raw = String(labels?.instance || '').split(':')[0]
-  return raw || 'unknown'
-}
-
-/** Same transform as seriesPoints, but one [{ name, points }] entry per instance. */
-function splitSeriesPoints(result, factor) {
-  return (result || [])
-    .map((series) => {
-      const points = (series.values || [])
-        .map(([rawStamp, rawValue]) => ({ t: Number(rawStamp), v: Number(rawValue) * factor }))
-        .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
-        .sort((a, b) => a.t - b.t)
-      return { name: instanceName(series.metric), points }
-    })
-    .filter((entry) => entry.points.length > 0)
-    .sort((a, b) => a.name.localeCompare(b.name))
-}
-
-function instanceColor(name, index) {
-  return INSTANCE_COLORS[index % INSTANCE_COLORS.length]
-}
-
+/** Turn one chart definition + query results into TimelineChart props. */
 function buildChart(chart) {
   const series = []
   chart.series.forEach((definition, definitionIndex) => {
     const state = results[`${chart.id}:${definition.key}`] || {}
     if (definition.split) {
       const entries = state.series || []
-      entries.forEach((entry, index) => {
+      const instances = [...new Set(entries.map((entry) => entry.instance))].sort()
+      for (const entry of entries) {
         series.push({
-          ...definition,
-          key: `${definition.key}:${entry.name}`,
-          label: `${entry.name} ${definition.label}`,
-          color: instanceColor(entry.name, index),
-          dash: definition.dash || '',
+          key: `${definition.key}:${entry.key}`,
+          label: entry.name,
+          color: instanceColor(entry.instance, instances),
+          dash: entry.dash || definition.dash || '',
           points: entry.points,
-          last: entry.points.length ? entry.points[entry.points.length - 1] : null
+          format: definition.format
         })
-      })
+      }
       return
     }
-    const points = state.points || []
     series.push({
-      ...definition,
+      key: definition.key,
+      label: definition.label,
       color: COLORS[definitionIndex % COLORS.length],
       dash: '',
-      points,
-      last: points.length ? points[points.length - 1] : null
+      points: state.points || [],
+      format: definition.format
     })
   })
-  const all = series.flatMap((item) => item.points.map((point) => point.v))
-  const hasData = all.length > 0
-  const yMax = niceCeil(Math.max(...(all.length ? all : [0]), 0))
-  const start = windowStart.value
-  const end = windowEnd.value
-  const span = start !== null && end !== null && end > start ? end - start : 1
-  const innerW = SVG_W - PAD_L - PAD_R
-  const innerH = SVG_H - PAD_T - PAD_B
-  const x = (stamp) => PAD_L + ((stamp - start) / span) * innerW
-  const y = (value) => PAD_T + innerH - (Math.max(0, value) / yMax) * innerH
-
-  const rendered = series.map((item) => ({
-    ...item,
-    lastText: item.last ? item.format(item.last.v) : '无数据',
-    path: item.points.map((point) => `${x(point.t).toFixed(1)},${y(point.v).toFixed(1)}`).join(' '),
-    dots: item.points.map((point) => ({
-      cx: x(point.t).toFixed(1),
-      cy: y(point.v).toFixed(1),
-      title: `${item.label} · ${clockWithSeconds(point.t)} · ${item.format(point.v)}`
-    }))
-  }))
-
-  const yTicks = [0, yMax / 2, yMax].map((value) => ({
-    value,
-    label: chart.axis(value),
-    y: y(value).toFixed(1)
-  }))
-  const xTicks = start === null || end === null
-    ? []
-    : [0, 1, 2, 3].map((index) => {
-      const stamp = start + (span * index) / 3
-      return {
-        x: x(stamp).toFixed(1),
-        label: clockLabel(stamp),
-        anchor: index === 0 ? 'start' : index === 3 ? 'end' : 'middle'
-      }
-    })
-
-  return {
-    ...chart,
-    series: rendered,
-    hasData,
-    yTicks,
-    xTicks,
-    yMax
-  }
+  return { ...chart, axis: compact, series }
 }
 
 const charts = computed(() => CHARTS.map(buildChart))
 
 async function refresh() {
   if (!props.active || disposed) return
-  if (inFlight) {
-    queued = true
-    return
-  }
+  if (inFlight) return
   inFlight = true
   loading.value = true
   const end = Math.floor(Date.now() / 1000)
@@ -343,12 +236,20 @@ async function refresh() {
   for (const chart of CHARTS) {
     for (const series of chart.series) {
       const key = `${chart.id}:${series.key}`
+      const factor = series.factor || 1
       jobs.push(
         queryPromRange(series.expr, start, end, `${STEP_SECONDS}s`)
           .then((result) => {
             results[key] = series.split
-              ? { series: splitSeriesPoints(result, series.factor), error: '' }
-              : { points: seriesPoints(result, series.factor), error: '' }
+              ? {
+                series: splitSeriesPoints(result, factor, {
+                  groupBy: series.groupBy,
+                  nameFor: series.nameFor,
+                  dashFor: series.dashFor
+                }),
+                error: ''
+              }
+              : { points: seriesPoints(result, factor), error: '' }
           })
           .catch((err) => {
             results[key] = series.split
@@ -364,10 +265,6 @@ async function refresh() {
     loading.value = false
   }
   inFlight = false
-  if (queued) {
-    queued = false
-    refresh()
-  }
 }
 
 watch(
@@ -381,7 +278,6 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   inFlight = false
-  queued = false
 })
 </script>
 
@@ -397,8 +293,8 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="hint">
-      最近 15 分钟的时间轴：请求 RPS / P95 / 5xx 错误率、k6 VU 与迭代速率、JVM 堆与 GC（每个实例一条线，
-      同色=同一 JVM，实线=堆、虚线=GC）、线程池与连接池。
+      最近 15 分钟：请求 RPS/P95/5xx、k6 VU 与迭代速率、JVM 堆（每实例一条）、
+      GC 次数（每实例 · minor 实线 / major 虚线）、业务线程池与连接池（按实例，实线 active / 虚线排队）。
       单个查询失败只影响对应曲线；没有序列时显示无数据，不显示 0。
     </p>
 
@@ -407,53 +303,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="chart-grid">
-      <div v-for="chart in charts" :key="chart.id" class="chart-box" :data-testid="chart.testid">
-        <div class="chart-head">
-          <strong>{{ chart.title }}</strong>
-          <span class="hint">峰值 {{ chart.axis(chart.yMax) }}</span>
-        </div>
-        <svg v-if="chart.hasData" :viewBox="`0 0 ${SVG_W} ${SVG_H}`" role="img" :aria-label="chart.title">
-          <line
-            v-for="tick in chart.yTicks"
-            :key="`y-${tick.value}`"
-            :x1="PAD_L"
-            :x2="SVG_W - PAD_R"
-            :y1="tick.y"
-            :y2="tick.y"
-            class="chart-gridline"
-          />
-          <text v-for="tick in chart.yTicks" :key="`yl-${tick.value}`" :x="PAD_L - 6" :y="Number(tick.y) + 3" text-anchor="end" class="chart-axis">{{ tick.label }}</text>
-          <text v-for="tick in chart.xTicks" :key="`xl-${tick.x}`" :x="tick.x" :y="SVG_H - 6" :text-anchor="tick.anchor" class="chart-axis">{{ tick.label }}</text>
-          <g v-for="item in chart.series" :key="item.key">
-            <polyline
-              v-if="item.points.length > 1"
-              :points="item.path"
-              fill="none"
-              :stroke="item.color"
-              :stroke-dasharray="item.dash || null"
-              stroke-width="1.5"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
-            <circle
-              v-for="(dot, index) in item.dots"
-              :key="`${item.key}-${index}`"
-              :cx="dot.cx"
-              :cy="dot.cy"
-              r="2"
-              :fill="item.color"
-            >
-              <title>{{ dot.title }}</title>
-            </circle>
-          </g>
-        </svg>
-        <p v-else class="empty chart-empty">无数据</p>
-        <div class="legend-inline">
-          <span v-for="item in chart.series" :key="`legend-${item.key}`">
-            <i class="dot" :style="{ background: item.color }"></i>{{ item.label }}：{{ item.lastText }}
-          </span>
-        </div>
-      </div>
+      <TimelineChart
+        v-for="chart in charts"
+        :key="chart.id"
+        :chart="chart"
+        :window-start="windowStart"
+        :window-end="windowEnd"
+      />
     </div>
   </section>
 </template>
@@ -463,32 +319,5 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 10px;
-}
-
-.chart-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: baseline;
-  margin-bottom: 4px;
-}
-
-.chart-box svg {
-  height: 140px;
-}
-
-.chart-gridline {
-  stroke: rgba(148, 163, 184, 0.18);
-  stroke-width: 1;
-}
-
-.chart-axis {
-  fill: var(--text-muted);
-  font-size: 9px;
-}
-
-.chart-empty {
-  margin: 24px 0;
-  text-align: center;
 }
 </style>

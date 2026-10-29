@@ -52,12 +52,6 @@ function qualityTone(value) {
   return 'q-no-data'
 }
 
-function imbalance(row) {
-  return Number.isFinite(row.sharePercent) && Number.isFinite(row.expectedSharePercent)
-    ? Math.abs(row.sharePercent - row.expectedSharePercent)
-    : null
-}
-
 async function load() {
   if (!props.active || !props.token || !props.runId) return
   if (inFlight) return
@@ -156,14 +150,7 @@ onBeforeUnmount(() => {
           <td>{{ ratio(row.errorRate) }}</td>
           <td>{{ count(row.rejected) }}</td>
           <td>{{ row.weight ?? '无数据' }}</td>
-          <td>
-            {{ pct(row.expectedSharePercent) }}
-            <span
-              v-if="imbalance(row) !== null && imbalance(row) > 5"
-              class="warn-inline"
-              title="实测占比与权重期望相差超过阈值，先排查实例健康再比较 JVM 性能"
-            >偏差</span>
-          </td>
+          <td>{{ pct(row.expectedSharePercent) }}</td>
           <td class="hint">{{ row.configLabel || '未配置' }}</td>
         </tr>
       </tbody>
@@ -184,14 +171,5 @@ onBeforeUnmount(() => {
 
 .traffic-split .row-disabled {
   opacity: 0.55;
-}
-
-.warn-inline {
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgba(230, 180, 90, 0.18);
-  color: #f3d59a;
-  font-size: 0.7rem;
 }
 </style>

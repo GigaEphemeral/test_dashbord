@@ -671,6 +671,7 @@ services:
       LAB_METRICS_TEMPO_DATASOURCE_UID: ${LAB_METRICS_TEMPO_DATASOURCE_UID:-tempo}
       LAB_METRICS_GRAFANA_DASHBOARD_UID: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:-}
       LAB_METRICS_CATALOG_LOCATION: ${LAB_METRICS_CATALOG_LOCATION:-classpath:metrics/catalog.yml}
+      LAB_METRICS_REPORT_KEYS: ${LAB_METRICS_REPORT_KEYS:-http.rps,http.latency.p95,http.failure.ratio,jvm.heap.used,jvm.gc.pause.max,jvm.threads.live,hikari.active,executor.rejected,cache.l1.hit.ratio,cache.l2.keys,business.orders.created,business.stock.oversold,mysql.cluster.probe.up}
       # Stage2 B5-02 traffic split: weights come from the mounted nginx config
       # (read-only below), so editing the upstream block needs no rebuild.
       LAB_TRAFFIC_SPLIT_NGINX_CONF: ${LAB_TRAFFIC_SPLIT_NGINX_CONF:-/etc/javalab/nginx/default.conf}

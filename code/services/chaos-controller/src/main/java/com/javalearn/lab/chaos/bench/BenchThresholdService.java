@@ -39,25 +39,56 @@ public class BenchThresholdService {
     }
 
     public ThresholdReport thresholds(String runId) {
-        BenchReportContent content = executor.report(runId);
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(content.bytes());
-        } catch (IOException e) {
-            throw new BenchUnavailableException("summary report for run '" + runId
-                    + "' is not valid JSON: " + e.getMessage(), e);
-        }
-        JsonNode metrics = root.path("metrics");
-        List<ThresholdResult> thresholds = new ArrayList<>();
-        if (metrics.isObject()) {
-            metrics.fields().forEachRemaining(entry ->
-                    collectThresholds(entry.getKey(), entry.getValue(), thresholds));
-        }
+        JsonNode metrics = read(runId).path("metrics");
+        List<ThresholdResult> thresholds = collect(metrics);
         return new ThresholdReport(runId, true, List.copyOf(thresholds),
                 new MetricsView(
                         duration(metrics.path("http_req_duration")),
                         duration(metrics.path("iteration_duration"))),
                 thresholds.isEmpty() ? "NO_THRESHOLDS" : null);
+    }
+
+    /**
+     * B5-03: the comparison-relevant subset of the same summary (requests,
+     * iterations, VU peak, RPS, failed rate, avg/med/p95/p99 and thresholds).
+     * Missing numbers stay null - a report never invents a 0.
+     */
+    public K6Summary summary(String runId) {
+        JsonNode metrics = read(runId).path("metrics");
+        List<ThresholdResult> thresholds = collect(metrics);
+        JsonNode requests = metrics.path("http_reqs");
+        JsonNode duration = metrics.path("http_req_duration");
+        return new K6Summary(true,
+                number(requests.get("count")), number(metrics.path("iterations").get("count")),
+                number(metrics.path("vus_max").get("value")),
+                number(requests.get("rate")),
+                // k6 1.3 writes Rate metrics as {passes, fails, value}; older
+                // summaries used "rate". Accept both, never invent a number.
+                number(metrics.path("http_req_failed").has("value")
+                        ? metrics.path("http_req_failed").get("value")
+                        : metrics.path("http_req_failed").get("rate")),
+                new DurationSummary(number(duration.get("avg")), number(duration.get("med")),
+                        number(duration.get("p(95)")), number(duration.get("p(99)"))),
+                List.copyOf(thresholds), thresholds.isEmpty() ? "NO_THRESHOLDS" : null);
+    }
+
+    private JsonNode read(String runId) {
+        BenchReportContent content = executor.report(runId);
+        try {
+            return objectMapper.readTree(content.bytes());
+        } catch (IOException e) {
+            throw new BenchUnavailableException("summary report for run '" + runId
+                    + "' is not valid JSON: " + e.getMessage(), e);
+        }
+    }
+
+    private List<ThresholdResult> collect(JsonNode metrics) {
+        List<ThresholdResult> thresholds = new ArrayList<>();
+        if (metrics.isObject()) {
+            metrics.fields().forEachRemaining(entry ->
+                    collectThresholds(entry.getKey(), entry.getValue(), thresholds));
+        }
+        return thresholds;
     }
 
     private static void collectThresholds(String metric, JsonNode metricNode,
@@ -123,6 +154,16 @@ public class BenchThresholdService {
     }
 
     public record DurationStats(Double avg, Double med) {
+    }
+
+    /** B5-03 summary timings in milliseconds; missing quantiles stay null. */
+    public record DurationSummary(Double avg, Double med, Double p95, Double p99) {
+    }
+
+    /** B5-03 report section; {@code available=true} means the summary was read. */
+    public record K6Summary(boolean available, Double requests, Double iterations, Double vusMax,
+                            Double rps, Double failedRate, DurationSummary duration,
+                            List<ThresholdResult> thresholds, String note) {
     }
 
     /**

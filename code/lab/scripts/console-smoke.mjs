@@ -968,10 +968,13 @@ async function main() {
       const logs = ((await page.getByTestId('log-view').textContent()) || '').trim();
       return { ok: logs.length > 20, detail: `${logs.length} chars` };
     });
-    check(
-      'bench: stop-all is available as the global clear action',
-      await page.getByTestId('stop-all').isEnabled(),
-    );
+    // The button is disabled while a previous operation is still settling
+    // (busy), so wait for it instead of sampling isEnabled() once.
+    const stopAllReady = await waitForCondition(async () => {
+      const button = page.getByTestId('stop-all');
+      return { ok: await button.isEnabled(), detail: 'disabled while busy' };
+    }, ACTION_TIMEOUT_MS);
+    check('bench: stop-all is available as the global clear action', stopAllReady.ok, stopAllReady.detail);
     await page.getByTestId('stop-all').click();
     await expectCondition('bench: stop-all summary reports traffic/threads/k6 sub-results', async () => {
       const summary = page.getByTestId('stop-all-summary');
@@ -1278,12 +1281,12 @@ async function main() {
       `quality=${rejectedQuality} value=${rejectedValue}`,
     );
 
-    await expectCondition('observe: the four monitor charts are rendered', async () => {
+    await expectCondition('observe: the six monitor charts are rendered', async () => {
       if ((await page.getByTestId('monitor-timeline').count()) === 0) {
         return { ok: false, detail: 'monitor-timeline missing' };
       }
       const missing = [];
-      for (const id of ['chart-requests', 'chart-k6', 'chart-jvm', 'chart-pool']) {
+      for (const id of ['chart-requests', 'chart-k6', 'chart-jvm', 'chart-gc', 'chart-threads', 'chart-pool']) {
         if ((await page.getByTestId(id).count()) === 0) missing.push(id);
       }
       return { ok: missing.length === 0, detail: missing.join(',') };
@@ -1302,6 +1305,11 @@ async function main() {
       const box = page.getByTestId('chart-jvm');
       const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
       return { ok: text.includes('按实例'), detail: text.slice(0, 80) };
+    });
+    await expectCondition('observe: the GC chart separates minor and major', async () => {
+      const box = page.getByTestId('chart-gc');
+      const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
+      return { ok: text.includes('minor') && text.includes('major'), detail: text.slice(0, 90) };
     });
     await expectCondition('observe: the k6 progress block renders (无数据 is honest without a run)', async () => {
       const block = page.getByTestId('k6-progress');
@@ -1908,6 +1916,24 @@ async function main() {
       };
     }, ACTION_TIMEOUT_MS * 2);
     check('runs: the traffic split panel renders data or an honest empty state', splitPanel.ok, splitPanel.detail);
+
+    // B5-03: the single-run result panel, the JSON export and the clone shortcut
+    // are the manual-comparison workflow; a DRAFT run must still render them
+    // (with honest missing/empty states).
+    const resultPanel = await waitForCondition(async () => {
+      if ((await page.getByTestId('run-result').count()) === 0) {
+        return { ok: false, detail: 'run-result missing' };
+      }
+      const exportBtn = await page.getByTestId('run-export-json').count();
+      const cloneBtn = await page.getByTestId('run-clone').count();
+      const singleNote = await page.getByTestId('run-result-single-note').count();
+      const timelines = await page.getByTestId('run-timelines').count();
+      return {
+        ok: exportBtn === 1 && cloneBtn === 1 && singleNote === 1 && timelines === 1,
+        detail: `export=${exportBtn} clone=${cloneBtn} note=${singleNote} timelines=${timelines}`,
+      };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: the result panel shows export, clone and the single-run note', resultPanel.ok, resultPanel.detail);
     check(
       'runs: the detail view shows the test name',
       ((await page.getByTestId('run-name').textContent()) || '').trim() === ledgerRunName,

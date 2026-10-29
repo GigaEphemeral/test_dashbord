@@ -143,8 +143,24 @@ public class MetricsService {
     public record RunWindow(Instant from, Instant to) {
     }
 
+    /**
+     * B5-03 report: the run window over the report KPI keys, without writing
+     * {@code lab_metric_window}. An export must not mutate the ledger.
+     */
+    public MetricsQueryView queryRunReadOnly(String runId) {
+        RunRecord run = requireRun(runId);
+        RunWindow resolved = runWindow(run);
+        return execute(Window.of(resolved.from(), resolved.to(), properties), "run", null,
+                DEFAULT_PHASE, resolveDefinitions(properties.getReportKeys()), false);
+    }
+
     private MetricsQueryView execute(Window window, String source, String runId, String phase,
                                      List<MetricDefinition> definitions) {
+        return execute(window, source, runId, phase, definitions, true);
+    }
+
+    private MetricsQueryView execute(Window window, String source, String runId, String phase,
+                                     List<MetricDefinition> definitions, boolean persist) {
         Instant now = clock.instant();
         List<MetricOutcome> outcomes = new ArrayList<>(definitions.size());
         for (MetricDefinition definition : definitions) {
@@ -163,7 +179,7 @@ public class MetricsService {
         MetricQuality overall = overallQuality(outcomes);
         String overallReason = overallReason(overall, outcomes);
         List<String> warnings = new ArrayList<>();
-        if (runId != null) {
+        if (persist && runId != null) {
             persist(runId, phase, window, metrics, warnings);
         }
         return new MetricsQueryView(source, runId, phase,

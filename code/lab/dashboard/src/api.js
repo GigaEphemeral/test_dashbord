@@ -295,6 +295,39 @@ export function fetchRunInstanceStats(token, runId) {
   return getJson(`/lab/runs/${encodeURIComponent(runId)}/instance-stats`, token)
 }
 
+/** B5-03 inline single-run report (run / environment / k6 / instances / kpi). */
+export function fetchRunReport(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}/report`, token)
+}
+
+/** B5-03 JSON export as an attachment (same document as fetchRunReport). */
+export async function downloadRunReport(token, runId) {
+  const response = await fetch(
+    `${API_BASE}/lab/runs/${encodeURIComponent(runId)}/export`,
+    { headers: authHeaders(token) }
+  )
+  if (!response.ok) {
+    throw await toApiError(response)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  let filename = `run-${runId}-report.json`
+  if (match) {
+    try {
+      filename = decodeURIComponent(match[1])
+    } catch {
+      filename = match[1]
+    }
+  }
+  return { blob, filename, bytes: blob.size }
+}
+
+/** B5-03 manual repetition: one new DRAFT cloned from the template run. */
+export function cloneRun(token, runId) {
+  return postJson(`/lab/runs/${encodeURIComponent(runId)}/clone`, token)
+}
+
 /** Realtime aggregation; from/to are required ISO-8601 or epoch values. */
 export function fetchWindowMetrics(token, { from, to, keys, phase } = {}) {
   return getJson(withQuery('/lab/metrics/window', { from, to, keys, phase }), token)

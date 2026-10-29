@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import MetricCards from './MetricCards.vue'
 import RunReconciliation from './RunReconciliation.vue'
+import RunResultPanel from './RunResultPanel.vue'
+import RunTimelines from './RunTimelines.vue'
 import TrafficSplitPanel from './TrafficSplitPanel.vue'
 import {
   archiveRun,
@@ -582,6 +584,11 @@ async function selectRun(runId) {
   await Promise.all([loadPrecheck(runId), loadRunMetrics(runId)])
 }
 
+/** B5-03: a cloned draft becomes the new working run immediately. */
+async function onCloned(runId) {
+  await loadRuns()
+  await selectRun(runId)
+}
 
 async function restoreSelection() {
   await loadStatus()
@@ -1292,6 +1299,20 @@ onBeforeUnmount(() => {
           <span v-if="operation.lastError" class="hint">错误：{{ operation.lastError }}</span>
         </div>
         <p v-if="pendingNote" class="notice" role="status" data-testid="run-operation-pending">{{ pendingNote }}</p>
+
+        <RunResultPanel
+          :token="token"
+          :run-id="selectedRunId"
+          :active="active"
+          @cloned="onCloned"
+        />
+        <RunTimelines
+          :run-id="selectedRunId"
+          :started-at="selectedRun?.startedAt || ''"
+          :ended-at="selectedRun?.endedAt || ''"
+          :active="active"
+          :sync-tick="syncTick"
+        />
 
         <h3>档案字段</h3>
         <dl v-if="selectedRun" class="kv-grid ledger-run-kv" data-testid="run-detail-kv">

@@ -48,6 +48,15 @@ public class MetricsProperties {
     /** Maximum number of catalog keys a single request may ask for. */
     private int maxKeys = 40;
 
+    /**
+     * B5-03 report KPI subset (catalog keys). Kept out of the code so the
+     * exported report can be tuned without a rebuild.
+     */
+    private String reportKeys = "http.rps,http.latency.p95,http.failure.ratio,jvm.heap.used,"
+            + "jvm.gc.pause.max,jvm.threads.live,hikari.active,executor.rejected,"
+            + "cache.l1.hit.ratio,cache.l2.keys,business.orders.created,"
+            + "business.stock.oversold,mysql.cluster.probe.up";
+
     /** Grafana base address used for the deep link (externalized). */
     private String grafanaUrl = "http://localhost:3000";
 
@@ -72,6 +81,7 @@ public class MetricsProperties {
         requireHttpUrl(prometheusUrl, "lab.metrics.prometheus-url", "LAB_METRICS_PROMETHEUS_URL");
         requireHttpUrl(grafanaUrl, "lab.metrics.grafana-url", "LAB_METRICS_GRAFANA_URL");
         requireText(catalogLocation, "lab.metrics.catalog-location", "LAB_METRICS_CATALOG_LOCATION");
+        requireText(reportKeys, "lab.metrics.report-keys", "LAB_METRICS_REPORT_KEYS");
         if (!tempoDatasourceUid.matches("[A-Za-z0-9_-]{1,128}")) {
             throw new IllegalStateException("lab.metrics.tempo-datasource-uid must match "
                     + "[A-Za-z0-9_-]{1,128} (was '" + tempoDatasourceUid
@@ -190,6 +200,14 @@ public class MetricsProperties {
 
     public void setMaxKeys(int maxKeys) {
         this.maxKeys = maxKeys;
+    }
+
+    public String getReportKeys() {
+        return reportKeys;
+    }
+
+    public void setReportKeys(String reportKeys) {
+        this.reportKeys = reportKeys;
     }
 
     public String getGrafanaUrl() {

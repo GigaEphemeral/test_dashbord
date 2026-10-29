@@ -76,6 +76,13 @@
 > A17 真机通过（run-20261029-005：app-2 52.3% / app-3 47.7% / app-1 0%（停机 warning），
 > 阈值端点 4 条全 FAIL 与 summary 一致）。交接 `step-S2-B5-02-instance-split.md`。
 
+> **B5-03 基线（2026-10-29，改定为单次统计与导出）**：`GET …/report`、`GET …/export`、`POST …/clone` 落地；
+> 监控页 6 张时间线（JVM/GC 分图、GC minor/major、池按实例），实验记录新增 run 时间线与“本次结果”卡；
+> 新增测试 `RunReportServiceTest` 2/0、`RunReportControllerTest` 4/0、`RunCloneTest` 3/0；控制器全量 **876/0**、
+> console-smoke **153/0**、claims **70**；
+> 真机导出 `run-20261029-005` 报告（36 KB，k6 请求 188,168、错误率 13.4%、P95 404.6ms）。Grafana 默认凭据改 `admin/admin`。
+> 遗留：`lab_run_env` 未在起跑采集，环境段暂用配置台账回退。交接 `step-S2-B5-03-single-run-report.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -462,15 +469,28 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 - 实例分流表与时间轴口径一致；无数据不显示 0；定向模式只命中目标实例，其余≈0。
 - 测试：真机 load run 核对占比与权重一致性；权重不一致时提示分流不均衡。
 - 验收：A17 完整口径。
-> **实现状态（2026-10-29）：代码完成，A17 真机验收待做。** 端点 `GET /lab/runs/{runId}/instance-stats`
+> **实现状态（2026-10-29）：完成，A17 真机通过。** 端点 `GET /lab/runs/{runId}/instance-stats`
 > 返回命中/占比/成功失败/平均/P95/P99/RPS/错误率/拒绝/权重/期望占比/配置组；权重解析自只读挂载的 nginx 配置；
-> nginx stub_status 无 per-peer 计数，面板显式标注不做上游交叉核对。交接 `step-S2-B5-02-instance-split.md`。
+> nginx stub_status 无 per-peer 计数，面板显式标注不做上游交叉核对。真机 `run-20261029-005`：52.3%/47.7%/0%（停机 warning）。
+> 交接 `step-S2-B5-02-instance-split.md`。
 
-### B5-03 重复 N 次实验与统计呈现
+### B5-03 单次实验统计与导出（2026-10-29 用户改定）
 
-- 开发：同一方案 N 次 run 编排；报告展示每次结果、中位数、离散程度；单次 run 标"演示性结果，未重复验证"。
-- 测试：load 场景 ×3 出中位数。
-- 验收：A32。
+- **决策**：不做重复组编排。人工多次执行，每次结果完整统计并导出 JSON，事后人工比较。
+- 开发：
+  - `GET /lab/runs/{runId}/report`（内联）与 `GET …/export`（JSON 附件），内容含 run 身份、环境身份、
+    k6 summary（请求/迭代/VU/RPS/错误率/avg·med·P95·P99/阈值）、B5-02 分流、13 项 KPI 窗口、质量与缺失项；
+  - `POST /lab/runs/{runId}/clone`：原样复制 params/config/nodes/故障时间线为新 DRAFT，便于手动再跑；
+  - 导出走只读指标查询，不写 `lab_metric_window`；单次结果固定标注“演示性数据，未重复验证”。
+- 配套图表（同批）：
+  - 实时监控：JVM 堆与 GC 分图；GC 按实例 × minor/major 分线；线程池/连接池按实例拆分；
+  - 实验记录 run 详情：k6 压力、JVM 堆、GC 次数（按实例×类型）按 run 起止窗口展示。
+- 测试：报告/clone 单测与控制器测试；真机导出 `run-20261029-005` 报告并核对。
+- 验收：A32（改为“单次结果可导出且字段完整”）。
+
+> **实现状态（2026-10-29）：代码完成，真机导出通过。** `RunReportService` 复用台账/summary/B5-02/KPI
+> 只读查询；`lab_run_env` 尚未在起跑时采集，环境段暂以 `lab_instance_config` 回退并在 missing 中显式标注。
+> 交接 `step-S2-B5-03-single-run-report.md`；设计 `b5-03-单次统计与导出.md`。
 
 ### B5-04 缺口补采与降级标注
 
@@ -548,7 +568,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 15 | 未启用节点（2026-10-29） | 配置行置灰 + 下拉框排除；拓扑/实例表/实例卡显示“未启用” | B3-00/B4-04 |
 | 16 | mysql-3 修复（2026-10-29） | 允许重建 mysql-3 数据以恢复 InnoDB Cluster（只影响该节点，clone 自 mysql-1） | B5-00 |
 | 17 | 稳定期门禁（2026-10-29） | 稳定期内正式 run **BLOCK**；探索/草稿不影响；预检查展示 `instances.stable` | B5-00 |
-| 18 | jdk-matrix（2026-10-29） | 方案 A：B5-03 增加 d7 模板，JDK21/JDK8 各 1 次，仅模板内可选，不放开通用 UI | B5-03 |
+| 18 | jdk-matrix（2026-10-29） | **移入 Future**：B5-03 改为单次统计与导出后，JDK21/JDK8 对比由人工分别执行并用导出 JSON 比较；模板化矩阵不做 | Future |
 | 19 | B5-04 范围（2026-10-29） | 优先补 Tomcat/容器网络/k6 summary/heap dump/JVM 参数回读；其余明确 UNWIRED/DEGRADED | B5-04 |
 
 三项遗留待确认已全部在 2026-10-28 确认，无遗留项。
@@ -572,6 +592,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v2.4：B5-03 改定为“单次统计与导出”（不做重复编排）；新增报告/导出/克隆端点、run 时间线、监控图表分图与 GC 类型；Grafana 默认 admin/admin；A32 与 §9 #18 同步 |
 | 2026-10-29 | v2.3：B5-01b/c 热度 UI + A16 完成；用户反馈 5 项修复（JVM 多曲线/悬浮刷新/全宽/Tempo 链接/Prometheus 失稳）；B5-04b 控制器侧完成；B5-02 分流端点与面板落地 |
 | 2026-10-29 | v2.2：B5-01a 拓扑契约 + B5-04a 缺口分级完成；§0 记录 Wave 1 基线 |
 | 2026-10-29 | v2.1：新增并完成 **B5-00 前置门禁**（mysql-3 clone 复组、稳定期 BLOCK、冒烟 145）；§9 追加 4 项 B5 确认 |

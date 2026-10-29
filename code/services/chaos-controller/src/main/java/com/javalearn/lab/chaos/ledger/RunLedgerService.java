@@ -129,6 +129,66 @@ public class RunLedgerService {
                 + (lastCollision == null ? "none" : lastCollision.getMostSpecificCause().getMessage()));
     }
 
+    /**
+     * B5-03: manual repetition convenience. One new DRAFT with the template's
+     * params/config/nodes/fault timeline. A live template is refused so two
+     * runs never share an in-flight configuration by accident.
+     */
+    public RunCreateView clone(String runId) {
+        requireReady();
+        RunRecord run;
+        try {
+            run = repository.findRun(runId)
+                    .orElseThrow(() -> new LedgerRunNotFoundException("run not found: " + runId));
+        } catch (DataAccessException e) {
+            throw unavailable(e);
+        }
+        if (run.status() != RunStatus.DRAFT && !run.status().isTerminal()) {
+            throw new LedgerConflictException("run '" + runId + "' is " + run.status()
+                    + "; clone it after the run closes");
+        }
+        Map<String, String> groups = new java.util.LinkedHashMap<>();
+        repository.findParams(runId).forEach(row -> groups.put(row.groupName(), row.payloadJson()));
+        return create(cloneRequest(run, groups, objectMapper));
+    }
+
+    /** B5-03: the template fields a manual repetition must keep byte-for-byte. */
+    static RunCreateRequest cloneRequest(RunRecord run, Map<String, String> groups,
+                                         ObjectMapper objectMapper) {
+        String copyName = run.name() == null ? null
+                : (run.name().length() <= NAME_MAX_LENGTH - 7 ? run.name()
+                        : run.name().substring(0, NAME_MAX_LENGTH - 7)) + " (copy)";
+        return new RunCreateRequest(run.scenario(), objectMap(groups.get("request"), objectMapper),
+                copyName, run.nodeList(), objectMap(groups.get("config"), objectMapper),
+                objectList(groups.get("faultSchedule"), objectMapper));
+    }
+
+    private static Map<String, Object> objectMap(String json, ObjectMapper objectMapper) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw new InvalidLedgerRequestException("stored run params are not valid JSON: "
+                    + e.getMessage());
+        }
+    }
+
+    private static List<Map<String, Object>> objectList(String json, ObjectMapper objectMapper) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw new InvalidLedgerRequestException("stored fault timeline is not valid JSON: "
+                    + e.getMessage());
+        }
+    }
+
     public RunPageView list(String scenario, String status, Integer limit, Integer offset) {
         return list(scenario, status, limit, offset, false);
     }
