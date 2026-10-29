@@ -62,6 +62,9 @@ public class InstanceConfigProperties {
     private int gcLogMaxLines = 2000;
     private int gcLogMaxBytes = 262144;
     private int gcLogTailTimeoutSeconds = 5;
+    /** B4-04: the JDK 8 shell instance and its Prometheus job (LIMITED). */
+    private String jdk8Instance = "seckill-app-jdk8";
+    private String jdk8PrometheusJob = "seckill-app-jdk8";
 
     // ------------------------------------------------------- B4-02 rebuild
 
@@ -297,6 +300,22 @@ public class InstanceConfigProperties {
 
     public void setImageTags(List<String> imageTags) {
         this.imageTags = imageTags;
+    }
+
+    public String getJdk8Instance() {
+        return jdk8Instance;
+    }
+
+    public void setJdk8Instance(String jdk8Instance) {
+        this.jdk8Instance = jdk8Instance;
+    }
+
+    public String getJdk8PrometheusJob() {
+        return jdk8PrometheusJob;
+    }
+
+    public void setJdk8PrometheusJob(String jdk8PrometheusJob) {
+        this.jdk8PrometheusJob = jdk8PrometheusJob;
     }
 
     public int getGcLogDefaultLines() {

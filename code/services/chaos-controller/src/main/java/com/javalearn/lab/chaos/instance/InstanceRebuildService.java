@@ -624,7 +624,9 @@ public class InstanceRebuildService {
                                  long applyDeadline) {
         andThen(checks, "prometheus-up", () -> {
             requireBudget(applyDeadline, "prometheus-up");
-            String query = "up{job=\"seckill-app\",instance=\"" + instance + ":8080\"}";
+            String job = properties.getJdk8Instance().equals(instance)
+                    ? properties.getJdk8PrometheusJob() : "seckill-app";
+            String query = "up{job=\"" + job + "\",instance=\"" + instance + ":8080\"}";
             long waitNanos = Math.min(
                     System.nanoTime() + TimeUnit.SECONDS.toNanos(
                             properties.getPrometheusUpWaitSeconds()),

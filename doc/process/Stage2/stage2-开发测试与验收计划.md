@@ -55,6 +55,10 @@
 > **B4-03 基线（2026-10-29）**：chaos 定向 **20/0**（logs 5 + controller 2 + validator 13）；真机 GC 日志生成/回读/回滚保留；
 > `LAB_INSTANCE_NAMES` 增加 `seckill-app-jdk8`。交接 `step-S2-B4-03-gc-logs.md`。
 
+> **B4 批次基线（2026-10-29，B4-01..04 收口）**：reactor **1414**（chaos 819、app 509、jdk8 59、core 13、platform 14）；console-smoke **126/0**（探针 0 的 BLOCKED 分支；
+> 探针恢复应为 145）；verify **109/1**、smoke 7/7、claims **58**。真机：apply/rollback（app-1 384/512 与池切换、
+> 失败自动恢复 2 次）、JDK8 APPLIED + GC 轮转回读、UI apply/rollback。收口 `step-S2-B4-00-closure.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -338,6 +342,10 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 
 ## 5. B4 · 实例 JVM/GC/线程池配置闭环
 
+> **收口状态（2026-10-29）：已收口。** B4-01..04 全部实现并真机验证（schema/预算/草稿 → 受控重建/回滚/稳定期 →
+> GC 日志 → 实例页/JDK8）；真机 apply/rollback 全 PASS、JDK8 LIMITED 通过。收口文档 `step-S2-B4-00-closure.md`，
+> 交接 `step-S2-B4-01..04`。遗留：mysql-3 掉组导致探针 0、稳定期未硬门禁、jdk-matrix 未自动化（B5/记录）。
+
 **收口标准**：配置应用后证明实际运行镜像与有效参数正确；失败自动回滚；重建后流量恢复并经过稳定期。
 
 ### B4-01 实例配置 schema 与白名单校验
@@ -393,6 +401,11 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 - 测试：console-smoke 增加实例页断言（含 jdk8 列的 LIMITED-OBSERVABILITY 状态呈现）；真机 A08。
 - 验收：jdk-matrix 实验必过项 = 8 号壳镜像选择 + 参数配置 + 重启生效 + GC 日志回读；
   三实例源码版本一致且报告可见 commit + tag/imageId。
+> **实现状态（2026-10-29）：已完成代码与真机验证。** 实例页“配置组”标签：状态徽标、目标 argv vs 容器实际、
+> 镜像/预算/警告/稳定期、校验/仅保存/应用并重启/回滚（确认弹窗 + 10 项检查）、GC 日志查看（OK/DISABLED/NO_DATA）；
+> app-1/2/3 拒绝 jdk8 镜像，`seckill-app-jdk8` 以 LIMITED-OBSERVABILITY 走同一重建流程（pool SKIPPED、
+> Prometheus job `seckill-app-jdk8`、GC 轮转文件回读）。真机 UI apply→ROLLED_BACK、jdk8 apply APPLIED。
+> 交接 `step-S2-B4-04-instance-ui.md`。
 
 B4 收口交接：`step-S2-B4-00-closure.md`。
 
@@ -514,6 +527,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v2.0：B4-04 实现并收口——实例配置页/JDK8 LIMITED/GC 日志查看；§5 置收口状态，§0 记录 B4 批次基线 |
 | 2026-10-29 | v1.9：B4-03 实现——GC 日志版本适配/可写路径/回读端点；§0 记录 B4-03 基线 |
 | 2026-10-29 | v1.8：B4-02 实现——受控重建/健康门禁/自动回滚/稳定期/ROLLED_BACK；Nginx 超时放宽；§0 记录 B4-02 基线 |
 | 2026-10-29 | v1.7：B4-01 实现——app 业务池/Caffeine 启动参数、控制器实例配置 schema/预算/草稿存储/回读；§0 记录 B4-01 基线 |

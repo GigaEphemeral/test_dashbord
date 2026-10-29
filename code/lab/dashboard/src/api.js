@@ -504,3 +504,92 @@ export function resetCacheExperiment(token, instance, { includeBusiness = false 
 export function runCachePreheat(token, instance) {
   return postJson(`${cacheBase(instance)}/preheat`, token)
 }
+
+// ---------------------------------------------------------- instance config
+// B4-01/02/03: per-instance JVM configuration, controlled rebuild and GC-log
+// readback. Apply/rollback block inside the controller for up to ~240s, so they
+// use an explicit 300s fetch budget instead of the default (unbounded) helpers;
+// Nginx cuts the request at 300s.
+const INSTANCE_APPLY_TIMEOUT_MS = 300000
+
+function instanceBase(instance) {
+  return `/lab/instances/${encodeURIComponent(instance)}`
+}
+
+async function putJson(path, token, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: {
+      ...authHeaders(token),
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  return readJson(response)
+}
+
+/** POST with an explicit wall-clock budget; a timeout is a normal ApiError. */
+async function postJsonWithBudget(path, token, body, timeoutMs) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller?.signal
+    })
+    return await readJson(response)
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new ApiError(
+        `请求超过 ${Math.round(timeoutMs / 1000)}s 未返回：容器重建可能仍在进行，请稍后刷新配置状态再决定是否重试。`,
+        0,
+        'TIMEOUT'
+      )
+    }
+    throw err
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Stored draft + generated argv + persisted status/revision. */
+export function fetchInstanceConfig(token, instance) {
+  return getJson(`${instanceBase(instance)}/config`, token)
+}
+
+/** Dry-run validation; nothing is stored. */
+export function validateInstanceConfig(token, instance, config) {
+  return postJson(`${instanceBase(instance)}/config/validate`, token, config)
+}
+
+/** "仅保存": validated DRAFT, the JVM keeps running. */
+export function saveInstanceConfig(token, instance, config) {
+  return putJson(`${instanceBase(instance)}/config`, token, config)
+}
+
+/** Controlled rebuild with the stored config (~40-120s, budget 300s). */
+export function applyInstanceConfig(token, instance) {
+  return postJsonWithBudget(`${instanceBase(instance)}/apply`, token, undefined, INSTANCE_APPLY_TIMEOUT_MS)
+}
+
+/** Controlled rebuild with the previous config (~40-120s, budget 300s). */
+export function rollbackInstanceConfig(token, instance) {
+  return postJsonWithBudget(`${instanceBase(instance)}/rollback`, token, undefined, INSTANCE_APPLY_TIMEOUT_MS)
+}
+
+/** Running-container readback: image identity, JAVA_TOOL_OPTIONS, readback class. */
+export function fetchInstanceEffective(token, instance) {
+  return getJson(`${instanceBase(instance)}/effective`, token)
+}
+
+/** Bounded GC-log tail; status is OK/DISABLED/NO_CONFIG/NO_DATA/ERROR. */
+export function fetchInstanceGcLog(token, instance, lines = 200) {
+  return getJson(withQuery(`${instanceBase(instance)}/logs/gc`, { lines }), token)
+}

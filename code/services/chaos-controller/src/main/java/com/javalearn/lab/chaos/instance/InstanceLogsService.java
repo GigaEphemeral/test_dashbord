@@ -95,10 +95,23 @@ public class InstanceLogsService {
         }
         String container = properties.containerName(instance);
         ExecResult result;
+        String readPath = normalized;
         try {
-            result = gateway.execInContainer(container,
-                    List.of("tail", "-n", String.valueOf(lines), normalized),
-                    List.of(), null, properties.getGcLogTailTimeoutSeconds());
+            result = tail(gateway, container, normalized, lines);
+            if (!result.succeeded()) {
+                // JDK 8 -XX:+UseGCLogFileRotation writes <path>.0.current (and
+                // .1.current, ...) instead of the plain file; try the bounded
+                // rotation candidates before declaring NO_DATA.
+                int count = Math.max(1, Math.min(20, config.path("gcLogFileCount").asInt(10)));
+                for (int i = 0; i < count && !result.succeeded(); i++) {
+                    String candidate = normalized + "." + i + ".current";
+                    ExecResult next = tail(gateway, container, candidate, lines);
+                    if (next.succeeded()) {
+                        result = next;
+                        readPath = candidate;
+                    }
+                }
+            }
         } catch (RuntimeException e) {
             return new InstanceLogsView(instance, NO_DATA, normalized, lines, false, null,
                     "cannot read " + normalized + " from " + container + ": " + e.getMessage());
@@ -110,7 +123,7 @@ public class InstanceLogsService {
         }
         String text = result.stdout() == null ? "" : result.stdout();
         if (text.isBlank()) {
-            return new InstanceLogsView(instance, NO_DATA, normalized, lines, false, null,
+            return new InstanceLogsView(instance, NO_DATA, readPath, lines, false, null,
                     "log file exists but is empty (GC may not have run yet)");
         }
         int max = properties.getGcLogMaxBytes();
@@ -120,7 +133,14 @@ public class InstanceLogsService {
             int keep = Math.min(text.length(), max);
             text = text.substring(text.length() - keep);
         }
-        return new InstanceLogsView(instance, OK, normalized, lines, truncated, text, null);
+        return new InstanceLogsView(instance, OK, readPath, lines, truncated, text, null);
+    }
+
+    private static ExecResult tail(ContainerGateway gateway, String container, String path,
+                                   int lines) {
+        return gateway.execInContainer(container,
+                List.of("tail", "-n", String.valueOf(lines), path),
+                List.of(), null, 5);
     }
 
     private static String truncate(String value, int max) {

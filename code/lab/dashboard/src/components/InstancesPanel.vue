@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import InstanceConfigGroup from './InstanceConfigGroup.vue'
 import InstancesView from './InstancesView.vue'
 import ThreadLab from './ThreadLab.vue'
 import { describeError, fetchRuns, fetchWindowMetrics } from '../api'
@@ -170,6 +171,14 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="nav-btn"
+        :class="{ active: tab === 'config' }"
+        data-testid="instances-tab-config"
+        :aria-current="tab === 'config' ? 'page' : undefined"
+        @click="selectTab('config')"
+      >配置组</button>
+      <button
+        type="button"
+        class="nav-btn"
         :class="{ active: tab === 'thread' }"
         data-testid="instances-tab-thread"
         :aria-current="tab === 'thread' ? 'page' : undefined"
@@ -177,8 +186,14 @@ onBeforeUnmount(() => {
       >线程实验室</button>
     </nav>
 
+    <InstanceConfigGroup
+      v-if="tab === 'config'"
+      :token="token"
+      :active="active && tab === 'config'"
+      :containers="containers"
+    />
     <InstancesView
-      v-if="tab === 'cards'"
+      v-else-if="tab === 'cards'"
       :containers="containers"
       :faults="faults"
       :metrics="instanceMetrics"

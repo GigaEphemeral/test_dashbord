@@ -1088,6 +1088,128 @@ async function main() {
       };
     });
 
+    // ------------------------------------------------- instances: config tab
+    // Read-only checks: validate is a dry run and save/apply/rollback are never
+    // clicked here. The jdk8 shell is either an editor (running) or a greyed
+    // "not running" row; both must be honest about limited observability.
+    await page.getByTestId('instances-tab-config').click();
+    await expectCondition('instances: config tab renders one editor per app instance', async () => {
+      if ((await page.getByTestId('instances-config-page').count()) === 0) {
+        return { ok: false, detail: 'config page not rendered' };
+      }
+      const missing = [];
+      for (const name of ['app-1', 'app-2', 'app-3']) {
+        if ((await page.getByTestId(`instance-config-editor-${name}`).count()) === 0) {
+          missing.push(name);
+        }
+      }
+      return { ok: missing.length === 0, detail: missing.length ? `missing ${missing.join(',')}` : '3 editors' };
+    });
+
+    await expectCondition('instances: config shows status, target/effective args, budget and readback', async () => {
+      const status = ((await page.getByTestId('instance-config-status-app-1').textContent()) || '').trim();
+      const target = ((await page.getByTestId('instance-config-target-args-app-1').textContent()) || '').trim();
+      const live = ((await page.getByTestId('instance-config-effective-args-app-1').textContent()) || '').trim();
+      const readback = ((await page.getByTestId('instance-config-readback-app-1').textContent()) || '').trim();
+      const budget = ((await page.getByTestId('instance-config-budget-app-1').textContent()) || '').trim();
+      const ok = /^(DRAFT|PENDING_RESTART|APPLYING|APPLIED|ROLLED_BACK|FAILED|DEGRADED|NOT_CONFIGURED)\b/.test(status)
+        && target.length > 0
+        && live.length > 0
+        && ['已回读', '未验证'].includes(readback)
+        && /\d+ \/ \d+ MB/.test(budget);
+      return { ok, detail: `status=${status}; target=${target}; live=${live}; readback=${readback}; budget=${budget}` };
+    });
+
+    // Fill the safe baseline on an unconfigured instance and dry-run it: no
+    // save is issued, so the stored row and the APPLIED/ROLLED_BACK state stay
+    // untouched. Wait for the editor's first GET before looking for the button.
+    await waitForCondition(async () => {
+      const status = ((await page.getByTestId('instance-config-status-app-2').textContent()) || '').trim();
+      return { ok: Boolean(status) && !status.startsWith('LOADING'), detail: status };
+    });
+    const baselineButton = page.getByTestId('instance-config-baseline-app-2');
+    if ((await baselineButton.count()) > 0) {
+      await baselineButton.click();
+    }
+    await page.getByTestId('instance-config-validate-app-2').click();
+    await expectCondition('instances: validate returns valid plus the generated argv preview', async () => {
+      const block = page.getByTestId('instance-config-validation-app-2');
+      if ((await block.count()) === 0) {
+        return { ok: false, detail: 'validation block not rendered' };
+      }
+      const text = ((await block.textContent()) || '').trim();
+      const argv = ((await page.getByTestId('instance-config-argv-app-2').textContent()) || '').trim();
+      return {
+        ok: text.includes('校验通过') && argv.includes('-Xmx') && argv.includes('-XX:+UseG1GC'),
+        detail: `${text} | ${argv}`,
+      };
+    });
+
+    const configPayload = unwrap(await apiRequest('/lab/instances/app-1/config'));
+    const effectivePayload = unwrap(await apiRequest('/lab/instances/app-1/effective'));
+    check(
+      'instances: GET /config exposes status and GET /effective a readback class',
+      Boolean(configPayload?.status)
+        && Array.isArray(configPayload?.jvmArgs)
+        && ['OK', 'UNAVAILABLE', 'READBACK_UNAVAILABLE'].includes(effectivePayload?.readback),
+      `status=${configPayload?.status}; readback=${effectivePayload?.readback}; image=${effectivePayload?.imageTag}`,
+    );
+
+    await page.getByTestId('instance-gc-log-toggle-app-1').click();
+    await expectCondition('instances: GC log read returns a documented state without invented lines', async () => {
+      const stateLoc = page.getByTestId('instance-gc-log-state-app-1');
+      if ((await stateLoc.count()) === 0) {
+        return { ok: false, detail: 'gc-log state not rendered' };
+      }
+      const state = ((await stateLoc.textContent()) || '').trim();
+      const documented = /^(OK|DISABLED|NO_DATA|NO_CONFIG)\b/.test(state);
+      const contentCount = await page.getByTestId('instance-gc-log-content-app-1').count();
+      if (!documented) {
+        return { ok: false, detail: `state=${state}` };
+      }
+      if (state.startsWith('OK')) {
+        const content = contentCount
+          ? ((await page.getByTestId('instance-gc-log-content-app-1').textContent()) || '').trim()
+          : '';
+        return { ok: content.length > 0, detail: `state=${state}; bytes=${content.length}` };
+      }
+      return { ok: contentCount === 0, detail: `state=${state}; content nodes=${contentCount}` };
+    });
+
+    const jdk8Row = page.getByTestId('instance-config-jdk8-unavailable');
+    const jdk8Editor = page.getByTestId('instance-config-editor-seckill-app-jdk8');
+    let jdk8 = { ok: false, detail: 'neither greyed row nor editor rendered' };
+    if ((await jdk8Row.count()) > 0) {
+      const text = ((await jdk8Row.textContent()) || '').trim();
+      const applyCount = await page.getByTestId('instance-config-apply-seckill-app-jdk8').count();
+      jdk8 = {
+        ok: text.includes('容器未运行（dual-jdk profile）') && text.includes('LIMITED-OBSERVABILITY') && applyCount === 0,
+        detail: `row; apply buttons=${applyCount}`,
+      };
+    } else if ((await jdk8Editor.count()) > 0) {
+      const badge = ((await page.getByTestId('instance-config-observability-seckill-app-jdk8').textContent()) || '').trim();
+      const applyDisabled = await page.getByTestId('instance-config-apply-seckill-app-jdk8').isDisabled();
+      jdk8 = { ok: badge.includes('LIMITED-OBSERVABILITY') && applyDisabled, detail: `editor; badge=${badge}` };
+    }
+    check('instances: jdk8 shell is LIMITED-OBSERVABILITY or an explicit not-running row', jdk8.ok, jdk8.detail);
+
+    await page.getByTestId('instance-config-image-select-app-1').selectOption('jdk8');
+    await expectCondition('instances: app instances reject the jdk8 image in the UI', async () => {
+      const hint = page.getByTestId('instance-config-jdk8-hint-app-1');
+      if ((await hint.count()) === 0) {
+        return { ok: false, detail: 'jdk8 hint not rendered' };
+      }
+      const text = ((await hint.textContent()) || '').trim();
+      const applyDisabled = await page.getByTestId('instance-config-apply-app-1').isDisabled();
+      const validateDisabled = await page.getByTestId('instance-config-validate-app-1').isDisabled();
+      return {
+        ok: text.includes('JDK8 是独立外壳实例') && applyDisabled && validateDisabled,
+        detail: `${text}; applyDisabled=${applyDisabled}; validateDisabled=${validateDisabled}`,
+      };
+    });
+    // Restore the local form only; nothing was saved.
+    await page.getByTestId('instance-config-image-select-app-1').selectOption('jdk21');
+
     // --------------------------------------------------------------- observe
     // The old 故障与缓存实验 page is now three tabs inside 实时监控与操作.
     await gotoSection(page, 'observe');
@@ -1884,8 +2006,12 @@ async function main() {
     // ------------------------------------------------------ report compare
     const compareA = page.getByTestId(`run-compare-toggle-${wizardRunId}`);
     const compareB = page.getByTestId(`run-compare-toggle-${createdRunId}`);
-    const compareReady = (await compareA.count()) === 1 && (await compareB.count()) === 1;
-    if (compareReady && wizardRunId) {
+    const compareReady = await waitForCondition(async () => {
+      const a = await compareA.count();
+      const b = await compareB.count();
+      return { ok: a === 1 && b === 1, detail: `a=${a} b=${b}` };
+    });
+    if (compareReady.ok && wizardRunId) {
       await compareA.check();
       await compareB.check();
       await expectCondition('runs: the compare table lists both selected runs', async () => {
@@ -1903,7 +2029,7 @@ async function main() {
         };
       }, ACTION_TIMEOUT_MS * 2);
     } else {
-      check('runs: the compare table lists both selected runs', false, 'compare toggles not listed');
+      check('runs: the compare table lists both selected runs', false, compareReady.detail);
     }
 
     // --------------------------------------------------- archive / unarchive

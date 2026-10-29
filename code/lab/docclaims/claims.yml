@@ -745,3 +745,29 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b4-instance-ui
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-04-instance-ui.md
+  statement: "B4-04：实例页配置组支持校验/仅保存/应用并重启/回滚、目标 vs 生效、稳定期与 GC 日志查看"
+  verify:
+    kind: shell
+    command: "test -f code/lab/dashboard/src/components/InstanceConfigEditor.vue && test -f code/lab/dashboard/src/components/InstanceGcLogViewer.vue && grep -q instances-tab-config code/lab/dashboard/src/components/InstancesPanel.vue && grep -q applyInstanceConfig code/lab/dashboard/src/api.js"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b4-jdk8-limited
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-04-instance-ui.md
+  statement: "B4-04：seckill-app-jdk8 以 LIMITED-OBSERVABILITY 纳入受控重建（pool SKIPPED、独立 Prometheus job、GC 轮转文件回读）"
+  verify:
+    kind: shell
+    command: "grep -q seckill-app-jdk8 code/services/chaos-controller/src/main/resources/application.yml && grep -q jdk8-prometheus-job code/services/chaos-controller/src/main/resources/application.yml && grep -q 'current' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceLogsService.java && grep -q LIMITED-OBSERVABILITY code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

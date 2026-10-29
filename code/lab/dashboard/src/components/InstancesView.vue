@@ -71,7 +71,7 @@ function healthClass(health) {
     </p>
 
     <div class="notice info" data-testid="instances-b4-note">
-      实例/JVM 配置属 B4：本页只读展示「当前状态 + 配置组库」；完整参数在向导第 3 步编辑。
+      实例/JVM 配置在「配置组」标签页维护（校验 / 仅保存 / 应用并重启 / 回滚）；本页卡片只读。
       未启用节点置灰显示「未启用」，不参与实验。Caffeine 过期/刷新按秒配置，0=不启用；关闭 L1 时清空本地条目并显示「不适用」。
     </div>
 
@@ -176,7 +176,7 @@ function healthClass(health) {
     </p>
     <p class="hint">
       线程卡片里的「线程实验室 →」会把该实例带到线程页（同一实例下拉），不会注入任何故障。
-      完整 JVM/线程池/Caffeine/GC 日志参数在向导第 3 步；本页不提供应用或重启。
+      JVM/线程池/Caffeine/GC 日志参数在「配置组」标签页维护；本页不提供应用或重启。
     </p>
   </section>
 </template>
