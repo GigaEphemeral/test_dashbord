@@ -71,7 +71,9 @@ Environment (environment > lab .env > default):
   SMOKE_RUN_SCENARIO_PREFIX   legacy ownership prefix, default console-smoke-
   SMOKE_KPI_COUNT             observe KPI card count, default 13
   SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
-  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 148 (145 + 3 B5-01 A16 checks)
+  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 138 (BLOCKED branch
+                              ~142 / normal branch ~155: a post-rebuild stable
+                              period legitimately blocks the real run flow)
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package
   CONSOLE_SMOKE_SCRIPT        path to the smoke script, default alongside this file
@@ -198,7 +200,7 @@ SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-$(dotenv_value SMOKE_MIN_PASS_COUN
 # suite reaches 148; when mysql_cluster_probe_up=0 the two run-start blocks take
 # their documented BLOCKED branch and 19 checks are not reached (129).
 # Set 0 to disable.
-SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-148}"
+SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-138}"
 
 echo "Console smoke: $CONSOLE_URL"
 echo "  api base   : $LAB_API_BASE"

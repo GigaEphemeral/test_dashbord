@@ -4,6 +4,7 @@ import AnimationLab from './AnimationLab.vue'
 import CacheLab from './CacheLab.vue'
 import ChaosActions from './ChaosActions.vue'
 import InstanceMetricsTable from './InstanceMetricsTable.vue'
+import JvmParamsPanel from './JvmParamsPanel.vue'
 import K6Progress from './K6Progress.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
 import ObservePanel from './ObservePanel.vue'
@@ -150,6 +151,13 @@ onBeforeUnmount(() => {
       />
 
       <K6Progress :token="token" :active="active" :sync-tick="syncTick" />
+
+      <JvmParamsPanel
+        :token="token"
+        :instances="instancesOf(containers)"
+        :active="active"
+        :sync-tick="syncTick"
+      />
 
       <MonitorTimeline :active="active" :sync-tick="syncTick" />
 

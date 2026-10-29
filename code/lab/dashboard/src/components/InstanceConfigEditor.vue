@@ -6,6 +6,7 @@ import {
   describeError,
   fetchInstanceConfig,
   fetchInstanceEffective,
+  restartInstanceConfig,
   rollbackInstanceConfig,
   saveInstanceConfig,
   validateInstanceConfig
@@ -145,6 +146,8 @@ const busy = ref('')
 const confirmAction = ref('')
 const lastApply = ref(null)
 
+const emit = defineEmits(['changed'])
+
 const rules = computed(() => ({
   jdk8Shell: props.instance === 'seckill-app-jdk8',
   appInstance: /^app-\d+$/.test(props.instance)
@@ -165,7 +168,7 @@ const statusLabel = computed(() => STATUS_LABELS[status.value] || '未知状态'
 const statusText = computed(() => `${status.value} ${statusLabel.value}`)
 const statusTone = computed(() => STATUS_TONES[status.value] || 'muted')
 
-const actionsLocked = computed(() => busy.value === 'apply' || busy.value === 'rollback')
+const actionsLocked = computed(() => busy.value === 'apply' || busy.value === 'rollback' || busy.value === 'restart')
 const canValidate = computed(() => (
   !busy.value && !jdk8Rejected.value && Boolean(String(form.value.jdkVersion || '').trim())
 ))
@@ -179,6 +182,10 @@ const canApply = computed(() => (
 const canRollback = computed(() => (
   !busy.value && !jdk8Rejected.value && Boolean(view.value?.config)
   && status.value !== 'APPLYING'
+))
+/** A restart only makes sense for the config that is already running. */
+const canRestart = computed(() => (
+  !busy.value && !jdk8Rejected.value && status.value === 'APPLIED'
 ))
 
 const targetArgs = computed(() => view.value?.jvmArgs || [])
@@ -252,6 +259,7 @@ const effectiveNotes = computed(() => {
 const progressText = computed(() => {
   if (busy.value === 'apply') return '应用并重启进行中：容器重建约 40–120s，最多等待 240s；期间已禁用全部操作。'
   if (busy.value === 'rollback') return '回滚进行中：容器重建约 40–120s，最多等待 240s；期间已禁用全部操作。'
+  if (busy.value === 'restart') return '重启进行中：以当前已应用配置重建容器，约 40–120s；期间已禁用全部操作。'
   if (busy.value === 'validate') return '校验中…'
   if (busy.value === 'save') return '保存中…'
   return ''
@@ -282,6 +290,10 @@ function toForm(config) {
   const next = blankForm()
   if (!config) return next
   next.jdkVersion = config.jdkVersion == null ? '' : String(config.jdkVersion)
+  // gcCollector is neither a TEXT nor a NUMBER/BOOLEAN field: buildPayload
+  // handles it explicitly. Forgetting it here silently dropped the collector
+  // on every UI save (validate/save produced a config without -XX:+UseG1GC).
+  next.gcCollector = config.gcCollector == null ? '' : String(config.gcCollector)
   for (const key of TEXT_FIELDS) {
     next[key] = config[key] == null ? '' : String(config[key])
   }
@@ -461,6 +473,7 @@ async function runSave() {
     form.value = toForm(view.value?.config)
     validation.value = null
     await loadEffective()
+    emit('changed')
   } catch (err) {
     error.value = `保存失败：${describeError(err)}`
   } finally {
@@ -471,6 +484,7 @@ async function runSave() {
 function ask(action) {
   if (action === 'apply' && !canApply.value) return
   if (action === 'rollback' && !canRollback.value) return
+  if (action === 'restart' && !canRestart.value) return
   confirmAction.value = action
 }
 
@@ -479,6 +493,7 @@ async function confirmActionRun() {
   confirmAction.value = ''
   if (action === 'apply') await runRebuild('apply')
   if (action === 'rollback') await runRebuild('rollback')
+  if (action === 'restart') await runRebuild('restart')
 }
 
 async function runRebuild(action) {
@@ -487,9 +502,12 @@ async function runRebuild(action) {
   validation.value = null
   busy.value = action
   try {
-    const result = action === 'apply'
-      ? await applyInstanceConfig(props.token, props.instance)
-      : await rollbackInstanceConfig(props.token, props.instance)
+    const request = action === 'apply'
+      ? applyInstanceConfig(props.token, props.instance)
+      : action === 'restart'
+        ? restartInstanceConfig(props.token, props.instance)
+        : rollbackInstanceConfig(props.token, props.instance)
+    const result = await request
     try {
       view.value = await fetchInstanceConfig(props.token, props.instance)
       form.value = toForm(view.value?.config)
@@ -500,8 +518,10 @@ async function runRebuild(action) {
     // Publish the result only after the stored status/effective readback is
     // refreshed, so the badge and the apply/rollback result never disagree.
     lastApply.value = result
+    emit('changed')
   } catch (err) {
-    error.value = `${action === 'apply' ? '应用' : '回滚'}失败：${describeError(err)}`
+    const label = action === 'apply' ? '应用' : action === 'restart' ? '重启' : '回滚'
+    error.value = `${label}失败：${describeError(err)}`
   } finally {
     busy.value = ''
   }
@@ -918,8 +938,17 @@ watch(() => props.active, (active) => {
         :data-testid="`instance-config-rollback-${instance}`"
         @click="ask('rollback')"
       >回滚</button>
+      <button
+        type="button"
+        class="btn ghost"
+        :disabled="!canRestart"
+        :title="canRestart ? '以当前已应用（APPLIED）配置重启容器，不改变配置' : '仅在配置已 APPLIED 时可重启；草稿请用「应用并重启」'"
+        :data-testid="`instance-config-restart-${instance}`"
+        @click="ask('restart')"
+      >重启 JVM</button>
       <span v-if="rules.jdk8Shell" class="hint">JDK8 外壳实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
       <span v-else-if="!view?.config" class="hint">先「仅保存」为 DRAFT，才能应用。</span>
+      <span v-else-if="status !== 'APPLIED'" class="hint">「重启 JVM」仅在配置已 APPLIED 时可用；当前为 {{ statusText }}。</span>
     </div>
 
     <div v-if="validation" class="validation" :data-testid="`instance-config-validation-${instance}`">
@@ -964,11 +993,15 @@ watch(() => props.active, (active) => {
 
     <div v-if="confirmAction" class="modal-backdrop" role="dialog" aria-modal="true" :data-testid="`instance-apply-modal-${instance}`">
       <div class="modal-card">
-        <h3>{{ confirmAction === 'apply' ? '应用并重启' : '回滚' }} · {{ instance }}</h3>
+        <h3>{{ confirmAction === 'apply' ? '应用并重启' : confirmAction === 'restart' ? '重启 JVM' : '回滚' }} · {{ instance }}</h3>
         <p>
           将对 <code>jl-{{ instance }}</code> 执行受控重建：停止并重建容器（约 40–120s），
           期间流量可能短暂抖动；健康检查、Nginx 上游、Prometheus up 与镜像核对全部通过后才算完成。
-          {{ confirmAction === 'apply' ? '将使用已保存的配置。' : '将使用上一版配置（previous_config）。' }}
+          {{ confirmAction === 'apply'
+            ? '将使用已保存的配置。'
+            : confirmAction === 'restart'
+              ? '将以当前已应用（APPLIED）的配置重启；草稿修改不会生效。'
+              : '将使用上一版配置（previous_config）。' }}
         </p>
         <div class="rowline">
           <button
@@ -976,7 +1009,7 @@ watch(() => props.active, (active) => {
             class="btn"
             :data-testid="`instance-apply-confirm-${instance}`"
             @click="confirmActionRun"
-          >{{ confirmAction === 'apply' ? '确认应用并重启' : '确认回滚' }}</button>
+          >{{ confirmAction === 'apply' ? '确认应用并重启' : confirmAction === 'restart' ? '确认重启' : '确认回滚' }}</button>
           <button
             type="button"
             class="btn ghost"
@@ -1069,6 +1102,14 @@ watch(() => props.active, (active) => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 10px 12px;
+  margin: 4px -4px 0;
+  border-top: 1px solid var(--panel-border);
+  background: rgba(13, 20, 27, 0.94);
+  backdrop-filter: blur(4px);
 }
 .config-notes {
   margin: 0;

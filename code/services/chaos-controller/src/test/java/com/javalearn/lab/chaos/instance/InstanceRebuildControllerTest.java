@@ -54,6 +54,21 @@ class InstanceRebuildControllerTest {
     }
 
     @Test
+    void restartReturnsTheSameEvidenceWithTheRestartAction() throws Exception {
+        when(service.restart("app-1")).thenReturn(new InstanceApplyView("app-1", "RESTART",
+                "APPLIED", false, "NOT_NEEDED", "jl-app-1", "new-id",
+                "java-learn-lab/seckill-app:jdk21", "sha256:new",
+                "java-learn-lab/seckill-app:jdk21", "sha256:new", "-Xms256m -Xmx384m",
+                List.of(new ApplyCheckView("docker-health", "PASS", 10L, "healthy")),
+                1234L, "2026-10-30T10:01:00Z", null, null, 2));
+
+        mvc.perform(post("/lab/instances/app-1/restart"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.action").value("RESTART"))
+                .andExpect(jsonPath("$.data.status").value("APPLIED"));
+    }
+
+    @Test
     void rollbackReturnsTheRolledBackEvidence() throws Exception {
         when(service.rollback("app-1")).thenReturn(new InstanceApplyView("app-1", "ROLLBACK",
                 "APPLIED", false, "NOT_NEEDED", "jl-app-1", "new-id",

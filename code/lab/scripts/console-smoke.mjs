@@ -812,14 +812,17 @@ async function main() {
           && !wizardNodes.includes('app-3'),
         `name=${wizardRunName} nodes=${wizardNodes}`,
       );
+      const paramFlags = {
+        manual: wizardParams.includes('"recovery": "manual"'),
+        ttlNull: wizardParams.includes('"ttlSeconds": null'),
+        app1: wizardParams.includes('"app-1"'),
+        app2: wizardParams.includes('"app-2"'),
+        app3: wizardParams.includes('app-3'),
+      };
       check(
         'wizard: ledger params keep the manual fault hold and drop the disabled node',
-        wizardParams.includes('"recovery": "manual"')
-          && wizardParams.includes('"ttlSeconds": null')
-          && wizardParams.includes('"app-1"')
-          && wizardParams.includes('"app-2"')
-          && !wizardParams.includes('app-3'),
-        wizardParams.replace(/\s+/g, ' ').slice(0, 200),
+        paramFlags.manual && paramFlags.ttlNull && paramFlags.app1 && paramFlags.app2 && !paramFlags.app3,
+        `${JSON.stringify(paramFlags)} ${wizardParams.replace(/\s+/g, ' ').slice(0, 300)}`,
       );
 
       try {
@@ -1130,6 +1133,14 @@ async function main() {
       const status = ((await page.getByTestId('instance-config-status-app-2').textContent()) || '').trim();
       return { ok: Boolean(status) && !status.startsWith('LOADING'), detail: status };
     });
+    await waitForCondition(async () => {
+      const target = page.getByTestId('instance-config-target-args-app-2');
+      if ((await target.count()) === 0) return { ok: false, detail: 'editor not mounted' };
+      const text = ((await target.textContent()) || '').trim();
+      return { ok: text.length > 0, detail: text.slice(0, 40) };
+    });
+    const storedApp2 = unwrap(await apiRequest('/lab/instances/app-2/config'));
+    const expectG1 = storedApp2?.config?.gcCollector === 'G1';
     const baselineButton = page.getByTestId('instance-config-baseline-app-2');
     if ((await baselineButton.count()) > 0) {
       await baselineButton.click();
@@ -1143,8 +1154,11 @@ async function main() {
       const text = ((await block.textContent()) || '').trim();
       const argv = ((await page.getByTestId('instance-config-argv-app-2').textContent()) || '').trim();
       return {
-        ok: text.includes('校验通过') && argv.includes('-Xmx') && argv.includes('-XX:+UseG1GC'),
-        detail: `${text} | ${argv}`,
+        // A configured instance must validate with its own collector; a blank
+        // baseline (unconfigured) legitimately has no G1 flags.
+        ok: text.includes('校验通过') && argv.includes('-Xmx')
+          && (!expectG1 || argv.includes('-XX:+UseG1GC')),
+        detail: `${text} | ${argv} | expectG1=${expectG1}`,
       };
     });
 
@@ -1156,6 +1170,10 @@ async function main() {
         && Array.isArray(configPayload?.jvmArgs)
         && ['OK', 'UNAVAILABLE', 'READBACK_UNAVAILABLE'].includes(effectivePayload?.readback),
       `status=${configPayload?.status}; readback=${effectivePayload?.readback}; image=${effectivePayload?.imageTag}`,
+    );
+    check(
+      'instances: a manual restart action is offered next to apply/rollback',
+      (await page.getByTestId('instance-config-restart-app-1').count()) === 1,
     );
 
     await page.getByTestId('instance-gc-log-toggle-app-1').click();
@@ -1310,6 +1328,13 @@ async function main() {
       const box = page.getByTestId('chart-gc');
       const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
       return { ok: text.includes('minor') && text.includes('major'), detail: text.slice(0, 90) };
+    });
+    await expectCondition('observe: the JVM parameter table lists every app instance', async () => {
+      if ((await page.getByTestId('jvm-params').count()) === 0) {
+        return { ok: false, detail: 'jvm-params missing' };
+      }
+      const rows = await page.locator('[data-testid^="jvm-params-row-"]').count();
+      return { ok: rows === 3, detail: `rows=${rows}` };
     });
     await expectCondition('observe: the k6 progress block renders (无数据 is honest without a run)', async () => {
       const block = page.getByTestId('k6-progress');

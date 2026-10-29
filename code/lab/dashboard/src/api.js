@@ -642,6 +642,11 @@ export function rollbackInstanceConfig(token, instance) {
   return postJsonWithBudget(`${instanceBase(instance)}/rollback`, token, undefined, INSTANCE_APPLY_TIMEOUT_MS)
 }
 
+/** Manual controlled restart with the already APPLIED config (~40-120s). */
+export function restartInstanceConfig(token, instance) {
+  return postJsonWithBudget(`${instanceBase(instance)}/restart`, token, undefined, INSTANCE_APPLY_TIMEOUT_MS)
+}
+
 /** Running-container readback: image identity, JAVA_TOOL_OPTIONS, readback class. */
 export function fetchInstanceEffective(token, instance) {
   return getJson(`${instanceBase(instance)}/effective`, token)

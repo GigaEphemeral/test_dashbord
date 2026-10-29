@@ -360,6 +360,35 @@ class InstanceRebuildServiceTest {
                 null, null);
     }
 
+    private void storeStatus(String configJson, InstanceConfigStatus status) {
+        repository.row = new StoredInstanceConfig("app-1", configJson, null, status, 1, NOW,
+                NOW, null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void restartRebuildsWithTheAppliedConfig() {
+        storeStatus(TARGET_JSON, InstanceConfigStatus.APPLIED);
+
+        InstanceViews.InstanceApplyView view = service.restart("app-1");
+
+        assertThat(view.action()).isEqualTo("RESTART");
+        assertThat(view.status()).isEqualTo(InstanceRebuildService.STATUS_APPLIED);
+        assertThat(view.imageId()).isEqualTo("sha256:new");
+        assertThat(view.rolledBack()).isFalse();
+        assertThat(repository.row.status()).isEqualTo(InstanceConfigStatus.APPLIED);
+        assertThat(gateway.calls).isNotEmpty();
+    }
+
+    @Test
+    void restartWithoutAppliedConfigIs409() {
+        store(TARGET_JSON, null, 1);
+
+        assertThatThrownBy(() -> service.restart("app-1"))
+                .isInstanceOf(InstanceRebuildConflictException.class)
+                .hasMessageContaining("APPLIED");
+        assertThat(gateway.calls).isEmpty();
+    }
+
     private static com.fasterxml.jackson.databind.JsonNode json(String value) {
         try {
             return MAPPER.readTree(value);

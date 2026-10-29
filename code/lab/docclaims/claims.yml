@@ -923,3 +923,51 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b4-config-restart
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "B4：POST /lab/instances/{instance}/restart 仅在配置 APPLIED 时以当前配置受控重启，复用 10 项健康门禁；实例页提供「重启 JVM」按钮"
+  verify:
+    kind: shell
+    command: "grep -q '/lab/instances/{instance}/restart' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildController.java && grep -q 'restart needs an APPLIED config' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildService.java && grep -q 'instance-config-restart-' code/lab/dashboard/src/components/InstanceConfigEditor.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: config-single-source
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "向导第 3 步与「实例与 JVM」页使用同一 lab_instance_config 台账：ConfigGroupEditor 直接嵌入 InstanceConfigEditor，不再维护第二套字段/默认值"
+  verify:
+    kind: shell
+    command: "grep -q 'InstanceConfigEditor' code/lab/dashboard/src/components/ConfigGroupEditor.vue && ! grep -q 'DEFAULTS =' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'wizard-config-row-' code/lab/dashboard/src/components/ConfigGroupEditor.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: monitor-jvm-params
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "实时监控提供 JVM 参数对照表（台账 + 容器回读，含 Xms/Xmx/GC/停顿/Young/IHOP/Region/一致性）"
+  verify:
+    kind: shell
+    command: "test -f code/lab/dashboard/src/components/JvmParamsPanel.vue && grep -q 'jvm-params-table' code/lab/dashboard/src/components/JvmParamsPanel.vue && grep -q 'JvmParamsPanel' code/lab/dashboard/src/components/MonitorPage.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: config-collector-roundtrip
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "实例配置编辑器把 gcCollector 从台账回填到表单；页面保存不再丢失 GC 收集器（校验 argv 含 -XX:+UseG1GC）"
+  verify:
+    kind: shell
+    command: "grep -q 'next.gcCollector = config.gcCollector' code/lab/dashboard/src/components/InstanceConfigEditor.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

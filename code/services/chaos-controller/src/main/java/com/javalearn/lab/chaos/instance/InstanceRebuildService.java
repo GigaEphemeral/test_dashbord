@@ -146,6 +146,16 @@ public class InstanceRebuildService {
         return rebuild(instance, Action.ROLLBACK);
     }
 
+    /**
+     * {@code POST /lab/instances/{instance}/restart}: a manual controlled
+     * restart with the config that is already applied. It refuses unless the
+     * stored status is APPLIED, so a restart can never silently promote an
+     * unsaved/draft config.
+     */
+    public InstanceViews.InstanceApplyView restart(String instance) {
+        return rebuild(instance, Action.RESTART);
+    }
+
     // ------------------------------------------------------------- refusals
 
     private InstanceViews.InstanceApplyView rebuild(String instance, Action action) {
@@ -159,7 +169,18 @@ public class InstanceRebuildService {
             StoredInstanceConfig stored = find(instance).orElseThrow(() ->
                     new InstanceRebuildConflictException("no stored configuration for " + instance
                             + "; PUT /lab/instances/" + instance + "/config first"));
-            String targetJson = action == Action.APPLY ? stored.configJson() : stored.previousConfigJson();
+            String targetJson = switch (action) {
+                case APPLY -> stored.configJson();
+                case ROLLBACK -> stored.previousConfigJson();
+                case RESTART -> {
+                    if (stored.status() != InstanceConfigStatus.APPLIED) {
+                        throw new InstanceRebuildConflictException("restart needs an APPLIED config; "
+                                + instance + " is " + stored.status()
+                                + " (use apply for a saved draft)");
+                    }
+                    yield stored.configJson();
+                }
+            };
             if (targetJson == null) {
                 throw new InstanceRebuildConflictException("no previous configuration for "
                         + instance + "; a rollback needs at least one earlier saved config");
@@ -327,7 +348,7 @@ public class InstanceRebuildService {
             String ledgerError = null;
             int revision = stored.revision();
             try {
-                if (action == Action.APPLY) {
+                if (action != Action.ROLLBACK) {
                     repository.markApplied(instance, imageRef, imageId, snapshot.imageRef(),
                             snapshot.imageId(), now, stableUntil);
                 } else {
@@ -704,8 +725,8 @@ public class InstanceRebuildService {
 
     private List<String> intendedArgs(StoredInstanceConfig stored, Action action) {
         try {
-            InstanceConfig config = parse(stored.instance(), action == Action.APPLY
-                    ? stored.configJson() : stored.previousConfigJson());
+            InstanceConfig config = parse(stored.instance(), action == Action.ROLLBACK
+                    ? stored.previousConfigJson() : stored.configJson());
             return validator.validate(stored.instance(), config).jvmArgs();
         } catch (RuntimeException e) {
             return List.of();
@@ -813,7 +834,7 @@ public class InstanceRebuildService {
     }
 
     private enum Action {
-        APPLY, ROLLBACK
+        APPLY, ROLLBACK, RESTART
     }
 
     /** A named health gate failure; carries the check name for the ledger evidence. */

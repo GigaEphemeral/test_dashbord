@@ -608,6 +608,7 @@ function goStep(index) {
         <h3>变量与配置组</h3>
         <ConfigGroupEditor
           v-model:config="config"
+          :token="token"
           :nodes="selectedNodes"
           :all-nodes="javaNodes"
           :pair-mode="pairMode"

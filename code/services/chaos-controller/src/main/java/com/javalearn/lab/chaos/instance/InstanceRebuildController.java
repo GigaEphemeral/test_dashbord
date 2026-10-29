@@ -41,4 +41,10 @@ public class InstanceRebuildController {
     public Result<InstanceApplyView> rollback(@PathVariable String instance) {
         return Result.success(service.rollback(instance));
     }
+
+    /** Manual controlled restart with the config that is already APPLIED. */
+    @PostMapping("/lab/instances/{instance}/restart")
+    public Result<InstanceApplyView> restart(@PathVariable String instance) {
+        return Result.success(service.restart(instance));
+    }
 }
