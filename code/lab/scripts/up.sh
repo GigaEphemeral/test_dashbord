@@ -352,7 +352,7 @@ echo "  Lab console   : http://127.0.0.1:8080/lab/ (token: LAB_TOKEN in code/lab
 echo "  RabbitMQ mgmt : http://127.0.0.1:15672 (user: ${RABBITMQ_DEFAULT_USER:-lab}, pass: ${RABBITMQ_DEFAULT_PASS:-lab})"
 echo "  MySQL (dev)   : 127.0.0.1:3306 (db: ${MYSQL_DATABASE:-seckill}, user: ${MYSQL_USER:-seckill})"
 echo "  Redis (dev)   : 127.0.0.1:6379"
-echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-labadmin})"
+echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-admin})"
 echo "  Traffic       : jl-traffic is created but stopped; start it from the console or with 'docker start jl-traffic'"
 echo
 echo "Prometheus, Tempo, OTel Collector, cAdvisor and chaos-controller are internal to jl-net."

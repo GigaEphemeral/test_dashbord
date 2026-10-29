@@ -39,14 +39,13 @@ public class InstanceStatsService {
 
     private static final Logger log = LoggerFactory.getLogger(InstanceStatsService.class);
 
-    private static final String APP_JOB = "job=\"seckill-app\"";
-    private static final String BUSINESS = APP_JOB + ",uri!~\"/actuator.*\"";
-
     private final MetricsService metricsService;
     private final PrometheusGateway gateway;
     private final TrafficSplitProperties properties;
     private final InstanceConfigRepository configRepository;
     private final ObjectMapper objectMapper;
+    private final String appJobSelector;
+    private final String businessSelector;
 
     public InstanceStatsService(MetricsService metricsService, PrometheusGateway gateway,
                                 TrafficSplitProperties properties,
@@ -57,6 +56,9 @@ public class InstanceStatsService {
         this.properties = properties;
         this.configRepository = configRepository;
         this.objectMapper = objectMapper;
+        this.appJobSelector = "job=\"" + properties.getAppJob() + "\"";
+        this.businessSelector = appJobSelector + ",uri!~\""
+                + properties.getBusinessUriFilter() + "\"";
     }
 
     public InstanceStatsViews.InstanceStatsView query(String runId) {
@@ -68,34 +70,34 @@ public class InstanceStatsService {
         List<String> queryFailures = new ArrayList<>();
 
         Map<String, Double> hits = queryByInstance(
-                "sum by (instance) (increase(http_server_requests_seconds_count{" + BUSINESS + "}[" + range + "]))",
+                "sum by (instance) (increase(http_server_requests_seconds_count{" + businessSelector + "}[" + range + "]))",
                 to, queryFailures, "命中数");
         Map<String, Double> success = queryByInstance(
-                "sum by (instance) (increase(http_server_requests_seconds_count{" + BUSINESS
+                "sum by (instance) (increase(http_server_requests_seconds_count{" + businessSelector
                         + ",status=~\"2..\"}[" + range + "]))",
                 to, queryFailures, "成功数");
         Map<String, Double> failed = queryByInstance(
-                "sum by (instance) (increase(http_server_requests_seconds_count{" + BUSINESS
+                "sum by (instance) (increase(http_server_requests_seconds_count{" + businessSelector
                         + ",status=~\"5..\"}[" + range + "]))",
                 to, queryFailures, "失败数");
         Map<String, Double> avg = queryByInstance(
-                "sum by (instance) (rate(http_server_requests_seconds_sum{" + BUSINESS + "}[" + range + "]))"
-                        + " / sum by (instance) (rate(http_server_requests_seconds_count{" + BUSINESS
+                "sum by (instance) (rate(http_server_requests_seconds_sum{" + businessSelector + "}[" + range + "]))"
+                        + " / sum by (instance) (rate(http_server_requests_seconds_count{" + businessSelector
                         + "}[" + range + "]))",
                 to, queryFailures, "平均响应");
         Map<String, Double> p95 = queryByInstance(
                 "histogram_quantile(0.95, sum by (instance, le) (rate(http_server_requests_seconds_bucket{"
-                        + BUSINESS + "}[" + range + "])))",
+                        + businessSelector + "}[" + range + "])))",
                 to, queryFailures, "P95");
         Map<String, Double> p99 = queryByInstance(
                 "histogram_quantile(0.99, sum by (instance, le) (rate(http_server_requests_seconds_bucket{"
-                        + BUSINESS + "}[" + range + "])))",
+                        + businessSelector + "}[" + range + "])))",
                 to, queryFailures, "P99");
         Map<String, Double> rps = queryByInstance(
-                "sum by (instance) (rate(http_server_requests_seconds_count{" + BUSINESS + "}[" + range + "]))",
+                "sum by (instance) (rate(http_server_requests_seconds_count{" + businessSelector + "}[" + range + "]))",
                 to, queryFailures, "RPS");
         Map<String, Double> rejected = queryByInstance(
-                "sum by (instance) (increase(executor_rejected_total{" + APP_JOB + "}[" + range + "]))",
+                "sum by (instance) (increase(executor_rejected_total{" + appJobSelector + "}[" + range + "]))",
                 to, queryFailures, "线程池拒绝");
 
         List<String> warnings = new ArrayList<>();
@@ -107,7 +109,8 @@ public class InstanceStatsService {
                 .sum();
 
         UpstreamWeights.Result upstream = UpstreamWeights.read(
-                Path.of(properties.getNginxUpstreamConf()), properties.getUpstreamName());
+                Path.of(properties.getNginxUpstreamConf()), properties.getUpstreamName(),
+                properties.getMaxUpstreamBytes());
         // Expected share is derived from the whole upstream block, not only the
         // displayed rows: nginx keeps routing to every server it lists even
         // when the run's node selection narrows the analysis.

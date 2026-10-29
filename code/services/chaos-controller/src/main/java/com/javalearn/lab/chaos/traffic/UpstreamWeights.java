@@ -25,10 +25,19 @@ public final class UpstreamWeights {
     }
 
     public static Result read(Path path, String upstreamName) {
+        return read(path, upstreamName, Integer.MAX_VALUE);
+    }
+
+    /** Same as {@link #read(Path, String)} with a byte cap (configurable). */
+    public static Result read(Path path, String upstreamName, int maxBytes) {
         if (path == null || !Files.isReadable(path)) {
             return Result.unavailable("nginx 配置不可读：" + path);
         }
         try {
+            long size = Files.size(path);
+            if (size > maxBytes) {
+                return Result.unavailable("nginx 配置超过 " + maxBytes + " 字节上限（" + size + "）");
+            }
             return parse(Files.readString(path, StandardCharsets.UTF_8), upstreamName);
         } catch (IOException e) {
             return Result.unavailable("读取 nginx 配置失败：" + e.getMessage());

@@ -995,3 +995,51 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+
+- id: b5-run-env-capture
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04d-env-capture-and-cleanup.md
+  statement: "起跑后由 RunEnvCaptureHook 采集 lab_run_env（镜像/Java/JVM 参数/GC），多钩子组合且单钩失败不影响 run；报告环境段使用该快照"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/RunEnvCaptureHook.java && grep -q 'insertEnv' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/RunEnvCaptureHook.java && grep -q 'RunStartedHooks.composite' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerConfig.java && test -f code/services/chaos-controller/src/test/java/com/javalearn/lab/chaos/instance/RunEnvCaptureHookTest.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: b5-instance-events-ui
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04d-env-capture-and-cleanup.md
+  statement: "实例配置页提供诊断事件读取（OOM/堆转储），空结果显示 NO_DATA、不可读显示 UNAVAILABLE"
+  verify:
+    kind: shell
+    command: "grep -q 'instance-events-load-' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'fetchInstanceEvents' code/lab/dashboard/src/api.js && grep -q 'instance-events-empty-' code/lab/dashboard/src/components/InstanceConfigEditor.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: traffic-split-externalized
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04d-env-capture-and-cleanup.md
+  statement: "分流统计的 job、URI 过滤与 nginx 配置读取上限已外置到 lab.traffic-split.*，compose 与 .env.example 同步转发"
+  verify:
+    kind: shell
+    command: "grep -q 'LAB_TRAFFIC_SPLIT_APP_JOB' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'LAB_TRAFFIC_SPLIT_BUSINESS_URI_FILTER' code/lab/docker/compose.base.yml && grep -q 'LAB_TRAFFIC_SPLIT_MAX_UPSTREAM_BYTES' code/lab/docker/.env.example && grep -q 'max-upstream-bytes' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/traffic/TrafficSplitProperties.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: grafana-fallback-admin
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04d-env-capture-and-cleanup.md
+  statement: "Grafana 演示口令 fallback 在 up.sh 与 verify.sh 中统一为 admin"
+  verify:
+    kind: shell
+    command: "grep -q 'GRAFANA_ADMIN_PASSWORD:-admin' code/lab/scripts/up.sh && grep -q 'GRAFANA_ADMIN_PASSWORD:-admin' code/lab/scripts/verify.sh"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

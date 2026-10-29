@@ -211,11 +211,11 @@ public class LedgerConfig {
                                                    RunPrecheckService precheck,
                                                    RunLifecycleHook runLifecycleHook,
                                                    FaultScheduler faultScheduler,
-                                                   RunStartedHook runStartedHook,
+                                                   java.util.List<RunStartedHook> runStartedHooks,
                                                    Clock ledgerClock) {
         return new RunLifecycleService(properties, bootstrap, repository, writer, envLockService,
-                operationService, precheck, runLifecycleHook, faultScheduler, runStartedHook,
-                ledgerClock);
+                operationService, precheck, runLifecycleHook, faultScheduler,
+                RunStartedHooks.composite(runStartedHooks), ledgerClock);
     }
 
     private static HikariDataSource pool(String name, String url, LedgerProperties properties) {

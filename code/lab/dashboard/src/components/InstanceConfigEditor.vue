@@ -6,6 +6,7 @@ import {
   describeError,
   fetchInstanceConfig,
   fetchInstanceEffective,
+  fetchInstanceEvents,
   restartInstanceConfig,
   rollbackInstanceConfig,
   saveInstanceConfig,
@@ -145,6 +146,9 @@ const error = ref('')
 const busy = ref('')
 const confirmAction = ref('')
 const lastApply = ref(null)
+const events = ref(null)
+const eventsError = ref('')
+const eventsLoading = ref(false)
 
 const emit = defineEmits(['changed'])
 
@@ -420,6 +424,20 @@ async function loadEffective() {
   } catch (err) {
     effective.value = null
     effectiveError.value = `有效回读失败：${describeError(err)}`
+  }
+}
+
+/** B5-04b: bounded OOM / heap-dump scan; an empty list is NO_DATA, never an event. */
+async function loadEvents() {
+  eventsError.value = ''
+  eventsLoading.value = true
+  try {
+    events.value = await fetchInstanceEvents(props.token, props.instance)
+  } catch (err) {
+    events.value = null
+    eventsError.value = `诊断事件读取失败：${describeError(err)}`
+  } finally {
+    eventsLoading.value = false
   }
 }
 
@@ -990,6 +1008,27 @@ watch(() => props.active, (active) => {
     </div>
 
     <InstanceGcLogViewer :token="token" :instance="instance" :disabled="actionsLocked" />
+
+    <section class="config-events" :data-testid="`instance-events-${instance}`">
+      <div class="subhead">诊断事件（OOM / 堆转储）</div>
+      <p class="hint">
+        扫描有界容器日志中的 <code>OutOfMemoryError</code> / <code>Heap dump file created</code> /
+        <code>Dumping heap</code>；无匹配显示 NO_DATA，日志不可读显示 UNAVAILABLE，不造事件。
+      </p>
+      <button type="button" class="btn ghost" :disabled="eventsLoading" :data-testid="`instance-events-load-${instance}`" @click="loadEvents">
+        {{ eventsLoading ? '读取中…' : '读取事件' }}
+      </button>
+      <p v-if="eventsError" class="notice danger" role="alert" :data-testid="`instance-events-error-${instance}`">{{ eventsError }}</p>
+      <p v-else-if="events && !events.events?.length" class="hint" :data-testid="`instance-events-empty-${instance}`">
+        {{ events.note === 'UNAVAILABLE' ? '容器日志不可读（UNAVAILABLE）。' : '窗口内没有 OOM / 堆转储事件（NO_DATA）。' }}
+      </p>
+      <ul v-else-if="events" class="config-notes" :data-testid="`instance-events-list-${instance}`">
+        <li v-for="(item, index) in events.events" :key="index">
+          <span class="badge warn">{{ item.kind }}</span>
+          <code>{{ item.observed }}</code> {{ item.line }}
+        </li>
+      </ul>
+    </section>
 
     <div v-if="confirmAction" class="modal-backdrop" role="dialog" aria-modal="true" :data-testid="`instance-apply-modal-${instance}`">
       <div class="modal-card">

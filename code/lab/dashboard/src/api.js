@@ -656,3 +656,12 @@ export function fetchInstanceEffective(token, instance) {
 export function fetchInstanceGcLog(token, instance, lines = 200) {
   return getJson(withQuery(`${instanceBase(instance)}/logs/gc`, { lines }), token)
 }
+
+/**
+ * B5-04b bounded diagnostics scan: OOM / heap-dump events from the container
+ * log. An empty list with note=NO_DATA means "no match", UNAVAILABLE means the
+ * log could not be read - neither is an invented event.
+ */
+export function fetchInstanceEvents(token, instance) {
+  return getJson(`${instanceBase(instance)}/events`, token)
+}

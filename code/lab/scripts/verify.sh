@@ -78,7 +78,7 @@ for ha_assignment in ${HA_OVERRIDES[@]+"${HA_OVERRIDES[@]}"}; do
 done
 
 GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
-GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-labadmin}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-admin}"
 LAB_TOKEN="${LAB_TOKEN:-lab-token}"
 
 # Async seckill verify settings (Task 16). Product 20 is reserved for this path;

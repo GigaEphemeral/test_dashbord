@@ -62,6 +62,18 @@ public class InstanceConfigConfig {
         return new InstanceEventsService(properties, containerGatewayProvider);
     }
 
+    /** B5: snapshot the run environment at READY→RUNNING (best effort). */
+    @Bean
+    public RunEnvCaptureHook runEnvCaptureHook(InstanceConfigService instanceConfigService,
+                                               InstanceConfigProperties properties,
+                                               InstanceConfigRepository repository,
+                                               RunLedgerRepository runLedgerRepository,
+                                               ObjectMapper objectMapper,
+                                               Clock clock) {
+        return new RunEnvCaptureHook(instanceConfigService, properties, repository,
+                runLedgerRepository, objectMapper, clock);
+    }
+
     @Bean
     public InstanceConfigService instanceConfigService(InstanceConfigProperties properties,
                                                        InstanceConfigValidator validator,

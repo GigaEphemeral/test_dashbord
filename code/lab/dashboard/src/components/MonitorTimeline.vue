@@ -26,8 +26,8 @@ const props = defineProps({
   syncTick: { type: Number, default: 0 }
 })
 
-const WINDOW_SECONDS = 900
-const STEP_SECONDS = 15
+const WINDOW_SECONDS = Number(import.meta.env.VITE_LAB_MONITOR_WINDOW_SECONDS || 900)
+const STEP_SECONDS = Number(import.meta.env.VITE_LAB_MONITOR_STEP_SECONDS || 15)
 const REFRESH_SECONDS = Math.max(1, Math.round(
   Number(import.meta.env.VITE_LAB_SYNC_INTERVAL_MS || 5000) / 1000
 ))

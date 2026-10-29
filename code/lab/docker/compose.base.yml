@@ -683,6 +683,9 @@ services:
       LAB_TRAFFIC_SPLIT_NGINX_CONF: ${LAB_TRAFFIC_SPLIT_NGINX_CONF:-/etc/javalab/nginx/default.conf}
       LAB_TRAFFIC_SPLIT_UPSTREAM_NAME: ${LAB_TRAFFIC_SPLIT_UPSTREAM_NAME:-seckill_backend}
       LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS: ${LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS:-5}
+      LAB_TRAFFIC_SPLIT_APP_JOB: ${LAB_TRAFFIC_SPLIT_APP_JOB:-seckill-app}
+      LAB_TRAFFIC_SPLIT_BUSINESS_URI_FILTER: ${LAB_TRAFFIC_SPLIT_BUSINESS_URI_FILTER:-/actuator.*}
+      LAB_TRAFFIC_SPLIT_MAX_UPSTREAM_BYTES: ${LAB_TRAFFIC_SPLIT_MAX_UPSTREAM_BYTES:-65536}
       # Stage2 B1-04 environment pre-check (run start gate). Identical defaults
       # to application.yml and .env.example; no force/skip key exists on purpose.
       LAB_PRECHECK_ENABLED: ${LAB_PRECHECK_ENABLED:-true}

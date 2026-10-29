@@ -824,6 +824,12 @@ async function main() {
         paramFlags.manual && paramFlags.ttlNull && paramFlags.app1 && paramFlags.app2 && !paramFlags.app3,
         `${JSON.stringify(paramFlags)} ${wizardParams.replace(/\s+/g, ' ').slice(0, 300)}`,
       );
+      await expectCondition('wizard: the ledger records the captured run environment', async () => {
+        const envLoc = page.getByTestId('run-env');
+        if ((await envLoc.count()) === 0) return { ok: false, detail: 'run-env missing' };
+        const text = ((await envLoc.textContent()) || '').replace(/\s+/g, ' ');
+        return { ok: text.includes('jl-app-') && text.includes('jdk21'), detail: text.slice(0, 140) };
+      });
 
       try {
         await page.getByTestId('k6-log-refresh').click({ timeout: 5000 });
@@ -1175,6 +1181,15 @@ async function main() {
       'instances: a manual restart action is offered next to apply/rollback',
       (await page.getByTestId('instance-config-restart-app-1').count()) === 1,
     );
+    await page.getByTestId('instance-events-load-app-1').click();
+    await expectCondition('instances: diagnostics events answer with events or an honest empty state', async () => {
+      if ((await page.getByTestId('instance-events-error-app-1').count()) > 0) {
+        return { ok: false, detail: 'error banner rendered' };
+      }
+      const list = await page.getByTestId('instance-events-list-app-1').count();
+      const empty = await page.getByTestId('instance-events-empty-app-1').count();
+      return { ok: list + empty === 1, detail: `list=${list} empty=${empty}` };
+    });
 
     await page.getByTestId('instance-gc-log-toggle-app-1').click();
     await expectCondition('instances: GC log read returns a documented state without invented lines', async () => {

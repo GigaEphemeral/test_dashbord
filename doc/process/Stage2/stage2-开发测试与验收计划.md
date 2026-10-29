@@ -88,6 +88,10 @@
 > 监控页新增「JVM 参数对照」；jcmd 回读超时 5→10s 并补齐 env 转发。真机 app-1 restart `RESTART/APPLIED`（115s，rev 不变），
 > app-3 无配置 409。交接 `step-S2-B5-04c-config-unification.md`。
 
+> **B5 遗留收尾基线（2026-10-30）**：新增 `RunEnvCaptureHook` 起跑采集 `lab_run_env`（镜像/Java/JVM/GC），
+> 报告环境段不再回退；实例页新增诊断事件；分流 job/URI/读取上限外置；Grafana fallback 统一 admin。
+> 真机 smoke run 环境段 `missing=[]`。交接 `step-S2-B5-04d-env-capture-and-cleanup.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -601,6 +605,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-30 | v2.7：B5 遗留收尾——`lab_run_env` 起跑采集、诊断事件 UI、分流配置外置、Grafana fallback 统一；claims 80 |
 | 2026-10-30 | v2.6：B5-05 完成并收口——A01–A32 全量登记；门禁 880/0、155/0、109/1、7/7、claims 76；收口 `STAGE-02阶段交接-2026-10-30.md`；app 全部 APPLIED + 10% 采样 |
 | 2026-10-30 | v2.5：配置下发/重启修复——新增 `POST …/restart`、向导配置组复用实例编辑器（单一事实源）、监控 JVM 参数对照、jcmd 超时 10s 与 env 转发 |
 | 2026-10-29 | v2.4：B5-03 改定为“单次统计与导出”（不做重复编排）；新增报告/导出/克隆端点、run 时间线、监控图表分图与 GC 类型；Grafana 默认 admin/admin；A32 与 §9 #18 同步 |

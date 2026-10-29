@@ -218,6 +218,9 @@ lab:
     nginx-upstream-conf: ${LAB_TRAFFIC_SPLIT_NGINX_CONF:/etc/javalab/nginx/default.conf}
     upstream-name: ${LAB_TRAFFIC_SPLIT_UPSTREAM_NAME:seckill_backend}
     imbalance-warn-points: ${LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS:5}
+    app-job: ${LAB_TRAFFIC_SPLIT_APP_JOB:seckill-app}
+    business-uri-filter: ${LAB_TRAFFIC_SPLIT_BUSINESS_URI_FILTER:/actuator.*}
+    max-upstream-bytes: ${LAB_TRAFFIC_SPLIT_MAX_UPSTREAM_BYTES:65536}
 
   # Stage2 B5-01a topology contract (GET /lab/topology). The full design §16.3
   # structure is static; only the enabled set varies. Prometheus access is the

@@ -58,4 +58,15 @@ class UpstreamWeightsTest {
         assertThat(result.available()).isTrue();
         assertThat(result.weights()).containsEntry("app-2", 3);
     }
+
+    @Test
+    void aConfigOverTheByteCapIsUnavailable(@TempDir Path dir) throws Exception {
+        Path conf = dir.resolve("big.conf");
+        Files.writeString(conf, CONF + " ".repeat(512), StandardCharsets.UTF_8);
+
+        UpstreamWeights.Result result = UpstreamWeights.read(conf, "seckill_backend", 64);
+
+        assertThat(result.available()).isFalse();
+        assertThat(result.reason()).contains("上限");
+    }
 }
