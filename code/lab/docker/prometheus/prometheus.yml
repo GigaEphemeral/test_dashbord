@@ -80,7 +80,12 @@ scrape_configs:
     static_configs:
       - targets: ["cadvisor:8080"]
 
+  # Tempo's /metrics is expensive under compaction and took 51-118s during a
+  # load run, which timed out the global 5s scrape and logged i/o timeouts on
+  # both sides. Nothing panels Tempo's own metrics, so scrape it slowly.
   - job_name: tempo
+    scrape_interval: 60s
+    scrape_timeout: 20s
     static_configs:
       - targets: ["tempo:3200"]
 

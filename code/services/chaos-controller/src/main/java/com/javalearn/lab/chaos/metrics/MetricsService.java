@@ -11,6 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -97,23 +99,11 @@ public class MetricsService {
      */
     public MetricsQueryView queryRun(String runId, String fromRaw, String toRaw, String keysRaw,
                                      String phaseRaw) {
-        RunRecord run;
-        try {
-            run = repository.findRun(runId)
-                    .orElseThrow(() -> new LedgerRunNotFoundException("Run '" + runId + "' was not found"));
-        } catch (DataAccessException e) {
-            // The window itself needs the run timestamps; unlike the best-effort
-            // metric write this lookup cannot be skipped. 503 lets the caller
-            // distinguish "ledger down" from "run missing" (404).
-            throw new LedgerUnavailableException("ledger unavailable while resolving run '"
-                    + runId + "': " + e.getMessage());
-        }
+        RunRecord run = requireRun(runId);
         Window window;
         if (fromRaw == null && toRaw == null) {
-            Instant start = run.startedAt() != null ? run.startedAt() : run.createdAt();
-            Instant end = run.endedAt() != null ? run.endedAt() : clock.instant();
-            window = Window.of(start.minusSeconds(properties.getScrapeGraceSeconds()),
-                    end.plusSeconds(properties.getDrainGraceSeconds()), properties);
+            RunWindow resolved = runWindow(run);
+            window = Window.of(resolved.from(), resolved.to(), properties);
         } else if (fromRaw != null && toRaw != null) {
             window = Window.of(MetricsTime.parse(fromRaw, "from"),
                     MetricsTime.parse(toRaw, "to"), properties);
@@ -122,6 +112,35 @@ public class MetricsService {
                     "Provide both 'from' and 'to', or neither to use the run window");
         }
         return execute(window, "run", runId, phase(phaseRaw), resolveDefinitions(keysRaw));
+    }
+
+    /** Run row with the same 404/503 mapping every run-scoped read shares. */
+    public RunRecord requireRun(String runId) {
+        try {
+            return repository.findRun(runId)
+                    .orElseThrow(() -> new LedgerRunNotFoundException("Run '" + runId + "' was not found"));
+        } catch (DataAccessException e) {
+            // The window itself needs the run timestamps; unlike the best-effort
+            // metric write this lookup cannot be skipped. 503 lets the caller
+            // distinguish "ledger down" from "run missing" (404).
+            throw new LedgerUnavailableException("ledger unavailable while resolving run '"
+                    + runId + "': " + e.getMessage());
+        }
+    }
+
+    /**
+     * Run window shared with the B5-02 traffic split:
+     * {@code [start - scrapeGrace, end + drainGrace]}; an open run ends now.
+     */
+    public RunWindow runWindow(RunRecord run) {
+        Instant start = run.startedAt() != null ? run.startedAt() : run.createdAt();
+        Instant end = run.endedAt() != null ? run.endedAt() : clock.instant();
+        return new RunWindow(start.minusSeconds(properties.getScrapeGraceSeconds()),
+                end.plusSeconds(properties.getDrainGraceSeconds()));
+    }
+
+    /** Inclusive metric window of one run. */
+    public record RunWindow(Instant from, Instant to) {
     }
 
     private MetricsQueryView execute(Window window, String source, String runId, String phase,
@@ -387,10 +406,35 @@ public class MetricsService {
         String grafana = uid == null || uid.isBlank()
                 ? grafanaBase + "/explore?from=" + fromMillis + "&to=" + toMillis
                 : grafanaBase + "/d/" + uid + "?from=" + fromMillis + "&to=" + toMillis;
-        String tempo = stripTrailingSlash(properties.getTempoUrl())
-                + "/api/search?start=" + window.from().getEpochSecond()
-                + "&end=" + window.to().getEpochSecond();
+        // Tempo's HTTP port is internal to the compose network, so the browser
+        // cannot open it. Deep-link into Grafana Explore instead: the Tempo
+        // datasource is provisioned there (uid from lab.metrics.tempo-datasource-uid).
+        String tempo = grafanaBase + "/explore?left=" + encodeQueryParam(tempoExploreLeft(window));
         return new LinksView(grafana, tempo);
+    }
+
+    /** Grafana Explore state: Tempo datasource, empty TraceQL query, window range. */
+    private String tempoExploreLeft(Window window) {
+        Map<String, Object> range = new LinkedHashMap<>();
+        range.put("from", window.from().toString());
+        range.put("to", window.to().toString());
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("refId", "A");
+        query.put("queryType", "traceql");
+        query.put("query", "{}");
+        Map<String, Object> left = new LinkedHashMap<>();
+        left.put("datasource", properties.getTempoDatasourceUid());
+        left.put("queries", List.of(query));
+        left.put("range", range);
+        try {
+            return objectMapper.writeValueAsString(left);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("cannot encode the Tempo explore link", e);
+        }
+    }
+
+    private static String encodeQueryParam(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private void persist(String runId, String phase, Window window, List<MetricView> metrics,

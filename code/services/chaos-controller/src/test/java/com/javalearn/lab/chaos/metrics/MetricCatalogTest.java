@@ -22,13 +22,15 @@ class MetricCatalogTest {
                 "classpath:metrics/catalog.yml", 40);
 
         assertThat(catalog.version()).isEqualTo(1);
-        assertThat(catalog.definitions()).hasSize(25);
+        assertThat(catalog.definitions()).hasSize(30);
         assertThat(catalog.keys()).contains(
                 "http.rps", "http.success.ratio", "http.failure.ratio", "http.status.rps",
                 "http.latency.p95", "http.latency.p99",
                 "jvm.heap.used", "jvm.heap.max", "jvm.gc.pause.max", "jvm.cpu.usage",
                 "jvm.threads.live", "hikari.active", "hikari.pending",
                 "executor.active", "executor.queue", "executor.rejected",
+                "tomcat.threads.busy", "tomcat.threads.current", "tomcat.threads.max",
+                "tomcat.connections.current", "tomcat.connections.max",
                 "cache.l1.hit.ratio", "cache.l1.entries", "cache.l2.keys", "cache.l2.memory",
                 "business.orders.created", "business.stock.sold_out", "business.stock.oversold",
                 "mysql.cluster.probe.up", "targets.up");
@@ -43,6 +45,31 @@ class MetricCatalogTest {
                 .contains("${range}");
         assertThat(catalog.get("cache.l2.keys").groupByInstance()).isFalse();
         assertThat(catalog.get("targets.up").groupByInstance()).isTrue();
+    }
+
+    @Test
+    void tomcatKeysUseTheRealExportNamesAndHttpNioPool() {
+        MetricCatalog catalog = MetricCatalog.load(new DefaultResourceLoader(),
+                "classpath:metrics/catalog.yml", 40);
+
+        assertThat(catalog.get("tomcat.threads.busy").promql())
+                .contains("tomcat_threads_busy_threads")
+                .contains("name=\"http-nio-8080\"");
+        assertThat(catalog.get("tomcat.threads.current").promql())
+                .contains("tomcat_threads_current_threads");
+        assertThat(catalog.get("tomcat.threads.max").promql())
+                .contains("tomcat_threads_config_max_threads");
+        assertThat(catalog.get("tomcat.connections.current").promql())
+                .contains("tomcat_connections_current_connections");
+        assertThat(catalog.get("tomcat.connections.max").promql())
+                .contains("tomcat_connections_config_max_connections");
+        for (String key : List.of("tomcat.threads.busy", "tomcat.threads.current",
+                "tomcat.threads.max", "tomcat.connections.current",
+                "tomcat.connections.max")) {
+            assertThat(catalog.get(key).groupByInstance()).as(key).isTrue();
+            assertThat(catalog.get(key).promql()).as(key)
+                    .contains("job=~\"seckill-app|seckill-app-jdk8\"");
+        }
     }
 
     @Test

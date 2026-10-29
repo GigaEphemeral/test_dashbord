@@ -45,11 +45,43 @@ public final class InstanceViews {
      * {@code READBACK_UNAVAILABLE} (JDK 8 limited-observability shell). Values
      * are only ever copied from the container environment; a missing variable
      * stays {@code null} instead of being invented.
+     *
+     * <p>B5-04b adds the live JVM flag readback: {@code jvmFlags} is the parsed
+     * {@code jcmd 1 VM.flags} token list and {@code jvmReadback} is
+     * {@code OK}/{@code UNAVAILABLE}/{@code READBACK_UNAVAILABLE}. A null list
+     * means the flags were not read (JDK 8, no gateway, failed exec) - never an
+     * empty-but-OK answer.</p>
      */
     public record EffectiveInstanceView(String instance, String containerName, String imageTag,
                                         String imageId, String javaToolOptions,
                                         String instanceId, String readback,
-                                        String observability, List<String> notes) {
+                                        String observability, List<String> notes,
+                                        List<String> jvmFlags, String jvmReadback) {
+
+        /** B4-01 shape: no JVM flag readback was attempted. */
+        public EffectiveInstanceView(String instance, String containerName, String imageTag,
+                                     String imageId, String javaToolOptions,
+                                     String instanceId, String readback,
+                                     String observability, List<String> notes) {
+            this(instance, containerName, imageTag, imageId, javaToolOptions, instanceId,
+                    readback, observability, notes, null, null);
+        }
+    }
+
+    /**
+     * B5-04b OOM / heap-dump scan result. {@code events} is empty with
+     * {@code note=NO_DATA} when the bounded log window carries no match;
+     * {@code note=UNAVAILABLE} means the log could not be read. A synthetic
+     * event is never produced.
+     */
+    public record InstanceEventsView(String instance, List<InstanceEvent> events, String note) {
+    }
+
+    /**
+     * One matched log line. {@code observed} is the literal pattern that
+     * matched; {@code line} is the bounded line text.
+     */
+    public record InstanceEvent(String kind, String line, String observed) {
     }
 
     /**

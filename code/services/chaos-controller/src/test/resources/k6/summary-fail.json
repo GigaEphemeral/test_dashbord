@@ -1,0 +1,35 @@
+{
+  "root_group": {"name": "", "groups": [], "checks": []},
+  "metrics": {
+    "iteration_duration": {
+      "avg": 3626.686298,
+      "med": 3626.686298
+    },
+    "server_errors": {
+      "passes": 0,
+      "fails": 7,
+      "thresholds": {"rate<0": true},
+      "value": 0
+    },
+    "flow_errors": {
+      "passes": 0,
+      "fails": 7,
+      "thresholds": {"rate<0": true},
+      "value": 0
+    },
+    "http_req_duration": {
+      "avg": 374.4022472857143,
+      "med": 420.376007
+    },
+    "checks": {
+      "passes": 3,
+      "fails": 0,
+      "thresholds": {"rate>0.99": false},
+      "value": 1
+    },
+    "http_reqs": {
+      "count": 7,
+      "rate": 0.1
+    }
+  }
+}

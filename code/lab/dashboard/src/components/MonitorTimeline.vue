@@ -23,6 +23,9 @@ const REFRESH_SECONDS = Math.max(1, Math.round(
 const APP_JOB = import.meta.env.VITE_LAB_PROM_JOB || 'seckill-app'
 
 const COLORS = ['#38d39f', '#5aa9e6', '#e6b45a', '#e06b6b']
+// One colour per JVM instance, so 堆 and GC keep the same hue per instance and
+// only the stroke style (solid/dashed) tells the two metrics apart.
+const INSTANCE_COLORS = ['#38d39f', '#5aa9e6', '#e6b45a', '#e06b6b', '#a78bfa', '#5eead4']
 const SVG_W = 600
 const SVG_H = 140
 const PAD_L = 54
@@ -88,24 +91,30 @@ const CHARTS = [
   {
     id: 'jvm',
     testid: 'chart-jvm',
-    title: 'JVM 堆 / GC',
+    title: 'JVM 堆 / GC（按实例）',
     axis: compact,
     series: [
       {
         key: 'heap',
         label: '堆',
-        // jvm_memory_used_bytes is bytes; the chart plots MB.
-        expr: `sum(jvm_memory_used_bytes{${JOB},area="heap"})`,
+        // jvm_memory_used_bytes is bytes; the chart plots MB. One line per JVM
+        // (app-1/2/3) instead of a summed total, so a single instance's heap
+        // growth stays visible next to its peers.
+        expr: `sum by (instance) (jvm_memory_used_bytes{${JOB},area="heap"})`,
         factor: 1 / (1024 * 1024),
-        format: (value) => `${value.toFixed(1)} MB`
+        format: (value) => `${value.toFixed(1)} MB`,
+        split: true,
+        dash: ''
       },
       {
         key: 'gc',
         label: 'GC 暂停/s',
         // jvm_gc_pause_seconds_sum is a counter of seconds spent paused.
-        expr: `sum(rate(jvm_gc_pause_seconds_sum{${JOB}}[1m]))`,
+        expr: `sum by (instance) (rate(jvm_gc_pause_seconds_sum{${JOB}}[1m]))`,
         factor: 1000,
-        format: (value) => `${value.toFixed(2)} ms/s`
+        format: (value) => `${value.toFixed(2)} ms/s`,
+        split: true,
+        dash: '5 3'
       }
     ]
   },
@@ -216,16 +225,57 @@ function seriesPoints(result, factor) {
     .map(([t, v]) => ({ t, v }))
 }
 
+/** "instance" is host:port (app-1:8080); the chart only needs the host. */
+function instanceName(labels) {
+  const raw = String(labels?.instance || '').split(':')[0]
+  return raw || 'unknown'
+}
+
+/** Same transform as seriesPoints, but one [{ name, points }] entry per instance. */
+function splitSeriesPoints(result, factor) {
+  return (result || [])
+    .map((series) => {
+      const points = (series.values || [])
+        .map(([rawStamp, rawValue]) => ({ t: Number(rawStamp), v: Number(rawValue) * factor }))
+        .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
+        .sort((a, b) => a.t - b.t)
+      return { name: instanceName(series.metric), points }
+    })
+    .filter((entry) => entry.points.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function instanceColor(name, index) {
+  return INSTANCE_COLORS[index % INSTANCE_COLORS.length]
+}
+
 function buildChart(chart) {
-  const series = chart.series.map((definition, index) => {
+  const series = []
+  chart.series.forEach((definition, definitionIndex) => {
     const state = results[`${chart.id}:${definition.key}`] || {}
+    if (definition.split) {
+      const entries = state.series || []
+      entries.forEach((entry, index) => {
+        series.push({
+          ...definition,
+          key: `${definition.key}:${entry.name}`,
+          label: `${entry.name} ${definition.label}`,
+          color: instanceColor(entry.name, index),
+          dash: definition.dash || '',
+          points: entry.points,
+          last: entry.points.length ? entry.points[entry.points.length - 1] : null
+        })
+      })
+      return
+    }
     const points = state.points || []
-    return {
+    series.push({
       ...definition,
-      color: COLORS[index % COLORS.length],
+      color: COLORS[definitionIndex % COLORS.length],
+      dash: '',
       points,
       last: points.length ? points[points.length - 1] : null
-    }
+    })
   })
   const all = series.flatMap((item) => item.points.map((point) => point.v))
   const hasData = all.length > 0
@@ -296,10 +346,14 @@ async function refresh() {
       jobs.push(
         queryPromRange(series.expr, start, end, `${STEP_SECONDS}s`)
           .then((result) => {
-            results[key] = { points: seriesPoints(result, series.factor), error: '' }
+            results[key] = series.split
+              ? { series: splitSeriesPoints(result, series.factor), error: '' }
+              : { points: seriesPoints(result, series.factor), error: '' }
           })
           .catch((err) => {
-            results[key] = { points: [], error: describeError(err) }
+            results[key] = series.split
+              ? { series: [], error: describeError(err) }
+              : { points: [], error: describeError(err) }
           })
       )
     }
@@ -343,7 +397,8 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="hint">
-      最近 15 分钟的时间轴：请求 RPS / P95 / 5xx 错误率、k6 VU 与迭代速率、JVM 堆与 GC、线程池与连接池。
+      最近 15 分钟的时间轴：请求 RPS / P95 / 5xx 错误率、k6 VU 与迭代速率、JVM 堆与 GC（每个实例一条线，
+      同色=同一 JVM，实线=堆、虚线=GC）、线程池与连接池。
       单个查询失败只影响对应曲线；没有序列时显示无数据，不显示 0。
     </p>
 
@@ -375,6 +430,7 @@ onBeforeUnmount(() => {
               :points="item.path"
               fill="none"
               :stroke="item.color"
+              :stroke-dasharray="item.dash || null"
               stroke-width="1.5"
               stroke-linejoin="round"
               stroke-linecap="round"

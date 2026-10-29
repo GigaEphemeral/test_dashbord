@@ -111,6 +111,22 @@ export async function fetchContainers(token) {
   return payload.data ?? []
 }
 
+/**
+ * B5-01b live topology contract: every design node (including NOT_RUNNING),
+ * enabled/hidden flags, health, JDK observability, data quality and a metric
+ * snapshot where null means "无数据" (never 0). Sidecars stay hidden unless
+ * includeSidecars is true; `enabled` is the comma-separated service list.
+ */
+export function fetchTopology(token, { includeSidecars = false, enabled } = {}) {
+  return getJson(
+    withQuery('/lab/topology', {
+      includeSidecars: includeSidecars ? 'true' : 'false',
+      enabled: Array.isArray(enabled) ? enabled.join(',') : enabled
+    }),
+    token
+  )
+}
+
 export async function fetchLogs(token, container, tail) {
   const query = new URLSearchParams({ tail: String(tail) })
   const response = await fetch(
@@ -268,6 +284,15 @@ export function fetchRunMetrics(token, runId, { keys, phase } = {}) {
     withQuery(`/lab/runs/${encodeURIComponent(runId)}/metrics`, { keys, phase }),
     token
   )
+}
+
+/**
+ * B5-02 per-instance traffic split over the same run window: hits, share,
+ * success/failed, avg/P95/P99, RPS, error rate, executor rejections, upstream
+ * weight/expected share and the stored config label. Null means 无数据.
+ */
+export function fetchRunInstanceStats(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}/instance-stats`, token)
 }
 
 /** Realtime aggregation; from/to are required ISO-8601 or epoch values. */

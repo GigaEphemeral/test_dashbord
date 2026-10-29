@@ -247,3 +247,41 @@
 - effective 页展示运行参数且与 `jcmd` 一致；
 - 拓扑对 Router 显示“未接线”、对容器网络显示“采集降级”，均不显示 0；
 - 只跑单测 + 只读查询；不触发 OOM、不重启容器、不改 compose。
+
+## 5. B5-04b 实施结果与残留决策（2026-10-29）
+
+已实施（控制器侧；UI 由另一会话负责）：
+
+| 项 | 落点 | 验收 |
+|---|---|---|
+| 字典/目录纠正 | `指标字典.md`、`resources/metrics/catalog.yml` | 头部 174 OK/21 部分/16 未接线/3 NO_DATA/5 已接线（219 行）；`cache.l1.entries`/`cache.l2.keys`/`executor.rejected` 注释与实机一致 |
+| k6 阈值 + avg/med | `GET /lab/runs/{runId}/k6/thresholds`（`BenchThresholdService`） | 解析 `run-20261029-004`：server/flow 与 `http_req_duration{flow:product}` 共 4 条全 PASS；`neg-threshold` 的 `crossed=true` 判 FAIL；无报告 404、超限 413、无阈值 `NO_THRESHOLDS` |
+| Tomcat 5 键 | `catalog.yml` `tomcat.*` | 实机 `tomcat_threads_busy_threads/current/config_max`、`tomcat_connections_current/config_max` 均 4 target，`name="http-nio-8080"`；无抓取改动 |
+| JVM 实际参数 | `GET /lab/instances/{instance}/effective` 增加 `jvmFlags`/`jvmReadback` | JDK21 容器内 `jcmd 1 VM.flags` 回读（超时/字节上限外置）；JDK8 固定 `READBACK_UNAVAILABLE`，不执行 jcmd |
+| OOM/堆转储事件 | `GET /lab/instances/{instance}/events`（`InstanceEventsService`） | 扫描有界日志 `OutOfMemoryError`/`Heap dump file created`/`Dumping heap to <path>`；无匹配空列表 + `NO_DATA`；读不到日志 `UNAVAILABLE` |
+| Router | 无代码/无抓取 | 容器内 `/metrics` 404、`/api/20190715/router/status|/routes` 401、`prometheus.yml` 无 router job；拓扑/字典固定 UNWIRED，禁止显示 0 |
+
+残留“不值得接线”的最终决定（B5-05 直接引用）：
+
+| 项 | 最终决定 | 理由 |
+|---|---|---|
+| MySQL deadlocks | UNWIRED/Future | MySQL 8.4 已移除状态变量；`innodb_row_lock_*` 覆盖锁等待 |
+| MySQL 查询/事务耗时直方图 | UNWIRED/Future | exporter 无 histogram、perf_schema 未开；app HTTP/`order_accept` 已够 |
+| MySQL TPS `com_commit` | DEGRADED | 用 questions 近似并标注“非 TPS”，不重开 collector |
+| MySQL Router 原生指标 | UNWIRED/Future | 8443 `/metrics`=404、REST=401；自定义 exporter 成本高于演示价值 |
+| Redis Sentinel quorum | DEGRADED | Sentinel 为 RESP 非 HTTP、B0-07 有意不抓；`sentinel-status.sh` 提供证据 |
+| Toxiproxy 指标 | UNWIRED/Future | `chaos-proxy` profile 未开；状态 API 足够 |
+| Nginx 状态码/upstream | UNWIRED/Future | stub_status 只有 9 个基础名，需 nginx-plus 或日志管道 |
+| 每容器 CPU/内存/网络 | DEGRADED | cAdvisor v0.49.1 在 containerd snapshotter 下无法枚举容器，重试/调参无效 |
+| JVM RSS | DEGRADED | app 不导出 `process_resident_memory_bytes`；heap used ≠ RSS，不得冒充 |
+| 快照/Hikari 获取 P95 | DEGRADED | Timer 未开直方图；`_max/_count` 已满足演示 |
+| `thread_lab_injected_total{hold}` | DEGRADED | 加标签属 app 指标 schema 变更，收益低于风险 |
+| `rabbitmq_up`/`orders_total`/`redis_role` 造新指标 | 不新增 | 通用 `up`、relabel 别名、`redis_instance_info{role}` 已等价 |
+| k6 expected 409/429 | 不新增 | 名在词表，24h 无 run 是 NO_DATA，跑 run 即自愈 |
+| Tomcat 抓取 | 不重做 | 已 OK，只缺目录/UI（B5-04b 已补目录键） |
+
+配置外置（compose/.env 由主会话转发，本次不改）：
+`LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS`、`LAB_INSTANCE_JVM_FLAGS_MAX_BYTES`、
+`LAB_INSTANCE_EVENTS_LOG_TAIL`、`LAB_INSTANCE_EVENTS_MAX_EVENTS`、
+`LAB_INSTANCE_EVENTS_LINE_MAX_CHARS`。
+

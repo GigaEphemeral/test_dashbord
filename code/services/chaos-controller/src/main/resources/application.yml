@@ -50,6 +50,14 @@ lab:
     gc-log-max-lines: ${LAB_INSTANCE_GC_LOG_MAX_LINES:2000}
     gc-log-max-bytes: ${LAB_INSTANCE_GC_LOG_MAX_BYTES:262144}
     gc-log-tail-timeout-seconds: ${LAB_INSTANCE_GC_LOG_TAIL_TIMEOUT_SECONDS:5}
+    # Stage2 B5-04b: bounded `jcmd 1 VM.flags` readback (JDK21 only; JDK8 stays
+    # READBACK_UNAVAILABLE) and the bounded container-log scan behind
+    # GET /lab/instances/{instance}/events (OutOfMemoryError / heap dump).
+    jvm-flags-timeout-seconds: ${LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS:5}
+    jvm-flags-max-bytes: ${LAB_INSTANCE_JVM_FLAGS_MAX_BYTES:8192}
+    events-log-tail: ${LAB_INSTANCE_EVENTS_LOG_TAIL:200}
+    events-max-events: ${LAB_INSTANCE_EVENTS_MAX_EVENTS:50}
+    events-line-max-chars: ${LAB_INSTANCE_EVENTS_LINE_MAX_CHARS:400}
     jdk8-instance: ${LAB_INSTANCE_JDK8_INSTANCE:seckill-app-jdk8}
     jdk8-prometheus-job: ${LAB_INSTANCE_JDK8_PROMETHEUS_JOB:seckill-app-jdk8}
     # Stage2 B4-02 controlled rebuild: stable period, health gates and the
@@ -189,16 +197,23 @@ lab:
     min-step-seconds: ${LAB_METRICS_MIN_STEP_SECONDS:15}
     max-series: ${LAB_METRICS_MAX_SERIES:120}
     max-keys: ${LAB_METRICS_MAX_KEYS:40}
-    # Deep links: the console renders these in the BROWSER, so grafana-url is the
-    # host-facing address (localhost:3000 is published; grafana:3000 is not
-    # resolvable from the operator's machine). A blank dashboard UID means the
-    # Grafana link points at Explore (no panel UID is hard-coded). tempo-url is
-    # the controller-side address; Tempo 3200 is NOT published on the host by
-    # default, so open the Tempo link only after publishing that port.
+    # Deep links open in the operator's BROWSER, so both are built from the
+    # host-facing grafana-url (localhost:3000 is published; grafana:3000 and
+    # tempo:3200 are not resolvable from the host). A blank dashboard UID means
+    # the Grafana link points at Explore (no panel UID is hard-coded); traces
+    # open in the same Explore through the provisioned Tempo datasource.
     grafana-url: ${LAB_METRICS_GRAFANA_URL:http://localhost:3000}
-    tempo-url: ${LAB_METRICS_TEMPO_URL:http://tempo:3200}
+    tempo-datasource-uid: ${LAB_METRICS_TEMPO_DATASOURCE_UID:tempo}
     grafana-dashboard-uid: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:}
     catalog-location: ${LAB_METRICS_CATALOG_LOCATION:classpath:metrics/catalog.yml}
+
+  # Stage2 B5-02 traffic split (GET /lab/runs/{runId}/instance-stats). Nginx
+  # upstream weights are read from the compose-mounted config instead of being
+  # copied here, so the panel cannot drift from the real load-balancer setup.
+  traffic-split:
+    nginx-upstream-conf: ${LAB_TRAFFIC_SPLIT_NGINX_CONF:/etc/javalab/nginx/default.conf}
+    upstream-name: ${LAB_TRAFFIC_SPLIT_UPSTREAM_NAME:seckill_backend}
+    imbalance-warn-points: ${LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS:5}
 
   # Stage2 B5-01a topology contract (GET /lab/topology). The full design §16.3
   # structure is static; only the enabled set varies. Prometheus access is the

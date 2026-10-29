@@ -10,6 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -58,7 +60,7 @@ class MetricsServiceTest {
     void setUp() {
         properties = new MetricsProperties();
         properties.setGrafanaUrl("http://grafana.lab:3000/");
-        properties.setTempoUrl("http://tempo.lab:3200/");
+        properties.setTempoDatasourceUid("tempo-lab");
         properties.validate();
         repository = mock(RunLedgerRepository.class);
     }
@@ -232,8 +234,17 @@ class MetricsServiceTest {
 
         assertThat(view.view().links().grafanaUrl()).isEqualTo(
                 "http://grafana.lab:3000/explore?from=" + from.toEpochMilli() + "&to=" + to.toEpochMilli());
-        assertThat(view.view().links().tempoUrl()).isEqualTo(
-                "http://tempo.lab:3200/api/search?start=" + from.getEpochSecond() + "&end=" + to.getEpochSecond());
+        // Traces open in Grafana Explore: tempo:3200 is compose-internal and the
+        // browser can never resolve it.
+        String tempoLink = view.view().links().tempoUrl();
+        assertThat(tempoLink).startsWith("http://grafana.lab:3000/explore?left=");
+        String left = URLDecoder.decode(
+                tempoLink.substring(tempoLink.indexOf("left=") + "left=".length()), StandardCharsets.UTF_8);
+        assertThat(left)
+                .contains("\"datasource\":\"tempo-lab\"")
+                .contains("\"queryType\":\"traceql\"")
+                .contains("\"from\":\"" + from + "\"")
+                .contains("\"to\":\"" + to + "\"");
 
         properties.setGrafanaDashboardUid("lab-overview");
         MetricsQueryViewResult withDashboard = query(gatewayReturning(matrix()), null, null, null, RPS);

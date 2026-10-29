@@ -53,6 +53,14 @@ public class BenchExecConfig {
         return new BenchRunExecutor(properties, gateway);
     }
 
+    /** B5-04b: read-only parser for the already archived k6 summary.json. */
+    @Bean
+    public com.javalearn.lab.chaos.bench.BenchThresholdService benchThresholdService(
+            ObjectMapper objectMapper, BenchRunExecutor benchRunExecutor) {
+        return new com.javalearn.lab.chaos.bench.BenchThresholdService(
+                objectMapper, benchRunExecutor);
+    }
+
     /**
      * Stage2 B2-02b-2a: exit/timeout watchdog and startup orphan cleanup. It
      * owns a dedicated daemon thread (no {@code @EnableScheduling}); the first

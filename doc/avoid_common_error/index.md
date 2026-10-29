@@ -24,6 +24,7 @@
 | 17 | [k6 的 per-vu-iterations 默认 maxDuration 截断时间线](17-k6-per-vu-iterations-max-duration.md) | `exit 0` + `checks 100%` 也会少跑一个 dwell；预算必须由 dwell 推导 | 已写 |
 | 18 | [`K6_SUMMARY_EXPORT` 是容器内路径](18-k6-summary-export-is-container-path.md) | 指到宿主路径会 exit 107：`/scripts` 是 `:ro` 挂载，必须落在 `/reports/` 下 | 已写 |
 | 19 | [改了 compose 挂载源但没重建容器](19-compose-bind-source-moved-without-recreate.md) | 宿主目录被移走后绑定挂载变悬空：`/app/lab-snapshots` 查不到，抓取返回 200 但 `captured=false` + `FileAlreadyExistsException`，宿主侧一个 bundle 都没有 | 已写 |
+| 20 | [k6 远程写的 url 标签把 Prometheus 打爆](20-k6-remote-write-cardinality.md) | 默认 system tags 让每个商品 ID 变成一条序列（单族 8k、head 20 万），512m 上限下 RSS 460MB；用 `systemTags` 白名单 + 采样率降载 | 已写 |
 
 ## 维护约定
 
@@ -33,4 +34,4 @@
 
 ## 完成情况
 
-19 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/Stage1/step-*.md`，再提炼到这里并登记。
+20 条全部成文，均来自真实事故或真机演练；新增坑请先写进对应 `doc/process/Stage1/step-*.md`，再提炼到这里并登记。

@@ -107,13 +107,49 @@ metrics:
     promql: 'sum by (instance, name) (executor_queued_tasks{job="seckill-app"})'
     groupByInstance: true
 
-  # Micrometer 1.15 ExecutorServiceMetrics exports no rejected counter (B0-01
-  # dictionary has no such export name). Until B4-01 wires one this key resolves
-  # to NO_DATA/COLLECTING - the aggregation layer never fills in 0.
+  # B5-04b (2026-10-29 live): BusinessPoolConfig registers the rejected counter
+  # explicitly, so executor_rejected_total{job="seckill-app",name="business"} has
+  # 3 series (one per app). The B0-01 note that "Micrometer exports no rejected
+  # counter" was wrong; it is wired by the app, not by ExecutorServiceMetrics.
   - key: executor.rejected
     label: 业务线程池拒绝任务
     unit: tasks
     promql: 'sum by (instance, name) (increase(executor_rejected_total{job="seckill-app"}[${range}]))'
+    groupByInstance: true
+
+  # ------------------------------------------------------------- Tomcat (B5-04b)
+  # Already scraped by job="seckill-app" / "seckill-app-jdk8" (4 targets on the
+  # dev+dual-jdk stack); B5-04b only exposes the real export names. The thread
+  # pool is name="http-nio-8080", deliberately separate from the business
+  # executor name="business". No Prometheus scrape change is needed.
+  - key: tomcat.threads.busy
+    label: Tomcat 忙碌线程
+    unit: threads
+    promql: 'max by (instance) (tomcat_threads_busy_threads{job=~"seckill-app|seckill-app-jdk8", name="http-nio-8080"})'
+    groupByInstance: true
+
+  - key: tomcat.threads.current
+    label: Tomcat 当前线程
+    unit: threads
+    promql: 'max by (instance) (tomcat_threads_current_threads{job=~"seckill-app|seckill-app-jdk8", name="http-nio-8080"})'
+    groupByInstance: true
+
+  - key: tomcat.threads.max
+    label: Tomcat 最大线程
+    unit: threads
+    promql: 'max by (instance) (tomcat_threads_config_max_threads{job=~"seckill-app|seckill-app-jdk8", name="http-nio-8080"})'
+    groupByInstance: true
+
+  - key: tomcat.connections.current
+    label: Tomcat 当前连接
+    unit: connections
+    promql: 'max by (instance) (tomcat_connections_current_connections{job=~"seckill-app|seckill-app-jdk8", name="http-nio-8080"})'
+    groupByInstance: true
+
+  - key: tomcat.connections.max
+    label: Tomcat 最大连接
+    unit: connections
+    promql: 'max by (instance) (tomcat_connections_config_max_connections{job=~"seckill-app|seckill-app-jdk8", name="http-nio-8080"})'
     groupByInstance: true
 
   # ------------------------------------------------------------- Caffeine/L2
@@ -123,14 +159,18 @@ metrics:
     promql: 'avg by (instance) (cache_l1_hit_ratio{job="seckill-app"})'
     groupByInstance: true
 
+  # B5-04b: the dictionary's legacy names cache_size/cache_l1_size never existed;
+  # the real export is cache_l1_estimated_size{cache="product"} (TwoLevelCache).
   - key: cache.l1.entries
     label: Caffeine L1 条目数（估算）
     unit: entries
     promql: 'sum by (instance) (cache_l1_estimated_size{job="seckill-app"})'
     groupByInstance: true
 
-  # redis-exporter really exports redis_db_keys (B0-01 did not list it; verified
-  # on the live stack: db0 carries the business keys). Sum keeps labels {}.
+  # redis-exporter really exports redis_db_keys (B0-01 did not list it). B5-04b
+  # live check (2026-10-29): redis_db_keys{job="redis-exporter",db="db0"} has 16
+  # series (64 at the B5-04a probe) and db0 carries the business keys; the HA
+  # exporter exports 48 db series. Sum keeps the answer label-free.
   - key: cache.l2.keys
     label: Redis L2 业务键数
     unit: keys

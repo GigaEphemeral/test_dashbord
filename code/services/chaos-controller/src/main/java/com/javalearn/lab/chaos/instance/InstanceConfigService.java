@@ -14,11 +14,15 @@ import com.javalearn.lab.chaos.ledger.LedgerReadiness;
 import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
 import com.javalearn.lab.chaos.ledger.RunRecord;
 import com.javalearn.lab.chaos.ledger.RunStatus;
+import com.javalearn.lab.chaos.model.ExecResult;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessException;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +41,10 @@ public class InstanceConfigService {
     public static final String READBACK_OK = "OK";
     public static final String READBACK_UNAVAILABLE = "UNAVAILABLE";
     public static final String READBACK_LIMITED = "READBACK_UNAVAILABLE";
+    /** B5-04b JVM-flag readback vocabulary: OK / UNAVAILABLE / READBACK_UNAVAILABLE. */
+    public static final String JVM_READBACK_OK = "OK";
+    public static final String JVM_READBACK_UNAVAILABLE = "UNAVAILABLE";
+    public static final String JVM_READBACK_READBACK_UNAVAILABLE = "READBACK_UNAVAILABLE";
     public static final String OBSERVABILITY_FULL = "FULL-OBSERVABILITY";
     public static final String OBSERVABILITY_LIMITED = "LIMITED-OBSERVABILITY";
     public static final String OBSERVABILITY_UNKNOWN = "UNKNOWN";
@@ -183,14 +191,66 @@ public class InstanceConfigService {
         String observability = jdk == null ? OBSERVABILITY_UNKNOWN
                 : jdk == 8 ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
         String readback = jdk != null && jdk == 8 ? READBACK_LIMITED : READBACK_OK;
-        List<String> notes = jdk == null
-                ? List.of("no stored jdkVersion; observability class is unknown")
-                : jdk == 8
-                ? List.of("JDK 8 shell: app-level hot readback is READBACK_UNAVAILABLE")
-                : List.of();
+        List<String> notes = new ArrayList<>();
+        if (jdk == null) {
+            notes.add("no stored jdkVersion; observability class is unknown");
+        } else if (jdk == 8) {
+            notes.add("JDK 8 shell: app-level hot readback is READBACK_UNAVAILABLE");
+        }
+        JvmFlags flags = readJvmFlags(gateway, container, jdk);
+        if (flags.note() != null) {
+            notes.add(flags.note());
+        }
         return new InstanceViews.EffectiveInstanceView(instance, facts.name(), facts.image(),
                 facts.imageId(), facts.env().get(ENV_JAVA_TOOL_OPTIONS),
-                facts.env().get(ENV_INSTANCE_ID), readback, observability, notes);
+                facts.env().get(ENV_INSTANCE_ID), readback, observability, List.copyOf(notes),
+                flags.tokens(), flags.status());
+    }
+
+    /**
+     * B5-04b: run {@code jcmd 1 VM.flags} inside the running container. This is
+     * a readback of the JVM's effective flags, not the stored draft. JDK 8 is
+     * deliberately not read (the limited shell keeps READBACK_UNAVAILABLE).
+     */
+    private JvmFlags readJvmFlags(ContainerGateway gateway, String container, Integer jdk) {
+        if (jdk != null && jdk == 8) {
+            return new JvmFlags(JVM_READBACK_READBACK_UNAVAILABLE, null,
+                    "jcmd VM.flags readback is not attempted for JDK 8");
+        }
+        try {
+            ExecResult result = gateway.execInContainer(container,
+                    List.of("jcmd", "1", "VM.flags"), List.of(), null,
+                    properties.getJvmFlagsTimeoutSeconds());
+            if (!result.succeeded()) {
+                return new JvmFlags(JVM_READBACK_READBACK_UNAVAILABLE, null,
+                        "jcmd VM.flags failed in " + container + " (exit=" + result.exitCode()
+                                + (result.timedOut() ? ", timed out" : "") + ")");
+            }
+            String stdout = result.stdout() == null ? "" : result.stdout();
+            int maxBytes = Math.max(1024, properties.getJvmFlagsMaxBytes());
+            byte[] raw = stdout.getBytes(StandardCharsets.UTF_8);
+            boolean truncated = raw.length > maxBytes;
+            if (truncated) {
+                stdout = new String(raw, 0, maxBytes, StandardCharsets.UTF_8);
+            }
+            List<String> tokens = Arrays.stream(stdout.split("\\s+"))
+                    .filter(token -> token.startsWith("-") && token.length() > 1)
+                    .toList();
+            if (tokens.isEmpty()) {
+                return new JvmFlags(JVM_READBACK_READBACK_UNAVAILABLE, null,
+                        "jcmd VM.flags returned no parsable flags in " + container);
+            }
+            return new JvmFlags(JVM_READBACK_OK, tokens, truncated
+                    ? "jcmd VM.flags output exceeded lab.instance.jvm-flags-max-bytes ("
+                    + maxBytes + ") and was truncated before parsing" : null);
+        } catch (RuntimeException e) {
+            return new JvmFlags(JVM_READBACK_READBACK_UNAVAILABLE, null,
+                    "jcmd VM.flags readback unavailable for " + container + " ("
+                            + e.getClass().getSimpleName() + ")");
+        }
+    }
+
+    private record JvmFlags(String status, List<String> tokens, String note) {
     }
 
     private InstanceViews.EffectiveInstanceView unavailable(String instance, String container,
@@ -198,7 +258,7 @@ public class InstanceConfigService {
         String observability = jdk == null ? OBSERVABILITY_UNKNOWN
                 : jdk == 8 ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
         return new InstanceViews.EffectiveInstanceView(instance, container, null, null, null, null,
-                READBACK_UNAVAILABLE, observability, List.of(note));
+                READBACK_UNAVAILABLE, observability, List.of(note), null, JVM_READBACK_UNAVAILABLE);
     }
 
     private InstanceViews.InstanceConfigView toView(String instance, StoredInstanceConfig stored) {

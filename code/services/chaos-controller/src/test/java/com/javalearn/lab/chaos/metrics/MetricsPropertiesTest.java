@@ -38,7 +38,7 @@ class MetricsPropertiesTest {
         assertThat(properties.getMaxSeries()).isEqualTo(120);
         assertThat(properties.getMaxKeys()).isEqualTo(40);
         assertThat(properties.getGrafanaUrl()).isEqualTo("http://localhost:3000");
-        assertThat(properties.getTempoUrl()).isEqualTo("http://tempo:3200");
+        assertThat(properties.getTempoDatasourceUid()).isEqualTo("tempo");
         assertThat(properties.getGrafanaDashboardUid()).isEmpty();
         assertThat(properties.getCatalogLocation()).isEqualTo("classpath:metrics/catalog.yml");
     }
@@ -52,7 +52,7 @@ class MetricsPropertiesTest {
                 "LAB_METRICS_REQUEST_TIMEOUT_SECONDS", "LAB_METRICS_SCRAPE_GRACE_SECONDS",
                 "LAB_METRICS_DRAIN_GRACE_SECONDS", "LAB_METRICS_MAX_POINTS",
                 "LAB_METRICS_MIN_STEP_SECONDS", "LAB_METRICS_MAX_SERIES",
-                "LAB_METRICS_MAX_KEYS", "LAB_METRICS_GRAFANA_URL", "LAB_METRICS_TEMPO_URL",
+                "LAB_METRICS_MAX_KEYS", "LAB_METRICS_GRAFANA_URL", "LAB_METRICS_TEMPO_DATASOURCE_UID",
                 "LAB_METRICS_GRAFANA_DASHBOARD_UID", "LAB_METRICS_CATALOG_LOCATION");
     }
 

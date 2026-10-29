@@ -31,9 +31,12 @@ import java.nio.charset.StandardCharsets;
 public class BenchExecutionController {
 
     private final BenchRunExecutor executor;
+    private final BenchThresholdService thresholds;
 
-    public BenchExecutionController(BenchRunExecutor executor) {
+    public BenchExecutionController(BenchRunExecutor executor,
+                                    BenchThresholdService thresholds) {
         this.executor = executor;
+        this.thresholds = thresholds;
     }
 
     /** State of the run's k6 container plus report availability. */
@@ -62,6 +65,15 @@ public class BenchExecutionController {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
                 .body(content.bytes());
+    }
+
+    /**
+     * B5-04b: parsed thresholds and avg/med from the same bounded report.
+     * 404 when the report file is absent, 413 when it exceeds the cap.
+     */
+    @GetMapping("/lab/runs/{runId}/k6/thresholds")
+    public Result<BenchThresholdService.ThresholdReport> thresholds(@PathVariable String runId) {
+        return Result.success(thresholds.thresholds(runId));
     }
 
     /** Answer shape of {@code GET .../k6/logs}. */

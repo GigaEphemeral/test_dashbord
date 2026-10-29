@@ -1,0 +1,41 @@
+{
+  "root_group": {"name": "", "groups": [], "checks": []},
+  "metrics": {
+    "iteration_duration": {
+      "avg": 1028.976353,
+      "min": 1028.9,
+      "med": 1028.98,
+      "max": 1029.1,
+      "p(90)": 1029.0,
+      "p(95)": 1029.0
+    },
+    "server_errors": {
+      "rate": 0,
+      "passes": 0,
+      "fails": 7,
+      "thresholds": {"rate<0.01": false},
+      "value": 0
+    },
+    "flow_errors": {
+      "rate": 0,
+      "passes": 0,
+      "fails": 7,
+      "thresholds": {"rate<0.01": false},
+      "value": 0
+    },
+    "http_req_duration": {
+      "avg": 24.074178640000003,
+      "min": 1.1,
+      "med": 23.721716,
+      "max": 89.2,
+      "p(90)": 40.1,
+      "p(95)": 48.2,
+      "p(99)": 70.3
+    },
+    "http_req_duration{flow:product}": {
+      "p(95)": 42.5,
+      "p(99)": 66.1,
+      "thresholds": {"p(99)<800": false, "p(95)<300": false}
+    }
+  }
+}

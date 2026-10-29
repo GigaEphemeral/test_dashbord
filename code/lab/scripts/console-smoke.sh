@@ -71,7 +71,7 @@ Environment (environment > lab .env > default):
   SMOKE_RUN_SCENARIO_PREFIX   legacy ownership prefix, default console-smoke-
   SMOKE_KPI_COUNT             observe KPI card count, default 13
   SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
-  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 145 (119 existing + 7 B4-04; see note below)
+  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 148 (145 + 3 B5-01 A16 checks)
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package
   CONSOLE_SMOKE_SCRIPT        path to the smoke script, default alongside this file
@@ -193,12 +193,12 @@ SMOKE_KPI_COUNT="${SMOKE_KPI_COUNT:-$(dotenv_value SMOKE_KPI_COUNT)}"
 SMOKE_RUN_METRIC_COUNT="${SMOKE_RUN_METRIC_COUNT:-$(dotenv_value SMOKE_RUN_METRIC_COUNT)}"
 SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-$(dotenv_value SMOKE_MIN_PASS_COUNT)}"
 # B3-00 baseline on a healthy stack (PASS/WARN pre-check), raised by the seven
-# B4-04 config-tab checks. The current stack reports mysql_cluster_probe_up=0,
-# so the two run-start blocks take their documented BLOCKED branch and 19
-# checks are not reached: 119 existing passes + 7 = 126. With the probe back at
-# 1 the full suite reaches 145 and this value should be raised again.
+# B4-04 config-tab checks and the three B5-01 A16 topology checks (heat legend,
+# node tooltip, freeze reaction). With the mysql cluster probe healthy the full
+# suite reaches 148; when mysql_cluster_probe_up=0 the two run-start blocks take
+# their documented BLOCKED branch and 19 checks are not reached (129).
 # Set 0 to disable.
-SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-145}"
+SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-148}"
 
 echo "Console smoke: $CONSOLE_URL"
 echo "  api base   : $LAB_API_BASE"

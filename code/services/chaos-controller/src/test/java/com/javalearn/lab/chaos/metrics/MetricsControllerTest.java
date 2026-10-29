@@ -116,7 +116,7 @@ class MetricsControllerTest {
                         3600, 7200, 15, "15s"),
                 quality, "reason", "2026-10-28T12:00:00Z", metrics,
                 new LinksView("http://grafana:3000/explore?from=1&to=2",
-                        "http://tempo:3200/api/search?start=1&end=2"),
+                        "http://grafana:3000/explore?left=%7B%22datasource%22%3A%22tempo%22%7D"),
                 List.of());
     }
 }

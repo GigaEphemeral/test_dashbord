@@ -10,6 +10,7 @@ import com.javalearn.lab.chaos.ledger.LedgerProperties;
 import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
 import com.javalearn.lab.chaos.ledger.RunRecord;
 import com.javalearn.lab.chaos.ledger.RunStatus;
+import com.javalearn.lab.chaos.model.ExecResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -25,7 +26,12 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** B4-01 service behaviour without Docker or MySQL. */
@@ -105,6 +111,8 @@ class InstanceConfigServiceTest {
     void effectiveIsUnavailableWithoutADockerGatewayAndInventsNoValues() {
         InstanceViews.EffectiveInstanceView view = service.effective("app-1");
         assertThat(view.readback()).isEqualTo(InstanceConfigService.READBACK_UNAVAILABLE);
+        assertThat(view.jvmReadback()).isEqualTo(InstanceConfigService.READBACK_UNAVAILABLE);
+        assertThat(view.jvmFlags()).isNull();
         assertThat(view.containerName()).isEqualTo("jl-app-1");
         assertThat(view.javaToolOptions()).isNull();
         assertThat(view.instanceId()).isNull();
@@ -124,11 +132,15 @@ class InstanceConfigServiceTest {
 
         InstanceViews.EffectiveInstanceView view = service.effective("app-1");
         assertThat(view.readback()).isEqualTo(InstanceConfigService.READBACK_LIMITED);
+        assertThat(view.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_READBACK_UNAVAILABLE);
+        assertThat(view.jvmFlags()).isNull();
         assertThat(view.observability()).isEqualTo(InstanceConfigService.OBSERVABILITY_LIMITED);
         assertThat(view.javaToolOptions()).isEqualTo("-Xmx256m");
         assertThat(view.instanceId()).isEqualTo("app-1");
         assertThat(view.imageTag()).isEqualTo("seckill-jdk8:local");
         assertThat(view.imageId()).isEqualTo("sha256:abc");
+        // B5-04b: JDK 8 never runs jcmd VM.flags.
+        verify(gateway, never()).execInContainer(any(), any(), any(), any(), anyInt());
         // Secrets in the container env are never surfaced through this view.
         assertThat(view.toString()).doesNotContain("MYSQL_PASSWORD").doesNotContain("must-not-leak");
     }
@@ -139,15 +151,67 @@ class InstanceConfigServiceTest {
         ContainerGateway gateway = mock(ContainerGateway.class);
         when(gateway.inspectLabContainerFacts("jl-app-1")).thenReturn(Optional.of(
                 new ContainerFacts("jl-app-1", "jdk21", "sha256:def", Map.of())));
+        when(gateway.execInContainer(eq("jl-app-1"),
+                eq(List.of("jcmd", "1", "VM.flags")), eq(List.of()), isNull(), eq(5)))
+                .thenReturn(new ExecResult(
+                        "1:\n-XX:+UseG1GC -Xmx512m -XX:MaxHeapSize=536870912 \n",
+                        "Picked up JAVA_TOOL_OPTIONS\n", 0, false));
         when(gatewayProvider.getIfAvailable()).thenReturn(gateway);
-        assertThat(service.effective("app-1").readback())
-                .isEqualTo(InstanceConfigService.READBACK_OK);
+        InstanceViews.EffectiveInstanceView ok = service.effective("app-1");
+        assertThat(ok.readback()).isEqualTo(InstanceConfigService.READBACK_OK);
+        assertThat(ok.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_OK);
+        assertThat(ok.jvmFlags()).containsExactly(
+                "-XX:+UseG1GC", "-Xmx512m", "-XX:MaxHeapSize=536870912");
+        assertThat(ok.notes()).isEmpty();
 
         when(gateway.inspectLabContainerFacts("jl-app-1"))
                 .thenThrow(new RuntimeException("daemon down"));
         InstanceViews.EffectiveInstanceView view = service.effective("app-1");
         assertThat(view.readback()).isEqualTo(InstanceConfigService.READBACK_UNAVAILABLE);
+        assertThat(view.jvmReadback()).isEqualTo(InstanceConfigService.READBACK_UNAVAILABLE);
         assertThat(view.imageTag()).isNull();
+    }
+
+    @Test
+    void jvmFlagsReadbackFailsHonestlyWhenJcmdFailsOrTimesOut() throws Exception {
+        service.save("app-1", config("{\"jdkVersion\":21}"));
+        ContainerGateway gateway = mock(ContainerGateway.class);
+        when(gateway.inspectLabContainerFacts("jl-app-1")).thenReturn(Optional.of(
+                new ContainerFacts("jl-app-1", "jdk21", "sha256:def", Map.of())));
+        when(gatewayProvider.getIfAvailable()).thenReturn(gateway);
+
+        when(gateway.execInContainer(any(), any(), any(), any(), anyInt()))
+                .thenReturn(new ExecResult("", "jcmd: not found", 127, false));
+        InstanceViews.EffectiveInstanceView failed = service.effective("app-1");
+        assertThat(failed.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_READBACK_UNAVAILABLE);
+        assertThat(failed.jvmFlags()).isNull();
+        assertThat(failed.notes()).anyMatch(note -> note.contains("jcmd VM.flags failed"));
+
+        when(gateway.execInContainer(any(), any(), any(), any(), anyInt()))
+                .thenReturn(new ExecResult("", "", null, true));
+        InstanceViews.EffectiveInstanceView timedOut = service.effective("app-1");
+        assertThat(timedOut.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_READBACK_UNAVAILABLE);
+        assertThat(timedOut.jvmFlags()).isNull();
+        assertThat(timedOut.notes()).anyMatch(note -> note.contains("timed out"));
+    }
+
+    @Test
+    void jvmFlagsOutputIsBoundedBeforeParsing() throws Exception {
+        properties.setJvmFlagsMaxBytes(1024);
+        service.save("app-1", config("{\"jdkVersion\":21}"));
+        ContainerGateway gateway = mock(ContainerGateway.class);
+        when(gateway.inspectLabContainerFacts("jl-app-1")).thenReturn(Optional.of(
+                new ContainerFacts("jl-app-1", "jdk21", "sha256:def", Map.of())));
+        when(gatewayProvider.getIfAvailable()).thenReturn(gateway);
+        String longFlags = "-XX:+UseG1GC " + "-XX:FlagPadding=1 ".repeat(200);
+        when(gateway.execInContainer(any(), any(), any(), any(), anyInt()))
+                .thenReturn(new ExecResult("1:\n" + longFlags, "", 0, false));
+
+        InstanceViews.EffectiveInstanceView view = service.effective("app-1");
+
+        assertThat(view.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_OK);
+        assertThat(view.jvmFlags()).isNotEmpty();
+        assertThat(view.notes()).anyMatch(note -> note.contains("truncated"));
     }
 
     @Test

@@ -1,0 +1,8 @@
+{
+  "root_group": {"name": "", "groups": [], "checks": []},
+  "metrics": {
+    "iteration_duration": {"avg": 1000.0},
+    "http_req_duration": {"avg": 12.5},
+    "http_reqs": {"count": 3, "rate": 0.5}
+  }
+}

@@ -1288,6 +1288,21 @@ async function main() {
       }
       return { ok: missing.length === 0, detail: missing.join(',') };
     });
+    // B5-01b/05: the refresh control must stay reachable while the page scrolls
+    // and the JVM chart must be per-instance rather than one summed line.
+    await expectCondition('observe: the floating refresh button is pinned to the viewport', async () => {
+      const fab = page.getByTestId('monitor-refresh-fab');
+      if ((await fab.count()) === 0) return { ok: false, detail: 'fab missing' };
+      const position = await fab.evaluate((el) => getComputedStyle(el).position);
+      const visible = await fab.isVisible();
+      const text = ((await fab.textContent()) || '').replace(/\s+/g, ' ').trim();
+      return { ok: visible && position === 'fixed', detail: `position=${position} text=${text}` };
+    });
+    await expectCondition('observe: the JVM chart is split per instance', async () => {
+      const box = page.getByTestId('chart-jvm');
+      const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
+      return { ok: text.includes('按实例'), detail: text.slice(0, 80) };
+    });
     await expectCondition('observe: the k6 progress block renders (无数据 is honest without a run)', async () => {
       const block = page.getByTestId('k6-progress');
       if ((await block.count()) === 0) return { ok: false, detail: 'k6-progress missing' };
@@ -1314,15 +1329,112 @@ async function main() {
       return { ok: missing.length === 0, detail: missing.join(',') };
     });
 
-    // No tolerance: /lab-api/containers includes the stopped one-shot and
-    // on-demand containers (init jobs, jdk8, traffic) and the topology draws
-    // every entry. 实时监控与操作 hides the ObservePanel's embedded copy, so only
-    // the visible nodes are counted (the hidden duplicate stays in the DOM).
-    await expectCondition('observe: topology draws one node per /lab-api/containers entry', async () => {
-      const list = unwrap(await apiRequest('/containers')) || [];
+    // B5-01b: the topology block now renders the live /lab/topology contract.
+    // Sidecars stay hidden by default, so the visible node count is every
+    // non-hidden contract node (main nodes + NOT_RUNNING/disabled ones).
+    await expectCondition('observe: topology draws every /lab/topology node with sidecars hidden', async () => {
+      const snapshot = unwrap(await apiRequest('/lab/topology?includeSidecars=false')) || {};
+      const expected = (snapshot.nodes || []).filter((node) => !node.hidden).length;
       const nodes = await page.locator('[data-testid^="topology-node-"]:visible').count();
-      return { ok: nodes === list.length, detail: `nodes=${nodes} api=${list.length}` };
+      return { ok: nodes === expected, detail: `nodes=${nodes} api=${expected}` };
     });
+
+    // A16: heat selector + always-visible threshold legend. Switching to the
+    // network dimension must show the explicit "no source" state, not fake 0.
+    await expectCondition('A16: heat selector has five dimensions and the legend prints thresholds', async () => {
+      const select = page.getByTestId('topology-heat-select');
+      if ((await select.count()) === 0) return { ok: false, detail: 'heat selector missing' };
+      const options = (await select.locator('option').allTextContents()).map((text) => text.trim());
+      const expected = ['综合', 'CPU', '内存', '线程池', '网络 I/O'];
+      const legend = page.getByTestId('topology-legend');
+      const legendText = ((await legend.textContent()) || '').trim();
+      await select.selectOption('network');
+      const networkNote = page.getByTestId('topology-network-note');
+      const networkNoteVisible = (await networkNote.count()) > 0 && await networkNote.isVisible();
+      const appHeat = await page.locator('[data-testid="topology-node-jl-app-2"]:visible').first().getAttribute('data-heat');
+      await select.selectOption('all');
+      return {
+        ok: options.join(',') === expected.join(',')
+          && await legend.isVisible()
+          && legendText.includes('CPU')
+          && legendText.includes('≥')
+          && legendText.includes('无数据/未接线')
+          && networkNoteVisible
+          && appHeat === 'unwired',
+        detail: `options=${options.join(',')} legend=${legendText.slice(0, 80)} network=${networkNoteVisible} appHeat=${appHeat}`,
+      };
+    });
+
+    // A16: click detail carries every contract field; app-2 is a full-
+    // observability node, so health/JDK/CPU must be real or explicitly 无数据.
+    await page.locator('[data-testid="topology-node-jl-app-2"]:visible').first().click();
+    await expectCondition('A16: node detail tooltip shows health/JDK/CPU/data-quality', async () => {
+      const tooltip = page.getByTestId('topology-tooltip');
+      if ((await tooltip.count()) === 0) return { ok: false, detail: 'tooltip not opened' };
+      const text = ((await tooltip.textContent()) || '').replace(/\s+/g, ' ').trim();
+      const ok = text.includes('健康')
+        && text.includes('JDK')
+        && text.includes('CPU')
+        && text.includes('数据质量')
+        && /(UP|DOWN|UNKNOWN|NOT_RUNNING)/.test(text)
+        && /(%|无数据)/.test(text);
+      return { ok, detail: text.slice(0, 160) };
+    });
+
+    // A16 freeze: the contract node must react (fault badge or non-UP health)
+    // while the tooltip keeps real values; stop-all is the clear path.
+    let a16FreezeOk = false;
+    let a16FreezeDetail = 'not injected';
+    try {
+      await apiPost('/chaos/instances/jl-app-2/actions', {
+        action: 'freeze',
+        ttlSeconds: FAULT_TTL_SECONDS,
+      });
+      const appearedOnTopology = await waitForCondition(async () => {
+        const badge = page.locator('[data-testid="topology-faults-jl-app-2"]:visible').first();
+        if ((await badge.count()) > 0) {
+          const text = ((await badge.textContent()) || '').trim();
+          return { ok: text.includes('freeze'), detail: `fault=${text}` };
+        }
+        const node = page.locator('[data-testid="topology-node-jl-app-2"]:visible').first();
+        const state = await node.getAttribute('data-health');
+        const heat = await node.getAttribute('data-heat');
+        return {
+          ok: state === 'DOWN' || heat === 'high',
+          detail: `health=${state} heat=${heat}`,
+        };
+      }, ACTION_TIMEOUT_MS * 2);
+      await page.locator('[data-testid="topology-node-jl-app-2"]:visible').first().click();
+      const frozenTooltip = await waitForCondition(async () => {
+        const tooltip = page.getByTestId('topology-tooltip');
+        if ((await tooltip.count()) === 0) return { ok: false, detail: 'tooltip missing' };
+        const text = ((await tooltip.textContent()) || '').replace(/\s+/g, ' ').trim();
+        const ok = text.includes('健康')
+          && text.includes('CPU')
+          && text.includes('更新时间')
+          && /(%|无数据)/.test(text);
+        return { ok, detail: text.slice(0, 140) };
+      });
+      await apiPost('/chaos/stop-all');
+      const cleared = await waitForCondition(async () => {
+        const badge = await page.locator('[data-testid="topology-faults-jl-app-2"]:visible').count();
+        const actions = unwrap(await apiRequest('/chaos/actions')) || [];
+        return { ok: badge === 0 && actions.length === 0, detail: `badge=${badge} api=${actions.length}` };
+      });
+      a16FreezeOk = appearedOnTopology.ok && frozenTooltip.ok && cleared.ok;
+      a16FreezeDetail = `appeared ${appearedOnTopology.detail}; tooltip ${frozenTooltip.detail}; cleared ${cleared.detail}`;
+    } catch (err) {
+      a16FreezeDetail = err.message;
+      try {
+        await apiPost('/chaos/stop-all');
+      } catch {
+        // the animation block's finally retries cleanup
+      }
+    }
+    check('A16: freeze shows on the live topology + tooltip and stop-all clears it', a16FreezeOk, a16FreezeDetail);
+    if ((await page.getByTestId('topology-tooltip-close').count()) > 0) {
+      await page.getByTestId('topology-tooltip-close').click();
+    }
 
     // --------------------------------------------- observe → 实时操作 (ops)
     await page.getByTestId('monitor-tab-ops').click();
@@ -1781,6 +1893,21 @@ async function main() {
       return { ok: text === createdRunId, detail: text };
     }, ACTION_TIMEOUT_MS * 2);
     check('runs: the created run is selected in the detail view', detailId.ok, detailId.detail);
+    // B5-02: the split panel must answer with either a table or an honest
+    // empty/no-data state - a failed request is not an acceptable default.
+    const splitPanel = await waitForCondition(async () => {
+      if ((await page.getByTestId('traffic-split').count()) === 0) {
+        return { ok: false, detail: 'traffic-split missing' };
+      }
+      const table = await page.getByTestId('traffic-split-table').count();
+      const empty = await page.getByTestId('traffic-split-empty').count();
+      const error = await page.getByTestId('traffic-split-error').count();
+      return {
+        ok: table + empty === 1 && error === 0,
+        detail: `table=${table} empty=${empty} error=${error}`,
+      };
+    }, ACTION_TIMEOUT_MS * 2);
+    check('runs: the traffic split panel renders data or an honest empty state', splitPanel.ok, splitPanel.detail);
     check(
       'runs: the detail view shows the test name',
       ((await page.getByTestId('run-name').textContent()) || '').trim() === ledgerRunName,

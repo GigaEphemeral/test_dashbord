@@ -70,6 +70,7 @@ const faults = ref([])
 const toxiproxy = ref(null)
 const busy = ref('')
 const syncTick = ref(0)
+const lastSyncAt = ref(null)
 
 const ledgerStatus = ref(null)
 const ledgerError = ref('')
@@ -326,6 +327,7 @@ function stopPolling() {
 async function globalSync() {
   if (busy.value) return
   await Promise.all([syncEnvironment(), refreshLedgerSummary()])
+  lastSyncAt.value = new Date()
   syncTick.value += 1
 }
 
@@ -347,6 +349,7 @@ async function reloadAll() {
   error.value = ''
   await checkHealth()
   await Promise.all([syncEnvironment(), refreshScenarios(), refreshContainers(), refreshLedgerSummary()])
+  lastSyncAt.value = new Date()
   syncTick.value += 1
   if (autoSync.value) {
     startPolling()
@@ -362,7 +365,7 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div class="page workspace-page">
+  <div class="page workspace-page" :class="{ 'page-wide': section === 'observe' }">
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark">HA</div>
@@ -489,11 +492,13 @@ onBeforeUnmount(stopPolling)
           :token="token.trim()"
           :active="section === 'observe'"
           :sync-tick="syncTick"
+          :sync-at="lastSyncAt"
           :containers="containers"
           :faults="faults"
           :toxiproxy="toxiproxy"
           :enabled-nodes="enabledNodes"
           @open-thread="openThread"
+          @refresh="globalSync"
           @changed="syncEnvironment"
         />
 

@@ -133,7 +133,11 @@ onBeforeUnmount(() => {
       <p v-if="windowLabel" class="hint">窗口 {{ windowLabel }} · 条目 {{ metrics.length }} · 质量 {{ overall || '—' }}</p>
       <p v-if="query?.links?.grafanaUrl" class="hint">
         <a :href="query.links.grafanaUrl" target="_blank" rel="noreferrer">在 Grafana 打开当前时间范围</a>
-        <template v-if="query.links.tempoUrl"> · <a :href="query.links.tempoUrl" target="_blank" rel="noreferrer">Tempo 检索</a></template>
+        <template v-if="query.links.tempoUrl"> · <a :href="query.links.tempoUrl" target="_blank" rel="noreferrer">Tempo 链路检索（Grafana Explore）</a></template>
+      </p>
+      <p v-if="query?.links?.tempoUrl" class="hint">
+        Tempo 链路检索按当前时间窗打开 Grafana Explore 的 Tempo 数据源（TraceQL 空查询 = 全部链路）；
+        Tempo 的 3200 端口只在 compose 网络内，浏览器不能直连。
       </p>
     </section>
 

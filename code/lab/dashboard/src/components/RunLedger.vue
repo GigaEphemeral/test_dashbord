@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import MetricCards from './MetricCards.vue'
 import RunReconciliation from './RunReconciliation.vue'
+import TrafficSplitPanel from './TrafficSplitPanel.vue'
 import {
   archiveRun,
   closeOperation,
@@ -1593,6 +1594,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div v-if="metricsError" class="error-banner" role="alert" data-testid="run-metrics-error">{{ metricsError }}</div>
+      <TrafficSplitPanel :token="token" :run-id="selectedRunId" :active="Boolean(selectedRunId)" />
       <MetricCards
         :metrics="runMetrics?.metrics || []"
         :overall="metricsOverall"

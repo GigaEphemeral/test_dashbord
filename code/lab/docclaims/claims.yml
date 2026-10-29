@@ -797,3 +797,92 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+- id: b5-k6-thresholds
+  polarity: positive
+  doc:
+    - doc/process/Stage2/b5-metrics-gap-plan.md
+    - doc/process/Stage2/指标字典.md
+  statement: "B5-04b：GET /lab/runs/{runId}/k6/thresholds 解析已归档 summary.json 的阈值与 avg/med（crossed=true 判 FAIL，无报告 404，无阈值 NO_THRESHOLDS）"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/BenchThresholdService.java && grep -q 'k6/thresholds' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/BenchExecutionController.java && grep -q 'NO_THRESHOLDS' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/BenchThresholdService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-tomcat-catalog
+  polarity: positive
+  doc:
+    - doc/process/Stage2/b5-metrics-gap-plan.md
+    - doc/process/Stage2/指标字典.md
+  statement: "B5-04b：catalog.yml 新增 5 个 Tomcat 键，使用真实导出名 tomcat_threads_* / tomcat_connections_* 与 name=\"http-nio-8080\""
+  verify:
+    kind: grep_count
+    path: code/services/chaos-controller/src/main/resources/metrics/catalog.yml
+    pattern: "tomcat_(threads_(busy|current|config_max)_threads|connections_(current|config_max)_connections)"
+  expect: 5
+  last_verified: 2026-10-29
+
+- id: b5-jvm-flags-readback
+  polarity: positive
+  doc:
+    - doc/process/Stage2/b5-metrics-gap-plan.md
+    - doc/process/Stage2/指标字典.md
+  statement: "B5-04b：GET /lab/instances/{instance}/effective 对 JDK21 容器执行 jcmd 1 VM.flags 并返回 jvmFlags/jvmReadback；JDK8 保持 READBACK_UNAVAILABLE"
+  verify:
+    kind: shell
+    command: "grep -q 'jcmd' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigService.java && grep -q 'jvmReadback' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceViews.java && grep -q 'jvm-flags-timeout-seconds' code/services/chaos-controller/src/main/resources/application.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-instance-events
+  polarity: positive
+  doc:
+    - doc/process/Stage2/b5-metrics-gap-plan.md
+    - doc/process/Stage2/指标字典.md
+  statement: "B5-04b：GET /lab/instances/{instance}/events 扫描有界容器日志中的 OutOfMemoryError / Heap dump file created / Dumping heap，无匹配返回 NO_DATA 且不造事件"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceEventsService.java && grep -q '/lab/instances/{instance}/events' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceEventsController.java && grep -q 'OutOfMemoryError' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceEventsService.java && grep -q 'NO_DATA' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceEventsService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-router-unwired
+  polarity: positive
+  doc:
+    - doc/process/Stage2/b5-metrics-gap-plan.md
+    - doc/process/Stage2/指标字典.md
+  statement: "B5-04b：MySQL Router 确认无 Prometheus 源（8443 /metrics=404、REST=401），prometheus.yml 无 router job，字典/拓扑保持 UNWIRED 且不显示 0"
+  verify:
+    kind: shell
+    command: "! grep -qi 'router' code/lab/docker/prometheus/prometheus.yml && grep -q 'MySQL Router 自身指标' doc/process/Stage2/指标字典.md && grep -q '8443' doc/process/Stage2/指标字典.md"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-02-instance-stats
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-02-instance-split.md
+  statement: "B5-02：GET /lab/runs/{runId}/instance-stats 按 run 窗口返回实例命中/占比/响应/错误率/拒绝/权重，排除 /actuator/**，权重解析自 nginx 只读挂载"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/traffic/InstanceStatsService.java && grep -q '/lab/runs/{runId}/instance-stats' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/traffic/InstanceStatsController.java && grep -q 'uri!~' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/traffic/InstanceStatsService.java && test -f code/lab/dashboard/src/components/TrafficSplitPanel.vue && grep -q 'LAB_TRAFFIC_SPLIT_NGINX_CONF' code/lab/docker/compose.base.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b5-01b-console-defects
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-01b-console-defects.md
+    - doc/avoid_common_error/20-k6-remote-write-cardinality.md
+  statement: "B5-01b/05：监控页 JVM 按实例多曲线、悬浮刷新、监控分区全宽；Tempo 链接走 Grafana Explore；k6 systemTags 降基数、采样与 Tempo 抓取外置"
+  verify:
+    kind: shell
+    command: "grep -q 'sum by (instance) (jvm_memory_used_bytes' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'monitor-refresh-fab' code/lab/dashboard/src/components/MonitorPage.vue && grep -q 'page-wide' code/lab/dashboard/src/style.css && grep -q 'tempoExploreLeft' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/metrics/MetricsService.java && grep -q 'systemTags' code/lab/k6/lib/config.js && grep -q 'PROMETHEUS_MEM_LIMIT' code/lab/docker/compose.base.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

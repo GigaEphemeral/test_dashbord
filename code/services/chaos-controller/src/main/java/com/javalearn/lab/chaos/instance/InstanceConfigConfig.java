@@ -53,6 +53,15 @@ public class InstanceConfigConfig {
                 ledgerProperties, ledgerBootstrap, objectMapper);
     }
 
+    /** B5-04b: bounded OOM / heap-dump event scan (no ledger dependency). */
+    @Bean
+    public InstanceEventsService instanceEventsService(
+            InstanceConfigProperties properties,
+            org.springframework.beans.factory.ObjectProvider<
+                    com.javalearn.lab.chaos.gateway.ContainerGateway> containerGatewayProvider) {
+        return new InstanceEventsService(properties, containerGatewayProvider);
+    }
+
     @Bean
     public InstanceConfigService instanceConfigService(InstanceConfigProperties properties,
                                                        InstanceConfigValidator validator,

@@ -206,6 +206,11 @@ x-app-env: &app-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   OTEL_TRACES_EXPORTER: otlp
+  # 100% sampling floods Tempo during a 500-VU run (its /metrics scrape then
+  # blocked Prometheus for 1-2 minutes). Ratio sampling keeps trace search
+  # usable without the overload; override for a focused trace demo.
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
   # Metrics stay on the Actuator scrape path; logs stay on stdout (JSON).
   OTEL_METRICS_EXPORTER: none
   OTEL_LOGS_EXPORTER: none
@@ -417,6 +422,8 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_TRACES_EXPORTER: otlp
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dev
@@ -661,9 +668,14 @@ services:
       LAB_METRICS_MAX_SERIES: ${LAB_METRICS_MAX_SERIES:-120}
       LAB_METRICS_MAX_KEYS: ${LAB_METRICS_MAX_KEYS:-40}
       LAB_METRICS_GRAFANA_URL: ${LAB_METRICS_GRAFANA_URL:-http://localhost:3000}
-      LAB_METRICS_TEMPO_URL: ${LAB_METRICS_TEMPO_URL:-http://tempo:3200}
+      LAB_METRICS_TEMPO_DATASOURCE_UID: ${LAB_METRICS_TEMPO_DATASOURCE_UID:-tempo}
       LAB_METRICS_GRAFANA_DASHBOARD_UID: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:-}
       LAB_METRICS_CATALOG_LOCATION: ${LAB_METRICS_CATALOG_LOCATION:-classpath:metrics/catalog.yml}
+      # Stage2 B5-02 traffic split: weights come from the mounted nginx config
+      # (read-only below), so editing the upstream block needs no rebuild.
+      LAB_TRAFFIC_SPLIT_NGINX_CONF: ${LAB_TRAFFIC_SPLIT_NGINX_CONF:-/etc/javalab/nginx/default.conf}
+      LAB_TRAFFIC_SPLIT_UPSTREAM_NAME: ${LAB_TRAFFIC_SPLIT_UPSTREAM_NAME:-seckill_backend}
+      LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS: ${LAB_TRAFFIC_SPLIT_IMBALANCE_WARN_POINTS:-5}
       # Stage2 B1-04 environment pre-check (run start gate). Identical defaults
       # to application.yml and .env.example; no force/skip key exists on purpose.
       LAB_PRECHECK_ENABLED: ${LAB_PRECHECK_ENABLED:-true}
@@ -733,6 +745,9 @@ services:
       # Write-behind ledger stash (B1-01): events that could not be written
       # while MySQL was down survive a controller restart and replay in order.
       - jl-ledger-stash-data:/app/ledger-stash
+      # Stage2 B5-02: the active nginx site config (read-only) so the traffic
+      # split can show the real upstream weights instead of a hardcoded copy.
+      - ./nginx/conf.d/default.conf:/etc/javalab/nginx/default.conf:ro
       # Stage2 B2-02b-1: shared summary volume. k6 writes
       # /reports/<runId>/summary.json through the same named volume, so the
       # controller can serve GET /lab/runs/{runId}/k6/report without copying
@@ -852,11 +867,13 @@ services:
     image: ${PROMETHEUS_IMAGE}
     container_name: jl-prometheus
     restart: unless-stopped
-    mem_limit: 512m
+    # Head-series churn during a load run is the real memory driver; 512m left
+    # no headroom (observed RSS 460MB). Both the cap and retention are knobs.
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-768m}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
       # The console reaches the UI through Nginx at /prom/. Keep internal

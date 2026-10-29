@@ -51,8 +51,12 @@ public class MetricsProperties {
     /** Grafana base address used for the deep link (externalized). */
     private String grafanaUrl = "http://localhost:3000";
 
-    /** Tempo base address used for the deep link (externalized). */
-    private String tempoUrl = "http://tempo:3200";
+    /**
+     * Grafana Tempo datasource UID behind the browser-facing trace search link.
+     * The raw Tempo API is not published on the host, so the console deep-links
+     * into Grafana Explore instead of a container-internal hostname.
+     */
+    private String tempoDatasourceUid = "tempo";
 
     /**
      * Optional Grafana dashboard UID. Blank (default) means the deep link points
@@ -67,8 +71,12 @@ public class MetricsProperties {
     public void validate() {
         requireHttpUrl(prometheusUrl, "lab.metrics.prometheus-url", "LAB_METRICS_PROMETHEUS_URL");
         requireHttpUrl(grafanaUrl, "lab.metrics.grafana-url", "LAB_METRICS_GRAFANA_URL");
-        requireHttpUrl(tempoUrl, "lab.metrics.tempo-url", "LAB_METRICS_TEMPO_URL");
         requireText(catalogLocation, "lab.metrics.catalog-location", "LAB_METRICS_CATALOG_LOCATION");
+        if (!tempoDatasourceUid.matches("[A-Za-z0-9_-]{1,128}")) {
+            throw new IllegalStateException("lab.metrics.tempo-datasource-uid must match "
+                    + "[A-Za-z0-9_-]{1,128} (was '" + tempoDatasourceUid
+                    + "'); env LAB_METRICS_TEMPO_DATASOURCE_UID");
+        }
         range(connectTimeoutSeconds, 1, 60, "lab.metrics.connect-timeout-seconds",
                 "LAB_METRICS_CONNECT_TIMEOUT_SECONDS");
         range(requestTimeoutSeconds, 1, 300, "lab.metrics.request-timeout-seconds",
@@ -192,12 +200,12 @@ public class MetricsProperties {
         this.grafanaUrl = grafanaUrl;
     }
 
-    public String getTempoUrl() {
-        return tempoUrl;
+    public String getTempoDatasourceUid() {
+        return tempoDatasourceUid;
     }
 
-    public void setTempoUrl(String tempoUrl) {
-        this.tempoUrl = tempoUrl;
+    public void setTempoDatasourceUid(String tempoDatasourceUid) {
+        this.tempoDatasourceUid = tempoDatasourceUid;
     }
 
     public String getGrafanaDashboardUid() {

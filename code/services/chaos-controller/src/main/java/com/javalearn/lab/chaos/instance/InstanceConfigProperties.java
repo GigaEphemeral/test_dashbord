@@ -62,6 +62,20 @@ public class InstanceConfigProperties {
     private int gcLogMaxLines = 2000;
     private int gcLogMaxBytes = 262144;
     private int gcLogTailTimeoutSeconds = 5;
+    /**
+     * B5-04b: {@code jcmd 1 VM.flags} readback bounds. Only JDK 21 instances are
+     * read; a JDK 8 instance stays READBACK_UNAVAILABLE by design. The output
+     * is truncated to the byte cap before token parsing.
+     */
+    private int jvmFlagsTimeoutSeconds = 5;
+    private int jvmFlagsMaxBytes = 8192;
+    /**
+     * B5-04b: bounded container-log scan for OOM / heap-dump events. Docker's
+     * log tail is capped at 1000 lines by the gateway, so the default stays low.
+     */
+    private int eventsLogTail = 200;
+    private int eventsMaxEvents = 50;
+    private int eventsLineMaxChars = 400;
     /** B4-04: the JDK 8 shell instance and its Prometheus job (LIMITED). */
     private String jdk8Instance = "seckill-app-jdk8";
     private String jdk8PrometheusJob = "seckill-app-jdk8";
@@ -154,6 +168,26 @@ public class InstanceConfigProperties {
         if (gcLogTailTimeoutSeconds < 1 || gcLogTailTimeoutSeconds > 120) {
             throw new IllegalStateException("lab.instance.gc-log-tail-timeout-seconds must be"
                     + " between 1 and 120 (env LAB_INSTANCE_GC_LOG_TAIL_TIMEOUT_SECONDS)");
+        }
+        if (jvmFlagsTimeoutSeconds < 1 || jvmFlagsTimeoutSeconds > 120) {
+            throw new IllegalStateException("lab.instance.jvm-flags-timeout-seconds must be"
+                    + " between 1 and 120 (env LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS)");
+        }
+        if (jvmFlagsMaxBytes < 1024 || jvmFlagsMaxBytes > 1048576) {
+            throw new IllegalStateException("lab.instance.jvm-flags-max-bytes must be between"
+                    + " 1024 and 1048576 (env LAB_INSTANCE_JVM_FLAGS_MAX_BYTES)");
+        }
+        if (eventsLogTail < 1 || eventsLogTail > 1000) {
+            throw new IllegalStateException("lab.instance.events-log-tail must be between 1 and"
+                    + " 1000 (env LAB_INSTANCE_EVENTS_LOG_TAIL)");
+        }
+        if (eventsMaxEvents < 1 || eventsMaxEvents > 200) {
+            throw new IllegalStateException("lab.instance.events-max-events must be between 1 and"
+                    + " 200 (env LAB_INSTANCE_EVENTS_MAX_EVENTS)");
+        }
+        if (eventsLineMaxChars < 80 || eventsLineMaxChars > 4000) {
+            throw new IllegalStateException("lab.instance.events-line-max-chars must be between"
+                    + " 80 and 4000 (env LAB_INSTANCE_EVENTS_LINE_MAX_CHARS)");
         }
         if (gcLogRoot == null || !gcLogRoot.matches(GC_LOG_ROOT)
                 || gcLogRoot.contains("..") || gcLogRoot.endsWith("/") && gcLogRoot.length() > 1) {
@@ -348,6 +382,46 @@ public class InstanceConfigProperties {
 
     public void setGcLogTailTimeoutSeconds(int gcLogTailTimeoutSeconds) {
         this.gcLogTailTimeoutSeconds = gcLogTailTimeoutSeconds;
+    }
+
+    public int getJvmFlagsTimeoutSeconds() {
+        return jvmFlagsTimeoutSeconds;
+    }
+
+    public void setJvmFlagsTimeoutSeconds(int jvmFlagsTimeoutSeconds) {
+        this.jvmFlagsTimeoutSeconds = jvmFlagsTimeoutSeconds;
+    }
+
+    public int getJvmFlagsMaxBytes() {
+        return jvmFlagsMaxBytes;
+    }
+
+    public void setJvmFlagsMaxBytes(int jvmFlagsMaxBytes) {
+        this.jvmFlagsMaxBytes = jvmFlagsMaxBytes;
+    }
+
+    public int getEventsLogTail() {
+        return eventsLogTail;
+    }
+
+    public void setEventsLogTail(int eventsLogTail) {
+        this.eventsLogTail = eventsLogTail;
+    }
+
+    public int getEventsMaxEvents() {
+        return eventsMaxEvents;
+    }
+
+    public void setEventsMaxEvents(int eventsMaxEvents) {
+        this.eventsMaxEvents = eventsMaxEvents;
+    }
+
+    public int getEventsLineMaxChars() {
+        return eventsLineMaxChars;
+    }
+
+    public void setEventsLineMaxChars(int eventsLineMaxChars) {
+        this.eventsLineMaxChars = eventsLineMaxChars;
     }
 
     public String getGcLogRoot() {

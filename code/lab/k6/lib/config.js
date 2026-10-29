@@ -336,10 +336,18 @@ export const config = {
  * Options shared by every scenario. `tags` is what puts run_id on *all* k6
  * metrics (including custom rates/counters and VU/iteration metrics), not only
  * on the HTTP requests that are tagged individually in lib/http.js.
+ *
+ * `systemTags` is a memory guard, not cosmetics: Prometheus remote write turns
+ * every k6 tag into a label, and the default `url`/`name` tags carry the full
+ * path with a unique product id. One load run produced ~8k series per metric
+ * family (20.9万 head series) and drove Prometheus to 460MB of its 512MB cap,
+ * which is what made it hang during tests. Keep only the low-cardinality tags
+ * the dashboards and the metric dictionary query.
  */
 export const baseOptions = {
   summaryTrendStats: config.summaryTrendStats,
   summaryTimeUnit: config.summaryTimeUnit,
+  systemTags: ['status', 'method', 'expected_response', 'error', 'error_code'],
   tags: {
     run_id: config.runId,
   },

@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -42,12 +43,15 @@ class BenchExecutionControllerTest {
     private static final String RUN_ID = "run-20261028-001";
 
     private BenchRunExecutor executor;
+    private BenchThresholdService thresholds;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         executor = mock(BenchRunExecutor.class);
-        mvc = MockMvcBuilders.standaloneSetup(new BenchExecutionController(executor))
+        thresholds = mock(BenchThresholdService.class);
+        mvc = MockMvcBuilders.standaloneSetup(
+                        new BenchExecutionController(executor, thresholds))
                 .setControllerAdvice(new LabExceptionHandler())
                 .build();
     }
@@ -191,5 +195,52 @@ class BenchExecutionControllerTest {
         mvc.perform(get("/lab/runs/{runId}/k6/logs", RUN_ID).param("tail", "many"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("40001"));
+    }
+
+    // ------------------------------------------------------ B5-04b thresholds
+
+    @Test
+    void thresholdsReturnParsedVerdictsAndAvgMed() throws Exception {
+        when(thresholds.thresholds(RUN_ID)).thenReturn(
+                new BenchThresholdService.ThresholdReport(RUN_ID, true,
+                        java.util.List.of(
+                                new BenchThresholdService.ThresholdResult(
+                                        "flow_errors", "rate<0.01", true),
+                                new BenchThresholdService.ThresholdResult(
+                                        "http_req_duration{flow:product}", "p(95)<300", false)),
+                        new BenchThresholdService.MetricsView(
+                                new BenchThresholdService.DurationStats(24.07, 23.72),
+                                new BenchThresholdService.DurationStats(1028.9, 1028.9)),
+                        null));
+
+        mvc.perform(get("/lab/runs/{runId}/k6/thresholds", RUN_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.runId").value(RUN_ID))
+                .andExpect(jsonPath("$.data.available").value(true))
+                .andExpect(jsonPath("$.data.thresholds[0].metric").value("flow_errors"))
+                .andExpect(jsonPath("$.data.thresholds[0].passed").value(true))
+                .andExpect(jsonPath("$.data.thresholds[1].condition").value("p(95)<300"))
+                .andExpect(jsonPath("$.data.thresholds[1].passed").value(false))
+                .andExpect(jsonPath("$.data.metrics.http_req_duration.avg").value(24.07))
+                .andExpect(jsonPath("$.data.metrics.iteration_duration.avg").value(1028.9))
+                .andExpect(jsonPath("$.data.note").value(
+                        org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void missingThresholdReportIs404AndOversizedIs413() throws Exception {
+        // doThrow, not when(...): the second stubbing would otherwise invoke the
+        // method, which the first stubbing already made throw.
+        doThrow(new BenchReportNotFoundException("no report"))
+                .when(thresholds).thresholds(RUN_ID);
+        mvc.perform(get("/lab/runs/{runId}/k6/thresholds", RUN_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("40401"));
+
+        doThrow(new BenchReportTooLargeException("too large"))
+                .when(thresholds).thresholds(RUN_ID);
+        mvc.perform(get("/lab/runs/{runId}/k6/thresholds", RUN_ID))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.code").value("41301"));
     }
 }
