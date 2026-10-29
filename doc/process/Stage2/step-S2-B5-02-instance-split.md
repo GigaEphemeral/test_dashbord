@@ -3,7 +3,8 @@
 > 任务/步骤：**B5-02** 负载均衡分流（方案 §9.6，验收 A17）
 > 日期：2026-10-29
 > 分支 / HEAD：`feature/stage2-workbench` / `3ae92a4`（本步改动本地待提交）
-> 测试：`InstanceStatsServiceTest` 3/0、`UpstreamWeightsTest` 4/0；dashboard build 通过
+> 测试：`InstanceStatsServiceTest` 3/0、`UpstreamWeightsTest` 4/0；控制器全量 867/0；console-smoke **151/0**
+> （新增“分流面板有数据或诚实空态”断言）；dashboard build 通过；A17 真机端点验证通过
 > 关联：计划 §6 B5-02；指标字典 HTTP/JVM/线程池族；`b5-metrics-gap-plan.md` §3（Nginx per-peer = UNWIRED）
 
 # 当前进展
@@ -38,7 +39,7 @@
 
 | 项 | 说明 | 归属 |
 |---|---|---|
-| A17 真机验收 | 需重建控制器镜像（新增挂载/环境变量）并发起一次 load run，核对占比与权重、确认 `/actuator/**` 不计入 | B5-05 |
+| A17 真机验收 | 已通过：`run-20261029-005` 端点返回真实占比/分位数/权重，app-1 停机触发偏差 warning；仍需在**新发起**的 load run 上复核一次（本轮沿用已有 run 的窗口） | B5-05 |
 | 上游交叉核对 | nginx 开源版无 per-peer 指标；如需真实上游时延/状态码，需 nginx-plus 或日志管道（Future） | Future |
 | 背景流量污染 | 预检查已提示 `jl-traffic`；面板只做文字说明，未在数据上扣除 | 记录 |
 | P95/P99 可用性 | 依赖 `http_server_requests_seconds_bucket`；若某实例未导出直方图则为 null | 记录 |
@@ -50,6 +51,39 @@
 3. 面板请求在每次选中 run 时发起一次，不随 5s 全局同步轮询（避免 Prometheus 压力）；需要最新数据用面板上的“刷新分流”。
 
 # 附录
+
+## 真机证据（2026-10-29，`run-20261029-005`）
+
+控制器重建后（本地打包 jar + 运行时镜像，见下），`GET /lab-api/lab/runs/run-20261029-005/instance-stats` 返回：
+
+```text
+quality OK   from 2026-10-29T12:17:02Z  to 2026-10-29T12:28:04Z
+upstream {"available":true,"source":"/etc/javalab/nginx/default.conf",
+          "weights":{"app-1":1,"app-2":1,"app-3":1}}
+app-1 hits=0        share=0%     config="jdk21 · Xmx512m · G1 · applied rev27"
+app-2 hits=78240.6  share=52.3%  avg=36.6ms  p95=127ms  p99=474ms  rps=118.2
+app-3 hits=71296.9  share=47.7%  avg=36.8ms  p95=153ms  p99=590ms  rps=107.7
+warnings: app-1 实测占比 0.0% 与权重期望 33.3% 相差 33.3 个百分点 …
+```
+
+- app-1 在该 run 窗口末端被停过，命中为 0；warning 按设计提示先排查实例健康。
+- 该 run 没有 5xx 序列，`failed/errorRate` 保持 `null`（面板显示无数据并解释原因），不推断为 0。
+- `/etc/javalab/nginx/default.conf` 在容器内可读（compose 只读挂载生效）。
+
+## 部署方式（本机镜像回退）
+
+容器内 Maven 无法访问 Maven Central，`docker compose build chaos-controller` 会卡住，因此按项目既有
+回退方式构建：
+
+```bash
+cd code && mvn -pl services/chaos-controller -am -DskipTests package
+cd code/services/chaos-controller && docker build -f ../../../tmp/controller-runtime.Dockerfile \
+  -t java-learn-lab/chaos-controller:jdk21 .
+cd code/lab/docker && docker compose -f compose.base.yml -f compose.dev.yml --env-file .env \
+  up -d --force-recreate chaos-controller
+```
+
+（`tmp/` 在 `.gitignore` 内，运行时 Dockerfile 不入库；正式链路仍是 `compose build`。）
 
 ## 响应样例（字段形状）
 

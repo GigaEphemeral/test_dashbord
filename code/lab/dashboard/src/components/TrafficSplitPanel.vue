@@ -171,7 +171,8 @@ onBeforeUnmount(() => {
 
     <p class="hint">
       权重与期望占比来自当前 nginx upstream 配置（<code>{{ stats?.upstream?.source || '—' }}</code>）；
-      权重不可用时显示原因而不是默认等权。
+      权重不可用时显示原因而不是默认等权。窗口内没有 5xx 序列时“失败数/错误率”显示无数据，
+      不推断为 0；4xx（秒杀 409/429 等业务拒绝）不计入失败。
     </p>
   </section>
 </template>

@@ -68,11 +68,13 @@
 > **B5-01b/04b + 控台缺陷基线（2026-10-29）**：监控页 JVM 按实例多曲线、悬浮刷新、监控分区全宽；
 > Tempo 检索改指 Grafana Explore（`LAB_METRICS_TEMPO_DATASOURCE_UID`）；Prometheus 失稳根因 = k6 远程写
 > 基数爆炸（单族 8151 序列 / head 20.9 万）+ 100% 采样压垮 Tempo（`/metrics` 51–118s）。已降 systemTags、
-> 采样 10%、Tempo 抓取 60s、内存上限外置。交接 `step-S2-B5-01b-console-defects.md`、避坑 20。
+> 采样 10%、Tempo 抓取 60s、内存上限外置。控制器全量 **867/0**（含 Spring 上下文）、console-smoke **151/0**、
+> claims **67**。交接 `step-S2-B5-01b-console-defects.md`、避坑 20。
 
 > **B5-02 基线（2026-10-29）**：`GET /lab/runs/{runId}/instance-stats` + 分流面板落地；
 > `InstanceStatsServiceTest` 3/0、`UpstreamWeightsTest` 4/0；nginx 权重改为只读挂载解析。
-> A17 真机验收待控制器镜像重建后执行。交接 `step-S2-B5-02-instance-split.md`。
+> A17 真机通过（run-20261029-005：app-2 52.3% / app-3 47.7% / app-1 0%（停机 warning），
+> 阈值端点 4 条全 FAIL 与 summary 一致）。交接 `step-S2-B5-02-instance-split.md`。
 
 规约要点（每一步都适用）：
 

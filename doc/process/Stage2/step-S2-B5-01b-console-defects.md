@@ -3,7 +3,8 @@
 > 任务/步骤：用户反馈 1.1–1.5（监控页 JVM 多曲线、悬浮刷新、全宽布局、Tempo 检索、Prometheus 挂掉）
 > 日期：2026-10-29
 > 分支 / HEAD：`feature/stage2-workbench` / `3ae92a4`（本步改动本地待提交）
-> 测试：dashboard `vite build` 通过（63 modules）；控制器定向测试 `BenchExecutionControllerTest` 14/0、`BenchThresholdServiceTest` 5/0、`Metrics*Test`、`InstanceStats*Test` 见 B5-02 交接
+> 测试：dashboard `vite build` 通过（63 modules）；控制器全量 **867/0**（含 Spring 上下文）；
+> console-smoke **151/0**（新增悬浮刷新 / JVM 分线 / 分流面板 3 条断言）；claims **67** 全部通过
 > 关联：计划 §6 B5-01/B5-04；`doc/avoid_common_error/20-k6-remote-write-cardinality.md`
 
 # 当前进展
@@ -57,6 +58,16 @@ process_resident_memory_bytes{job="prometheus"} = 460,627,968  (~460MB)
 /api/v1/status/tsdb headStats.numSeries = 209,258
 k6_http_req_duration_max 等族各 8,151 条序列
 jl-tempo 日志: GET /metrics 51.33s / 1m58.49s i/o timeout (Prometheus scrape timeout 5s)
+```
+
+## 修复后的真机状态（2026-10-29 21:02–21:12）
+
+```text
+docker inspect jl-prometheus -> Mem=805306368 (768m), Status=running, /-/healthy 正常
+up{job="tempo"} = 1（抓取恢复；job 改为 60s/20s）
+Prometheus head series 仍约 20.7 万：旧序列在 head 压缩（约 2h）后才回收，新 run 不再增长
+GET /lab-api/lab/metrics/window?...&keys=http.rps -> links.tempoUrl =
+  http://localhost:3000/explore?left={"datasource":"tempo","queries":[traceql "{}"],"range":{...}}
 ```
 
 ## 关键文件
