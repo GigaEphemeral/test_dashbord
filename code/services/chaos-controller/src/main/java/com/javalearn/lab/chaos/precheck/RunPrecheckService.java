@@ -14,6 +14,7 @@ import com.javalearn.lab.chaos.ledger.OperationContext;
 import com.javalearn.lab.chaos.ledger.OperationRecord;
 import com.javalearn.lab.chaos.ledger.OperationStatus;
 import com.javalearn.lab.chaos.ledger.RunLedgerRepository;
+import com.javalearn.lab.chaos.ledger.RunRecord;
 import com.javalearn.lab.chaos.metrics.PrometheusGateway;
 import com.javalearn.lab.chaos.metrics.PrometheusMatrix;
 import com.javalearn.lab.chaos.metrics.PrometheusPoint;
@@ -150,7 +151,8 @@ public class RunPrecheckService implements RunPrecheckGate {
     private PrecheckReport inspect(String runId, boolean ignoreOwnStartOperation,
                                    String ignoreOperationId) {
         LedgerReadiness.requireReady(ledgerProperties, bootstrap);
-        requireRun(runId);
+        RunRecord run = requireRun(runId);
+        List<String> nodes = run.nodeList();
         Instant checkedAt = clock.instant();
         if (!properties.isEnabled()) {
             return PrecheckReport.disabled(runId, checkedAt.toString());
@@ -161,9 +163,9 @@ public class RunPrecheckService implements RunPrecheckGate {
         items.add(chaosCheck(deadline));
         items.add(toxiproxyCheck(deadline));
         items.add(operationsCheck(runId, ignoreOwnStartOperation, ignoreOperationId, deadline));
-        items.add(monitoringCheck(deadline));
+        items.add(monitoringCheck(deadline, nodes));
         items.add(resourcesCheck(deadline));
-        items.add(imagesCheck(deadline));
+        items.add(imagesCheck(deadline, nodes));
         PrecheckReport report = PrecheckReport.of(runId, checkedAt.toString(), items,
                 properties.getMaxListedItems());
         log.info("Precheck for run {}: verdict={} blocking={} warnings={}", runId,
@@ -354,17 +356,21 @@ public class RunPrecheckService implements RunPrecheckGate {
                 detail);
     }
 
-    private PrecheckItem monitoringCheck(Instant deadline) {
+    private PrecheckItem monitoringCheck(Instant deadline, List<String> nodes) {
         if (budgetExhausted(deadline)) {
             return skipped(KEY_MONITORING, deadline);
         }
         long at = clock.instant().getEpochSecond();
-        int requiredApps = properties.getRequiredAppTargets();
+        int requiredApps = nodes.isEmpty() ? properties.getRequiredAppTargets() : nodes.size();
+        String appQuery = nodes.isEmpty() ? PROMQL_APP_UP : appUpQuery(nodes);
         Map<String, Object> detail = new LinkedHashMap<>();
         List<String> failures = new java.util.ArrayList<>();
         try {
             detail.put("requiredAppTargets", requiredApps);
-            Double appUp = scalar(PROMQL_APP_UP, at);
+            if (!nodes.isEmpty()) {
+                detail.put("enabledNodes", nodes);
+            }
+            Double appUp = scalar(appQuery, at);
             detail.put("appUp", appUp);
             if (appUp == null || Math.round(appUp) != requiredApps) {
                 failures.add("app tier is not fully scraped: up{job=\"seckill-app\"}="
@@ -478,11 +484,32 @@ public class RunPrecheckService implements RunPrecheckGate {
         }
     }
 
-    private PrecheckItem imagesCheck(Instant deadline) {
+    /**
+     * B3-00a: when the draft enabled a subset, only those scrape targets count.
+     * Labels are service names ({@code app-1:8080}), so the match is on the
+     * instance prefix and does not hardcode the port.
+     */
+    static String appUpQuery(List<String> nodes) {
+        String pattern = nodes.stream()
+                .map(node -> node.replace("\\", "\\\\").replace("\"", "\\\""))
+                .collect(java.util.stream.Collectors.joining("|"));
+        return "sum(up{job=\"seckill-app\",instance=~\"(" + pattern + "):.*\"})";
+    }
+
+    private PrecheckItem imagesCheck(Instant deadline, List<String> nodes) {
         if (budgetExhausted(deadline)) {
             return skipped(KEY_IMAGES, deadline);
         }
-        List<String> names = properties.appContainerNames();
+        List<String> names = properties.appContainerNames().stream()
+                .filter(name -> nodes.isEmpty()
+                        || nodes.stream().anyMatch(node -> name.endsWith("-" + node)))
+                .toList();
+        if (names.isEmpty() && !nodes.isEmpty()) {
+            return PrecheckItem.warn(KEY_IMAGES,
+                    "no app container matches the enabled nodes " + nodes
+                            + "; image consistency is not verifiable",
+                    Map.of("enabledNodes", nodes));
+        }
         List<Map<String, Object>> listed = new ArrayList<>();
         List<String> runningIds = new ArrayList<>();
         int missing = 0;
@@ -511,6 +538,9 @@ public class RunPrecheckService implements RunPrecheckGate {
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("containers", listed);
         detail.put("missingContainers", missing);
+        if (!nodes.isEmpty()) {
+            detail.put("enabledNodes", nodes);
+        }
         detail.put("expectedImageId", blankToNull(properties.getExpectedAppImageId()));
         Set<String> distinct = new LinkedHashSet<>(runningIds);
         if (runningIds.isEmpty()) {
@@ -522,11 +552,12 @@ public class RunPrecheckService implements RunPrecheckGate {
                     "app containers run different images (" + distinct.size() + " distinct ids);"
                             + " rebuild or recreate the tier before a run", detail);
         }
-        if (runningIds.size() < properties.getRequiredAppTargets()) {
+        int requiredContainers = nodes.isEmpty() ? properties.getRequiredAppTargets() : nodes.size();
+        if (runningIds.size() < requiredContainers) {
             detail.put("runningContainers", runningIds.size());
             return PrecheckItem.warn(KEY_IMAGES,
-                    "only " + runningIds.size() + " of " + properties.getRequiredAppTargets()
-                            + " app containers are running; the comparison is incomplete", detail);
+                    "only " + runningIds.size() + " of " + requiredContainers
+                            + " enabled app containers are running; the comparison is incomplete", detail);
         }
         String expected = blankToNull(properties.getExpectedAppImageId());
         if (expected != null) {
@@ -590,9 +621,9 @@ public class RunPrecheckService implements RunPrecheckGate {
         return Math.max(0L, Duration.between(now, expiresAt).getSeconds());
     }
 
-    private void requireRun(String runId) {
+    private RunRecord requireRun(String runId) {
         try {
-            repository.findRun(runId)
+            return repository.findRun(runId)
                     .orElseThrow(() -> new LedgerRunNotFoundException("run not found: " + runId));
         } catch (org.springframework.dao.DataAccessException e) {
             throw LedgerReadiness.unavailable(bootstrap, e, "run query");

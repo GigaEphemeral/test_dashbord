@@ -6,6 +6,7 @@
 import { sleep } from 'k6';
 import { config, baseOptions } from '../lib/config.js';
 import { ensureLogin, product } from '../lib/flow.js';
+import { pickProductId } from '../lib/product-sampling.js';
 
 export const options = {
   ...baseOptions,
@@ -29,6 +30,6 @@ export const options = {
 
 export default function () {
   ensureLogin();
-  product();
+  product(pickProductId(config.productSampling));
   sleep(config.thinkTimeSeconds);
 }

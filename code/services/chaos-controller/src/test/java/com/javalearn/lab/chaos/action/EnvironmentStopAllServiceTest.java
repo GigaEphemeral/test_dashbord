@@ -6,6 +6,7 @@ import com.javalearn.lab.chaos.bench.exec.BenchRunExecutor;
 import com.javalearn.lab.chaos.bench.exec.K6ContainerGateway;
 import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
+import com.javalearn.lab.chaos.schedule.FaultScheduler;
 import com.javalearn.lab.chaos.traffic.TrafficService;
 import com.javalearn.lab.chaos.traffic.TrafficStateView;
 import org.junit.jupiter.api.BeforeEach;
@@ -88,6 +89,25 @@ class EnvironmentStopAllServiceTest {
         verify(benchRunExecutor).sweepOrphans();
         verify(benchRunExecutor, never()).stop("run-b");
         verify(benchRunExecutor).cleanup("run-b");
+    }
+
+    @Test
+    void stopAllCancelsPendingFaultSchedulesBeforeStoppingTheirK6Containers() {
+        FaultScheduler faultScheduler = mock(FaultScheduler.class);
+        ChaosProperties properties = new ChaosProperties();
+        properties.getAppProxy().setInstances(List.of("app-1"));
+        EnvironmentStopAllService withSchedule = new EnvironmentStopAllService(
+                chaosActionService, trafficService, appProxyService, benchRunExecutor, properties,
+                faultScheduler);
+        when(benchRunExecutor.sweepOrphans()).thenReturn(List.of(
+                new K6ContainerGateway.ContainerSummary("jl-k6-run-a", "cid-a", "run-a",
+                        K6ContainerGateway.STATUS_RUNNING)));
+        when(benchRunExecutor.stop("run-a")).thenReturn(true);
+        when(benchRunExecutor.cleanup("run-a")).thenReturn(true);
+
+        withSchedule.stopAll();
+
+        verify(faultScheduler).cancel("run-a");
     }
 
     @Test

@@ -8,6 +8,8 @@ import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
 import com.javalearn.lab.chaos.error.LedgerConflictException;
 import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
+import com.javalearn.lab.chaos.schedule.FaultScheduleEntry;
+import com.javalearn.lab.chaos.schedule.FaultScheduleValidator;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 
@@ -50,8 +52,10 @@ public class RunLedgerService {
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd")
             .withZone(ZoneOffset.UTC);
     private static final Pattern SCENARIO = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}");
+    private static final Pattern NODE_NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
     private static final Pattern SENSITIVE_KEY = Pattern.compile(
             "(?i).*(password|passwd|secret|token|credential|api[-_]?key).*");
+    private static final int NAME_MAX_LENGTH = 128;
 
     private final LedgerProperties properties;
     private final LedgerTargetResolver resolver;
@@ -59,19 +63,22 @@ public class RunLedgerService {
     private final RunLedgerRepository repository;
     private final LedgerWriter writer;
     private final LedgerStash stash;
+    private final FaultScheduleValidator faultScheduleValidator;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     public RunLedgerService(LedgerProperties properties, LedgerTargetResolver resolver,
                             LedgerBootstrap bootstrap, RunLedgerRepository repository,
-                            LedgerWriter writer, LedgerStash stash, ObjectMapper objectMapper,
-                            Clock clock) {
+                            LedgerWriter writer, LedgerStash stash,
+                            FaultScheduleValidator faultScheduleValidator,
+                            ObjectMapper objectMapper, Clock clock) {
         this.properties = properties;
         this.resolver = resolver;
         this.bootstrap = bootstrap;
         this.repository = repository;
         this.writer = writer;
         this.stash = stash;
+        this.faultScheduleValidator = faultScheduleValidator;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -79,23 +86,39 @@ public class RunLedgerService {
     public RunCreateView create(RunCreateRequest request) {
         requireReady();
         String scenario = validateScenario(request == null ? null : request.scenario());
+        String name = validateName(request == null ? null : request.name());
+        String nodes = validateNodes(request == null ? null : request.nodes());
         JsonNode params = objectMapper.valueToTree(
                 request == null || request.params() == null ? Map.of() : request.params());
         rejectSensitiveKeys(params, "params");
-        String paramsJson = serialize(params);
-        if (paramsJson.getBytes(StandardCharsets.UTF_8).length > properties.getMaxPayloadBytes()) {
-            throw new InvalidLedgerRequestException("run params exceed lab.ledger.max-payload-bytes="
-                    + properties.getMaxPayloadBytes());
+
+        Map<String, String> groups = new java.util.LinkedHashMap<>();
+        groups.put("request", serializeWithinCap(params, "params"));
+        if (request != null && request.config() != null) {
+            JsonNode config = objectMapper.valueToTree(request.config());
+            rejectSensitiveKeys(config, "config");
+            groups.put("config", serializeWithinCap(config, "config"));
         }
+        if (request != null && request.faultSchedule() != null) {
+            // B3-00b: persist the NORMALISED entries (manual holds written as
+            // recovery=manual/ttl=null), never the raw request map.
+            List<FaultScheduleEntry> scheduleEntries =
+                    faultScheduleValidator.validate(request.faultSchedule());
+            JsonNode schedule = objectMapper.valueToTree(scheduleEntries);
+            rejectSensitiveKeys(schedule, "faultSchedule");
+            groups.put("faultSchedule", serializeWithinCap(schedule, "faultSchedule"));
+        }
+        String paramsJson = groups.get("request");
 
         Instant now = clock.instant();
         DuplicateKeyException lastCollision = null;
         for (int attempt = 1; attempt <= properties.getRunIdMaxAttempts(); attempt++) {
             String runId = nextRunId(now);
-            RunRecord run = new RunRecord(runId, scenario, RunStatus.DRAFT,
-                    properties.getSourceCommit(), properties.getOperator(), now, now, null, null);
+            RunRecord run = new RunRecord(runId, scenario, name, nodes, RunStatus.DRAFT,
+                    properties.getSourceCommit(), properties.getOperator(), now, now, null, null,
+                    false);
             try {
-                writer.persistCreate(run, paramsJson);
+                writer.persistCreate(run, groups);
                 return new RunCreateView(run.runId(), run.status().name(), text(run.createdAt()));
             } catch (DuplicateKeyException e) {
                 lastCollision = e;
@@ -107,6 +130,11 @@ public class RunLedgerService {
     }
 
     public RunPageView list(String scenario, String status, Integer limit, Integer offset) {
+        return list(scenario, status, limit, offset, false);
+    }
+
+    public RunPageView list(String scenario, String status, Integer limit, Integer offset,
+                            boolean includeArchived) {
         requireReady();
         String effectiveScenario = scenario == null || scenario.isBlank() ? null : scenario.trim();
         RunStatus effectiveStatus = parseStatus(status);
@@ -121,10 +149,47 @@ public class RunLedgerService {
         }
         try {
             List<RunView> items = repository
-                    .listRuns(effectiveScenario, effectiveStatus, effectiveLimit, effectiveOffset)
+                    .listRuns(effectiveScenario, effectiveStatus, includeArchived, effectiveLimit,
+                            effectiveOffset)
                     .stream().map(this::view).toList();
-            long total = repository.countRuns(effectiveScenario, effectiveStatus);
+            long total = repository.countRuns(effectiveScenario, effectiveStatus, includeArchived);
             return new RunPageView(items, total, effectiveLimit, effectiveOffset);
+        } catch (DataAccessException e) {
+            throw unavailable(e);
+        }
+    }
+
+    /**
+     * B3-00a: hide/show a run without deleting it. Only a draft or a closed run
+     * may be archived; an unfinished run must be stopped (or closed) first, so a
+     * hidden row can never be the only sign of a live experiment.
+     */
+    public RunView setArchived(String runId, boolean archived) {
+        requireReady();
+        try {
+            RunRecord run = repository.findRun(runId)
+                    .orElseThrow(() -> new LedgerRunNotFoundException("run not found: " + runId));
+            requireCleanupAllowed(run, archived ? "archive" : "unarchive");
+            repository.updateRunArchived(runId, archived);
+            return view(repository.findRun(runId)
+                    .orElseThrow(() -> new LedgerRunNotFoundException("run not found: " + runId)));
+        } catch (DataAccessException e) {
+            throw unavailable(e);
+        }
+    }
+
+    /**
+     * B3-00a: deletion is allowed only for a draft or a closed run. The caller
+     * removes k6/report artifacts before this runs; the row delete cascades
+     * steps/env/params/operations/fault events/windows/checks/locks.
+     */
+    public boolean delete(String runId) {
+        requireReady();
+        try {
+            RunRecord run = repository.findRun(runId)
+                    .orElseThrow(() -> new LedgerRunNotFoundException("run not found: " + runId));
+            requireCleanupAllowed(run, "delete");
+            return repository.deleteRun(runId) > 0;
         } catch (DataAccessException e) {
             throw unavailable(e);
         }
@@ -229,6 +294,76 @@ public class RunLedgerService {
         return scenario;
     }
 
+    /** Optional display name: trimmed, bounded, control-free; blank means null. */
+    private static String validateName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() > NAME_MAX_LENGTH) {
+            throw new InvalidLedgerRequestException("name must be at most " + NAME_MAX_LENGTH
+                    + " characters (was " + trimmed.length() + ")");
+        }
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (Character.isISOControl(trimmed.charAt(i))) {
+                throw new InvalidLedgerRequestException(
+                        "name must not contain control characters");
+            }
+        }
+        return trimmed;
+    }
+
+    /**
+     * Enabled Java nodes: service names only (the same shape the bench target
+     * table accepts). Order is kept, duplicates collapse; absent means "all
+     * configured targets" for older callers.
+     */
+    private String validateNodes(List<String> nodes) {
+        if (nodes == null) {
+            return null;
+        }
+        if (nodes.isEmpty()) {
+            throw new InvalidLedgerRequestException("nodes must contain at least one Java service name");
+        }
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>();
+        for (String node : nodes) {
+            String value = node == null ? "" : node.trim();
+            if (!NODE_NAME.matcher(value).matches()) {
+                throw new InvalidLedgerRequestException("nodes entry '" + node + "' must match "
+                        + NODE_NAME.pattern() + " (service names such as app-1, never URLs or hosts)");
+            }
+            unique.add(value);
+        }
+        if (unique.size() > properties.getMaxNodes()) {
+            throw new InvalidLedgerRequestException("nodes has " + unique.size()
+                    + " entries, above lab.ledger.max-nodes=" + properties.getMaxNodes());
+        }
+        return String.join(",", unique);
+    }
+
+    private void requireCleanupAllowed(RunRecord run, String action) {
+        RunStatus status = run.status();
+        boolean closedRun = status.isTerminal() || status == RunStatus.UNKNOWN
+                || status == RunStatus.DRAFT;
+        if (!closedRun) {
+            throw new LedgerConflictException("run " + run.runId() + " is " + status + "; stop it (or "
+                    + "close an UNKNOWN run) before you " + action + " it. A live experiment cannot "
+                    + "disappear from the ledger");
+        }
+    }
+
+    private String serializeWithinCap(JsonNode node, String group) {
+        String json = serialize(node);
+        if (json.getBytes(StandardCharsets.UTF_8).length > properties.getMaxPayloadBytes()) {
+            throw new InvalidLedgerRequestException(group + " exceeds lab.ledger.max-payload-bytes="
+                    + properties.getMaxPayloadBytes());
+        }
+        return json;
+    }
+
     private static RunStatus parseStatus(String status) {
         if (status == null || status.isBlank()) {
             return null;
@@ -282,9 +417,9 @@ public class RunLedgerService {
     }
 
     private RunView view(RunRecord run) {
-        return new RunView(run.runId(), run.scenario(), run.status().name(), run.sourceCommit(),
-                run.operator(), text(run.createdAt()), text(run.updatedAt()),
-                text(run.startedAt()), text(run.endedAt()));
+        return new RunView(run.runId(), run.scenario(), run.name(), run.nodeList(),
+                run.status().name(), run.sourceCommit(), run.operator(), text(run.createdAt()),
+                text(run.updatedAt()), text(run.startedAt()), text(run.endedAt()), run.archived());
     }
 
     private OperationView view(OperationRecord operation) {

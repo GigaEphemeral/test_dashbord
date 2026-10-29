@@ -1,12 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BenchmarkPanel from './components/BenchmarkPanel.vue'
-import FaultsPanel from './components/FaultsPanel.vue'
+import ExperimentWizard from './components/ExperimentWizard.vue'
 import InstancesPanel from './components/InstancesPanel.vue'
-import ObservePanel from './components/ObservePanel.vue'
+import MonitorPage from './components/MonitorPage.vue'
 import OverviewPanel from './components/OverviewPanel.vue'
 import RunLedger from './components/RunLedger.vue'
-import ScenarioWizard from './components/ScenarioWizard.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import {
   describeError,
@@ -35,15 +34,20 @@ const GRAFANA_URL = (import.meta.env.VITE_LAB_GRAFANA_URL || 'http://127.0.0.1:3
 
 // Order is the operator workflow. testids follow nav-<section>; the old
 // nav-console/nav-thread/nav-cache/nav-animation ids are gone with the rewrite.
+// B3-00: six sections. The old faults page is now the 实时操作 / 实验工具 tabs
+// of 实时监控与操作; planned faults live in the wizard timeline.
 const SECTIONS = [
   { id: 'overview', label: '总览', hint: '环境、容器池、故障、台账摘要' },
-  { id: 'wizard', label: '场景向导', hint: '逐步注入故障并观察' },
-  { id: 'instances', label: '实例与 JVM', hint: '实例卡片与线程实验室' },
-  { id: 'bench', label: 'Benchmark', hint: '背景流量、容器清单与日志' },
-  { id: 'observe', label: '实时监控', hint: '质量徽标 KPI 与拓扑' },
-  { id: 'faults', label: '故障与缓存实验', hint: '容器故障、缓存防护与动画' },
-  { id: 'runs', label: '实验记录', hint: '台账、时间线、预检查与操作' }
+  { id: 'wizard', label: '场景向导', hint: '基础配置、目标、k6 参数与故障时间线' },
+  { id: 'instances', label: '实例与 JVM', hint: '实例卡片、配置组与线程实验室' },
+  { id: 'bench', label: 'Benchmark', hint: '场景库、背景流量、容器清单与日志' },
+  { id: 'observe', label: '实时监控与操作', hint: '时间轴、k6 进度、拓扑与实时操作' },
+  { id: 'runs', label: '实验记录', hint: '台账、报告对比、归档与删除' }
 ]
+
+// Enabled Java nodes of the newest run; empty means "all configured", which
+// keeps the pre-B3 visual state for runs created before B3-00a.
+const enabledNodes = computed(() => latestRun.value?.nodes || [])
 
 const token = ref(localStorage.getItem(TOKEN_STORAGE_KEY) || 'lab-token')
 const showToken = ref(false)
@@ -304,6 +308,12 @@ function navigate(id) {
   section.value = id
 }
 
+/** A started experiment jumps straight to the live view. */
+async function onRunStarted() {
+  section.value = 'observe'
+  await refreshLedgerSummary()
+}
+
 let syncTimer = null
 
 function stopPolling() {
@@ -358,7 +368,7 @@ onBeforeUnmount(stopPolling)
         <div class="brand-mark">HA</div>
         <div>
           <h1>HA Lab · 实验工作区</h1>
-          <p class="subtitle">侧边导航 · 总览 / 向导 / 实例 / Benchmark / 监控 / 故障 / 台账</p>
+          <p class="subtitle">侧边导航 · 总览 / 向导 / 实例 / Benchmark / 监控与操作 / 实验记录</p>
         </div>
       </div>
       <div class="topbar-meta">
@@ -423,11 +433,14 @@ onBeforeUnmount(stopPolling)
           @refresh="refreshContainers"
         />
 
-        <ScenarioWizard
+        <ExperimentWizard
           v-else-if="section === 'wizard'"
+          :token="token.trim()"
           :scenarios="scenarios"
           :state="guide"
           :busy="busy"
+          :containers="containers"
+          :latest-run="latestRun"
           @start="(id) => callGuide('start', id)"
           @step="() => callGuide('step')"
           @skip="() => callGuide('skip')"
@@ -435,6 +448,8 @@ onBeforeUnmount(stopPolling)
           @resume="() => callGuide('resume')"
           @reset="() => callGuide('reset')"
           @refresh="syncEnvironment"
+          @started="onRunStarted"
+          @navigate="navigate"
         />
 
         <InstancesPanel
@@ -469,7 +484,7 @@ onBeforeUnmount(stopPolling)
           @changed="syncEnvironment"
         />
 
-        <ObservePanel
+        <MonitorPage
           v-else-if="section === 'observe'"
           :token="token.trim()"
           :active="section === 'observe'"
@@ -477,15 +492,7 @@ onBeforeUnmount(stopPolling)
           :containers="containers"
           :faults="faults"
           :toxiproxy="toxiproxy"
-        />
-
-        <FaultsPanel
-          v-else-if="section === 'faults'"
-          :token="token.trim()"
-          :active="section === 'faults'"
-          :sync-tick="syncTick"
-          :containers="containers"
-          :faults="faults"
+          :enabled-nodes="enabledNodes"
           @open-thread="openThread"
           @changed="syncEnvironment"
         />

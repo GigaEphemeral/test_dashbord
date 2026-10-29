@@ -186,6 +186,13 @@ const loadParams = {
   LOAD_RAMP_PEAK_FRACTION:
     parseDurationMs(config.load.stages[1].duration, 'stage') / loadTotalMs,
 };
+// B3-00 sampling knobs belong to `load` only; d7 keeps the plain load params.
+const productSamplingParams = {
+  PRODUCT_ID_MIN: config.productSampling.min,
+  PRODUCT_ID_MAX: config.productSampling.max,
+  PRODUCT_ID_DISTRIBUTION: config.productSampling.distribution,
+  PRODUCT_ID_CONCENTRATION: config.productSampling.concentration,
+};
 const spikeStage = config.spike.stages;
 const chaosParams = {
   CHAOS_CONTROLLER_URL: chaosConfig.controllerUrl,
@@ -204,7 +211,7 @@ const expectedParams = {
     SMOKE_DURATION: config.smoke.duration,
     ...thresholds,
   },
-  load: { ...loadParams, ...thresholds },
+  load: { ...loadParams, ...productSamplingParams, ...thresholds },
   stress: { STRESS_STAGES: config.stress.stages, ...thresholds },
   spike: {
     SPIKE_BASELINE_VUS: spikeStage[0].target,

@@ -3,6 +3,7 @@ package com.javalearn.lab.chaos.ledger;
 import com.javalearn.lab.common.Result;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,8 +19,10 @@ import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationPageView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.OperationView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunCreateRequest;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunCreateView;
+import static com.javalearn.lab.chaos.ledger.LedgerViews.RunDeleteView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunDetailView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunPageView;
+import static com.javalearn.lab.chaos.ledger.LedgerViews.RunView;
 
 /**
  * Ledger REST surface. Every path is behind the existing {@code TokenFilter}
@@ -56,8 +59,31 @@ public class LedgerController {
             @RequestParam(name = "scenario", required = false) String scenario,
             @RequestParam(name = "status", required = false) String status,
             @RequestParam(name = "limit", required = false) Integer limit,
-            @RequestParam(name = "offset", required = false) Integer offset) {
-        return Result.success(service.list(scenario, status, limit, offset));
+            @RequestParam(name = "offset", required = false) Integer offset,
+            @RequestParam(name = "includeArchived", required = false) Boolean includeArchived) {
+        return Result.success(service.list(scenario, status, limit, offset,
+                Boolean.TRUE.equals(includeArchived)));
+    }
+
+    /** B3-00a: hide a closed run from the default list (reversible). */
+    @PostMapping("/lab/runs/{runId}/archive")
+    public Result<RunView> archive(@PathVariable String runId) {
+        return Result.success(service.setArchived(runId, true));
+    }
+
+    @PostMapping("/lab/runs/{runId}/unarchive")
+    public Result<RunView> unarchive(@PathVariable String runId) {
+        return Result.success(service.setArchived(runId, false));
+    }
+
+    /**
+     * B3-00a: hard delete of a draft/closed run. k6 and report artifacts are
+     * removed first (best effort, reported in the answer), then the row delete
+     * cascades to every child table.
+     */
+    @DeleteMapping("/lab/runs/{runId}")
+    public Result<RunDeleteView> delete(@PathVariable String runId) {
+        return Result.success(lifecycle.delete(runId));
     }
 
     @GetMapping("/lab/runs/{runId}")

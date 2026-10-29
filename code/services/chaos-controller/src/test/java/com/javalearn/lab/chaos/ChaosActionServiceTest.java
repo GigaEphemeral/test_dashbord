@@ -208,6 +208,118 @@ class ChaosActionServiceTest {
     }
 
     @Test
+    void ttlMinusOneIsARejectedValueToo() {
+        assertThatThrownBy(() -> service.execute(APP, new ChaosActionRequest("kill", -2)))
+                .isInstanceOf(InvalidChaosActionException.class)
+                .hasMessageContaining("manual hold");
+        assertThat(gateway.calls).isEmpty();
+    }
+
+    @Test
+    void manualHoldIsAcceptedForKillAndFreezeAndNeverAutoReverts() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        ChaosActionView kill = frozen.execute(APP, new ChaosActionRequest("kill", -1));
+        ChaosActionView freeze = frozen.execute(APP2, new ChaosActionRequest("freeze", -1));
+
+        assertThat(kill.status()).isEqualTo("active");
+        assertThat(kill.ttlSeconds()).isNull();
+        assertThat(kill.expiresAt()).isNull();
+        assertThat(kill.remainingMs()).isNull();
+        assertThat(freeze.status()).isEqualTo("active");
+        assertThat(freeze.ttlSeconds()).isNull();
+        assertThat(freeze.expiresAt()).isNull();
+        assertThat(freeze.remainingMs()).isNull();
+        // Manual hold: tracked as ACTIVE but no TTL task is armed at all
+        // (the configured default TTL here is 30s).
+        assertThat(delays).isEmpty();
+        assertThat(watchdogs).hasSize(1);
+        assertThat(gateway.calls).containsExactly("stop:" + APP, "signal:" + APP2 + ":SIGSTOP");
+
+        // Well past the default TTL, the watchdog must not auto-revert a hold.
+        clock.advance(Duration.ofMinutes(30));
+        watchdogs.get(0).run();
+
+        assertThat(gateway.calls).doesNotContain("start:" + APP, "signal:" + APP2 + ":SIGCONT");
+        assertThat(frozen.activeActions()).hasSize(2)
+                .allMatch(action -> "active".equals(action.status()));
+        assertThat(annotator.events).anySatisfy(event ->
+                assertThat(event.text()).contains("manual hold (no auto revert)"));
+    }
+
+    @Test
+    void activeListSortsManualHoldsAfterTtlActions() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", -1));
+        frozen.execute(APP2, new ChaosActionRequest("freeze", 10));
+
+        assertThat(frozen.activeActions()).extracting(ChaosActionView::ttlSeconds)
+                .containsExactly(10, null);
+    }
+
+    @Test
+    void stopAllRevertsAManualHold() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("kill", -1));
+        clock.advance(Duration.ofHours(24));
+        assertThat(frozen.activeActions()).hasSize(1);
+
+        StopAllResult result = frozen.stopAll();
+
+        assertThat(result.reverted()).isEqualTo(1);
+        assertThat(result.failed()).isZero();
+        assertThat(gateway.calls).containsExactly("stop:" + APP, "start:" + APP);
+        assertThat(frozen.activeActions()).isEmpty();
+    }
+
+    @Test
+    void pauseAndResumeLeaveAManualHoldUntouched() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-10-26T10:00:00Z"));
+        List<Runnable> tasks = new CopyOnWriteArrayList<>();
+        List<Long> delays = new CopyOnWriteArrayList<>();
+        List<Runnable> watchdogs = new CopyOnWriteArrayList<>();
+        ChaosActionService frozen = serviceWithManualScheduler(clock, tasks, delays, watchdogs);
+
+        frozen.execute(APP, new ChaosActionRequest("freeze", -1));
+        clock.advance(Duration.ofSeconds(5));
+
+        // No expiry to freeze: pause must neither NPE nor invent a countdown.
+        assertThat(frozen.pause()).isTrue();
+        ChaosActionView paused = frozen.activeActions().get(0);
+        assertThat(paused.paused()).isTrue();
+        assertThat(paused.status()).isEqualTo("active");
+        assertThat(paused.expiresAt()).isNull();
+        assertThat(paused.remainingMs()).isNull();
+
+        assertThat(frozen.resume()).isTrue();
+        assertThat(delays).isEmpty();  // nothing to reschedule on resume
+        ChaosActionView resumed = frozen.activeActions().get(0);
+        assertThat(resumed.paused()).isFalse();
+        assertThat(resumed.status()).isEqualTo("active");
+        assertThat(resumed.expiresAt()).isNull();
+        assertThat(resumed.remainingMs()).isNull();
+
+        clock.advance(Duration.ofHours(2));
+        watchdogs.get(0).run();
+        assertThat(gateway.calls).doesNotContain("signal:" + APP + ":SIGCONT");
+        assertThat(frozen.activeActions()).hasSize(1);
+    }
+
+    @Test
     void oneShotActionsAreNotTracked() {
         ChaosActionView start = service.execute(APP, new ChaosActionRequest("start", 300));
         ChaosActionView restart = service.execute(APP2, new ChaosActionRequest("restart", null));

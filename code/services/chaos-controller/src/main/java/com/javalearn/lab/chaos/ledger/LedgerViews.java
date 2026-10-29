@@ -11,15 +11,31 @@ public final class LedgerViews {
     private LedgerViews() {
     }
 
-    public record RunCreateRequest(String scenario, Map<String, Object> params) {
+    /**
+     * B3-00a draft shape. {@code name} is the display label; {@code nodes} is
+     * the enabled Java service subset ({@code null} = all configured targets).
+     * {@code config} and {@code faultSchedule} are stored as their own
+     * {@code lab_run_param} groups and are never forwarded to the k6 planner.
+     */
+    public record RunCreateRequest(String scenario, Map<String, Object> params, String name,
+                                   List<String> nodes, Map<String, Object> config,
+                                   List<Map<String, Object>> faultSchedule) {
+
+        public RunCreateRequest(String scenario, Map<String, Object> params) {
+            this(scenario, params, null, null, null, null);
+        }
     }
 
     public record RunCreateView(String runId, String status, String createdAt) {
     }
 
-    public record RunView(String runId, String scenario, String status, String sourceCommit,
-                          String operator, String createdAt, String updatedAt,
-                          String startedAt, String endedAt) {
+    public record RunView(String runId, String scenario, String name, List<String> nodes,
+                          String status, String sourceCommit, String operator, String createdAt,
+                          String updatedAt, String startedAt, String endedAt, boolean archived) {
+    }
+
+    /** Result of a hard delete: the row and its child rows are gone. */
+    public record RunDeleteView(String runId, boolean deleted, String artifacts) {
     }
 
     public record StepView(String stepKey, String fromStatus, String toStatus, String occurredAt,

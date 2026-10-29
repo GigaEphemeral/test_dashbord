@@ -5,6 +5,7 @@ import com.javalearn.lab.chaos.error.LedgerRunNotFoundException;
 import com.javalearn.lab.chaos.error.LedgerUnavailableException;
 import com.javalearn.lab.chaos.precheck.PrecheckReport;
 import com.javalearn.lab.chaos.precheck.RunPrecheckGate;
+import com.javalearn.lab.chaos.schedule.FaultScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,12 +60,28 @@ public class RunLifecycleService {
     private final OperationService operations;
     private final RunPrecheckGate precheck;
     private final RunLifecycleHook hook;
+    private final FaultScheduler faultSchedule;
     private final Clock clock;
 
     public RunLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
                                RunLedgerRepository repository, LedgerWriter writer,
                                EnvLockService envLock, OperationService operations,
                                RunPrecheckGate precheck, RunLifecycleHook hook, Clock clock) {
+        this(properties, bootstrap, repository, writer, envLock, operations, precheck, hook,
+                FaultScheduler.NONE, clock);
+    }
+
+    /**
+     * B3-00b canonical constructor: {@code faultSchedule} arms the persisted
+     * run-scoped timeline after the k6 launch and cancels it on stop/failed
+     * start. The nine-argument overload above keeps direct construction cheap
+     * for tests and ledger-only tools.
+     */
+    public RunLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
+                               RunLedgerRepository repository, LedgerWriter writer,
+                               EnvLockService envLock, OperationService operations,
+                               RunPrecheckGate precheck, RunLifecycleHook hook,
+                               FaultScheduler faultSchedule, Clock clock) {
         this.properties = properties;
         this.bootstrap = bootstrap;
         this.repository = repository;
@@ -73,6 +90,7 @@ public class RunLifecycleService {
         this.operations = operations;
         this.precheck = precheck;
         this.hook = hook == null ? RunLifecycleHook.none() : hook;
+        this.faultSchedule = faultSchedule == null ? FaultScheduler.NONE : faultSchedule;
         this.clock = clock;
     }
 
@@ -105,9 +123,14 @@ public class RunLifecycleService {
             mutated = true;
             transition(runId, RunStatus.VALIDATING, RunStatus.READY, "ready", null);
             RunLifecycleHook.LaunchResult launched = hook.launch(runId);
+            // B3-00b: offsets are relative to the k6 launch. Arm before
+            // READY→RUNNING so a failure follows the existing closeFailedStart
+            // path (k6 stopped, run FAILED) instead of silently losing faults.
+            int faultScheduleArmed = faultSchedule.arm(runId, clock.instant());
             transition(runId, RunStatus.READY, RunStatus.RUNNING, "start", null);
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("runStatus", RunStatus.RUNNING.name());
+            after.put("faultScheduleArmed", faultScheduleArmed);
             after.put("lockKey", lock.lockKey());
             after.put("lockExpiresAt", lock.expiresAt().toString());
             after.put("precheckVerdict", report.verdict());
@@ -126,6 +149,38 @@ public class RunLifecycleService {
         }
     }
 
+    /**
+     * B3-00a: hard delete of a draft or closed run. Artifacts (k6 container,
+     * report directory) are removed first and reported; a failed artifact
+     * cleanup does not keep the ledger row alive, because the operator asked for
+     * the row to disappear and the orphan sweep is the safety net.
+     */
+    public com.javalearn.lab.chaos.ledger.LedgerViews.RunDeleteView delete(String runId) {
+        LedgerReadiness.requireReady(properties, bootstrap);
+        RunRecord run = requireRun(runId);
+        if (!(run.status().isTerminal() || run.status() == RunStatus.UNKNOWN
+                || run.status() == RunStatus.DRAFT)) {
+            throw new LedgerConflictException("run " + run.runId() + " is " + run.status()
+                    + "; stop it (or close an UNKNOWN run) before deleting it. A live experiment "
+                    + "cannot disappear from the ledger");
+        }
+        String artifacts;
+        try {
+            RunLifecycleHook.LaunchResult cleaned = hook.cleanupArtifacts(runId);
+            artifacts = cleaned.details().isEmpty() ? "none" : cleaned.details().toString();
+        } catch (RuntimeException e) {
+            artifacts = "cleanup-failed: " + AuditSanitizer.describe(e);
+            log.warn("Artifact cleanup before deleting run {} failed: {}", runId, e.toString());
+        }
+        boolean deleted;
+        try {
+            deleted = repository.deleteRun(runId) > 0;
+        } catch (org.springframework.dao.DataAccessException e) {
+            throw LedgerReadiness.unavailable(bootstrap, e, "run delete");
+        }
+        return new com.javalearn.lab.chaos.ledger.LedgerViews.RunDeleteView(runId, deleted, artifacts);
+    }
+
     private OperationOutcome doStop(String runId) {
         RunRecord current = requireRun(runId);
         if (current.status() == RunStatus.UNKNOWN) {
@@ -137,6 +192,9 @@ public class RunLifecycleService {
         }
         requireTransition(current.status(), RunStatus.STOPPING, "stop");
         transition(runId, current.status(), RunStatus.STOPPING, "stop", null);
+        // B3-00b: pending faults belong to the experiment; they must not fire
+        // while/after k6 is stopped.
+        cancelFaultSchedule(runId);
         Map<String, Object> after = new LinkedHashMap<>();
         try {
             RunLifecycleHook.LaunchResult stopped = hook.stop(runId);
@@ -171,6 +229,8 @@ public class RunLifecycleService {
                         runId, cause.getMessage());
                 return;
             }
+            // A failed start must not leave armed faults behind either.
+            cancelFaultSchedule(runId);
             if (mutated) {
                 RunRecord now = repository.findRun(runId).orElse(null);
                 if (now != null
@@ -223,6 +283,15 @@ public class RunLifecycleService {
         } catch (RuntimeException e) {
             log.warn("Stopping the k6 container after a failed start of run {} failed: {}",
                     runId, e.toString());
+        }
+    }
+
+    /** Cancel is best-effort by contract; a failure must not mask the real cause. */
+    private void cancelFaultSchedule(String runId) {
+        try {
+            faultSchedule.cancel(runId);
+        } catch (RuntimeException e) {
+            log.warn("Cancelling the fault schedule of run {} failed: {}", runId, e.toString());
         }
     }
 

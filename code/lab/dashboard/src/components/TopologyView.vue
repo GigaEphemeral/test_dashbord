@@ -1,11 +1,16 @@
 <script setup>
 import { computed } from 'vue'
-import { classifyContainer, containerTone, sortContainers } from '../labModel'
+import { classifyContainer, containerTone, instanceName, sortContainers } from '../labModel'
 
 const props = defineProps({
   containers: { type: Array, default: () => [] },
   faults: { type: Array, default: () => [] },
-  toxiproxy: { type: Object, default: null }
+  toxiproxy: { type: Object, default: null },
+  /**
+   * Service names enabled by the newest run draft (B3-00a). An empty list is
+   * the pre-B3 "all configured" behaviour, so every node keeps its normal look.
+   */
+  enabledNodes: { type: Array, default: () => [] }
 })
 
 const nodes = computed(() =>
@@ -29,6 +34,22 @@ const faultsByTarget = computed(() => {
 
 function faultsOf(name) {
   return faultsByTarget.value.get(name) || []
+}
+
+// Run drafts store service names (app-1, redis-2…), while every node here is a
+// container (jl-app-1, jl-redis-2…). Normalise both shapes before comparing.
+const enabledSet = computed(() => new Set(
+  (props.enabledNodes || [])
+    .map((value) => String(value || '').trim().replace(/^jl-/, ''))
+    .filter(Boolean)
+))
+const ENABLED_ROLES = new Set(['app', 'app-jdk8', 'redis', 'mysql'])
+
+/** Only app / redis / mysql tiers can be "not enabled"; support nodes are not run targets. */
+function isDisabled(node) {
+  if (!enabledSet.value.size) return false
+  if (!ENABLED_ROLES.has(node.role)) return false
+  return !enabledSet.value.has(instanceName(node.name))
 }
 
 function byGroup(group) {
@@ -143,6 +164,9 @@ function localTime(value) {
       <span class="topo-stat"><strong>{{ running }}</strong> 运行中</span>
       <span class="topo-stat" :class="{ warn: faults.length }"><strong>{{ faults.length }}</strong> 个活动故障</span>
       <span class="topo-legend">
+        <span v-if="enabledNodes.length" class="legend-item" data-testid="topology-enabled-note">
+          <span class="badge muted">未启用</span>&nbsp;不在当前 run 的启用节点内
+        </span>
         <span class="legend-item"><i class="legend-dot ok"></i>运行且健康</span>
         <span class="legend-item"><i class="legend-dot warn"></i>启动中</span>
         <span class="legend-item"><i class="legend-dot down"></i>不健康</span>
@@ -177,7 +201,7 @@ function localTime(value) {
                 v-for="node in groupItem.nodes"
                 :key="node.name"
                 class="topo-node"
-                :class="[`tone-${tone(node)}`, { 'has-fault': faultsOf(node.name).length }]"
+                :class="[`tone-${tone(node)}`, { 'has-fault': faultsOf(node.name).length, disabled: isDisabled(node) }]"
                 :data-testid="`topology-node-${node.name}`"
               >
                 <div class="topo-node-head">
@@ -188,6 +212,7 @@ function localTime(value) {
                   <span class="topo-role">{{ node.label }}</span>
                   <span class="badge" :class="stateClass(node.state)">{{ node.state }}</span>
                   <span class="badge" :class="healthClass(node.health)">{{ node.health }}</span>
+                  <span v-if="isDisabled(node)" class="badge muted" :data-testid="`topology-disabled-${node.name}`">未启用</span>
                 </div>
                 <div v-if="faultsOf(node.name).length" class="topo-faults" :data-testid="`topology-faults-${node.name}`">
                   <span
@@ -225,7 +250,7 @@ function localTime(value) {
                 v-for="node in groupItem.nodes"
                 :key="node.name"
                 class="topo-node"
-                :class="[`tone-${tone(node)}`, { 'has-fault': faultsOf(node.name).length }]"
+                :class="[`tone-${tone(node)}`, { 'has-fault': faultsOf(node.name).length, disabled: isDisabled(node) }]"
                 :data-testid="`topology-node-${node.name}`"
               >
                 <div class="topo-node-head">
@@ -236,6 +261,7 @@ function localTime(value) {
                   <span class="topo-role">{{ node.label }}</span>
                   <span class="badge" :class="stateClass(node.state)">{{ node.state }}</span>
                   <span class="badge" :class="healthClass(node.health)">{{ node.health }}</span>
+                  <span v-if="isDisabled(node)" class="badge muted" :data-testid="`topology-disabled-${node.name}`">未启用</span>
                 </div>
                 <div v-if="faultsOf(node.name).length" class="topo-faults" :data-testid="`topology-faults-${node.name}`">
                   <span
@@ -255,3 +281,16 @@ function localTime(value) {
     </template>
   </section>
 </template>
+
+<style scoped>
+/* A node the newest run did not enable stays in the structure (so the topology
+   is always complete) but is visibly out of the experiment. */
+.topo-node.disabled {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+}
+
+.topo-node.disabled .topo-name {
+  text-decoration: line-through;
+}
+</style>

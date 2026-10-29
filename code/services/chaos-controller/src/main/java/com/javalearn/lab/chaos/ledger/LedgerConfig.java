@@ -7,6 +7,8 @@ import com.javalearn.lab.chaos.bench.exec.BenchRunExecutor;
 import com.javalearn.lab.chaos.bench.exec.BenchRunLifecycleHook;
 import com.javalearn.lab.chaos.bench.exec.BenchScriptsHostDirResolver;
 import com.javalearn.lab.chaos.precheck.RunPrecheckService;
+import com.javalearn.lab.chaos.schedule.FaultScheduleValidator;
+import com.javalearn.lab.chaos.schedule.FaultScheduler;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
@@ -151,9 +153,10 @@ public class LedgerConfig {
     public RunLedgerService runLedgerService(LedgerProperties properties, LedgerTargetResolver resolver,
                                              LedgerBootstrap bootstrap, RunLedgerRepository repository,
                                              LedgerWriter writer, LedgerStash stash,
+                                             FaultScheduleValidator faultScheduleValidator,
                                              ObjectMapper objectMapper, Clock ledgerClock) {
         return new RunLedgerService(properties, resolver, bootstrap, repository, writer, stash,
-                objectMapper, ledgerClock);
+                faultScheduleValidator, objectMapper, ledgerClock);
     }
 
     /** B2-04a: fault actions join the run timeline; writes are best-effort. */
@@ -203,9 +206,10 @@ public class LedgerConfig {
                                                    OperationService operationService,
                                                    RunPrecheckService precheck,
                                                    RunLifecycleHook runLifecycleHook,
+                                                   FaultScheduler faultScheduler,
                                                    Clock ledgerClock) {
         return new RunLifecycleService(properties, bootstrap, repository, writer, envLockService,
-                operationService, precheck, runLifecycleHook, ledgerClock);
+                operationService, precheck, runLifecycleHook, faultScheduler, ledgerClock);
     }
 
     private static HikariDataSource pool(String name, String url, LedgerProperties properties) {

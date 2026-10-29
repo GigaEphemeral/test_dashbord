@@ -2,8 +2,10 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import MetricCards from './MetricCards.vue'
 import {
+  archiveRun,
   closeOperation,
   createRun,
+  deleteRun,
   describeError,
   downloadK6Report,
   fetchBenchScenarios,
@@ -17,8 +19,10 @@ import {
   fetchRunPrecheck,
   fetchRuns,
   startRun,
-  stopRun
+  stopRun,
+  unarchiveRun
 } from '../api'
+import { formatBytes, formatMillis, formatPercent, formatRate } from '../labModel'
 
 /**
  * Run ledger: list / create / detail (steps, env, params, checks), pre-check,
@@ -66,8 +70,12 @@ const RUN_METRIC_KEYS = (import.meta.env.VITE_LAB_RUN_METRIC_KEYS || DEFAULT_RUN
   .split(',')
   .map((key) => key.trim())
   .filter(Boolean)
+// B3-00e: a hard delete is only offered once the run can no longer write.
+const DELETE_LOCKED_STATUSES = ['RUNNING', 'STOPPING', 'VERIFYING', 'VALIDATING', 'READY']
 
 const filters = reactive({ scenario: '', status: '' })
+const nameQuery = ref('')
+const showArchived = ref(false)
 const runs = ref([])
 const total = ref(0)
 const offset = ref(0)
@@ -97,10 +105,26 @@ const actionError = ref('')
 const conflict = ref(null)
 const pendingNote = ref('')
 
-const createForm = reactive({ scenario: '', paramsText: '{}' })
+const createForm = reactive({ scenario: '', paramsText: '{}', name: '' })
 const createBusy = ref(false)
 const createError = ref('')
 const createResult = ref(null)
+
+// B3-00e: archive/delete are row-level actions; their failures reuse the list
+// alert surface, never a modal-local error. Delete is guarded by a confirmation
+// modal because it cascades through every child table and the k6 report dir.
+const archiveBusy = ref('')
+const deleteTarget = ref(null)
+const deleteBusy = ref(false)
+
+// Report compare: at most two runs, each fetched with the same fixed key set as
+// the single-run metric card. Missing values stay 无数据 (never a synthetic 0).
+const compareIds = ref([])
+const compareDataA = ref(null)
+const compareDataB = ref(null)
+const compareLoading = ref(false)
+const compareError = ref('')
+let compareSeq = 0
 
 // B2-04c: UNKNOWN operations can only be closed by an operator verdict. The
 // optional note is shared by every row (one input, no new dependency); errors
@@ -138,6 +162,37 @@ const currentPage = computed(() => {
   const from = total.value === 0 ? 0 : offset.value + 1
   const to = Math.min(offset.value + runs.value.length, total.value)
   return `${from}–${to} / ${total.value}`
+})
+// Quick filter is client-side (name / runId of the current page). Archived rows
+// stay hidden unless the showArchived toggle asked the backend for them.
+const visibleRuns = computed(() => {
+  const query = nameQuery.value.trim().toLowerCase()
+  return runs.value.filter((run) => {
+    if (run.archived && !showArchived.value) return false
+    if (!query) return true
+    const name = String(run.name || '').toLowerCase()
+    return name.includes(query) || String(run.runId || '').toLowerCase().includes(query)
+  })
+})
+const compareA = computed(() => compareIds.value[0] || '')
+const compareB = computed(() => compareIds.value[1] || '')
+const compareRows = computed(() => RUN_METRIC_KEYS.map((key) => buildCompareRow(key)))
+const detailNodes = computed(() => {
+  const nodes = selectedRun.value?.nodes
+  if (Array.isArray(nodes)) return nodes.length ? nodes.join(' / ') : '全部'
+  return nodes || '全部'
+})
+const detailTraffic = computed(() => {
+  const run = selectedRun.value
+  const mode = k6.value?.trafficMode || run?.trafficMode || ''
+  const target = k6.value?.targetInstance || run?.targetInstance || ''
+  if (!mode && !target) return '—'
+  return `${mode || '—'} / ${target || '—'}`
+})
+const detailLock = computed(() => {
+  const run = selectedRun.value
+  if (run?.lockHolder || run?.lock) return run.lockHolder || run.lock
+  return conflict.value?.holder ? `held by run ${conflict.value.holder}` : '—'
 })
 const startEnabled = computed(() => (
   runStatus.value === 'DRAFT'
@@ -259,6 +314,7 @@ async function loadRuns() {
     const page = await fetchRuns(props.token, {
       scenario: filters.scenario.trim(),
       status: filters.status,
+      includeArchived: showArchived.value,
       limit: PAGE_SIZE,
       offset: offset.value
     })
@@ -551,6 +607,8 @@ function applyFilters() {
 function resetFilters() {
   filters.scenario = ''
   filters.status = ''
+  nameQuery.value = ''
+  showArchived.value = false
   offset.value = 0
   loadRuns()
 }
@@ -566,6 +624,238 @@ function nextPage() {
   offset.value += PAGE_SIZE
   loadRuns()
 }
+
+function toggleArchivedList(event) {
+  showArchived.value = event.target.checked
+  offset.value = 0
+  loadRuns()
+}
+
+// ------------------------------------------------------- archive / delete
+async function toggleArchive(run) {
+  if (!run?.runId || archiveBusy.value) return
+  archiveBusy.value = run.runId
+  listError.value = ''
+  try {
+    if (run.archived) {
+      await unarchiveRun(props.token, run.runId)
+    } else {
+      await archiveRun(props.token, run.runId)
+    }
+    await loadRuns()
+    // Keep the detail card in sync when the affected run is the selected one.
+    if (selectedRunId.value) await refreshSelected()
+  } catch (err) {
+    // 409 keeps the backend message (e.g. "run ... is RUNNING; stop it ...").
+    listError.value = describeError(err)
+  } finally {
+    archiveBusy.value = ''
+  }
+}
+
+function canDelete(run) {
+  return !DELETE_LOCKED_STATUSES.includes(run?.status)
+}
+
+function deleteHint(run) {
+  return canDelete(run) ? '删除 run（需确认）' : '先停止/关闭'
+}
+
+function askDelete(run) {
+  if (!run || !canDelete(run)) return
+  listError.value = ''
+  deleteTarget.value = run
+}
+
+function cancelDelete() {
+  if (deleteBusy.value) return
+  deleteTarget.value = null
+}
+
+function clearSelection() {
+  detailSeq += 1
+  selectedRunId.value = ''
+  localStorage.removeItem(RUN_STORAGE_KEY)
+  detail.value = null
+  operations.value = []
+  precheck.value = null
+  runMetrics.value = null
+  operation.value = null
+  conflict.value = null
+  pendingNote.value = ''
+  actionError.value = ''
+  resetK6()
+}
+
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target || deleteBusy.value) return
+  deleteBusy.value = true
+  listError.value = ''
+  try {
+    await deleteRun(props.token, target.runId)
+    deleteTarget.value = null
+    compareIds.value = compareIds.value.filter((id) => id !== target.runId)
+    if (selectedRunId.value === target.runId) clearSelection()
+    await loadRuns()
+    // The deleted row was the only item on the last page: step back one page.
+    if (!runs.value.length && total.value > 0 && offset.value > 0) {
+      offset.value = Math.max(0, offset.value - PAGE_SIZE)
+      await loadRuns()
+    }
+  } catch (err) {
+    // Close the modal so the shared list alert (with 409's backend message) shows.
+    deleteTarget.value = null
+    listError.value = describeError(err)
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
+// --------------------------------------------------------------- report compare
+function isCompareSelected(runId) {
+  return compareIds.value.includes(runId)
+}
+
+function toggleCompare(runId) {
+  if (!runId) return
+  if (isCompareSelected(runId)) {
+    compareIds.value = compareIds.value.filter((id) => id !== runId)
+    return
+  }
+  // Two slots: selecting a third drops the oldest selection.
+  compareIds.value = [...compareIds.value, runId].slice(-2)
+}
+
+function clearCompare() {
+  compareIds.value = []
+}
+
+function compareRunLabel(runId) {
+  const run = runs.value.find((item) => item.runId === runId)
+    || (selectedRun.value?.runId === runId ? selectedRun.value : null)
+  if (!run) return runId
+  return run.name ? `${run.name} · ${runId}` : runId
+}
+
+function metricForKey(data, key) {
+  return (data?.metrics || []).find((metric) => metric.key === key) || null
+}
+
+function metricLast(metric) {
+  // NO_DATA / COLLECTING / DEGRADED must stay 无数据, never a synthetic 0.
+  if (!metric || metric.quality !== 'OK') return null
+  const value = metric.series?.[0]?.stats?.last
+  return Number.isFinite(value) ? value : null
+}
+
+function formatMetricValue(unit, value) {
+  if (!Number.isFinite(value)) return '无数据'
+  switch (unit) {
+    case 'ratio':
+      return formatPercent(value)
+    case 'bytes':
+      return formatBytes(value)
+    case 's':
+      return formatMillis(value)
+    case 'req/s':
+      return formatRate(value)
+    case 'bool':
+      return value >= 1 ? 'UP' : 'DOWN'
+    case 'threads':
+    case 'connections':
+    case 'tasks':
+    case 'entries':
+    case 'keys':
+    case 'orders':
+    case 'events':
+      return Math.round(value).toLocaleString('zh-CN')
+    default:
+      return Number.isInteger(value) ? value.toLocaleString('zh-CN') : value.toFixed(2)
+  }
+}
+
+function formatMetricDelta(unit, delta) {
+  if (!Number.isFinite(delta)) return '无数据'
+  const sign = delta > 0 ? '+' : ''
+  switch (unit) {
+    case 'ratio':
+      return `${sign}${(delta * 100).toFixed(2)} pp`
+    case 'bytes':
+      return `${sign}${(delta / (1024 * 1024)).toFixed(2)} MB`
+    case 's': {
+      const millis = delta * 1000
+      return `${sign}${Math.abs(millis) >= 1000 ? `${(millis / 1000).toFixed(2)} s` : `${millis.toFixed(1)} ms`}`
+    }
+    case 'req/s':
+      return `${sign}${delta.toFixed(2)} /s`
+    case 'bool':
+      return delta === 0 ? '0' : `${sign}${delta > 0 ? 1 : -1}`
+    case 'threads':
+    case 'connections':
+    case 'tasks':
+    case 'entries':
+    case 'keys':
+    case 'orders':
+    case 'events':
+      return `${sign}${Math.round(delta).toLocaleString('zh-CN')}`
+    default:
+      return `${sign}${Number.isInteger(delta) ? delta.toLocaleString('zh-CN') : delta.toFixed(2)}`
+  }
+}
+
+function buildCompareRow(key) {
+  const metricA = metricForKey(compareDataA.value, key)
+  const metricB = metricForKey(compareDataB.value, key)
+  const valueA = metricLast(metricA)
+  const valueB = metricLast(metricB)
+  const unit = metricA?.unit || metricB?.unit || ''
+  return {
+    key,
+    label: metricA?.label || metricB?.label || key,
+    unit,
+    aText: formatMetricValue(unit, valueA),
+    bText: formatMetricValue(unit, valueB),
+    deltaText: valueA === null || valueB === null
+      ? '无数据'
+      : formatMetricDelta(unit, valueB - valueA)
+  }
+}
+
+async function loadComparison() {
+  const first = compareA.value
+  const second = compareB.value
+  const seq = ++compareSeq
+  if (!first || !second) {
+    compareDataA.value = null
+    compareDataB.value = null
+    compareError.value = ''
+    compareLoading.value = false
+    return
+  }
+  compareLoading.value = true
+  compareError.value = ''
+  try {
+    const [dataA, dataB] = await Promise.all([
+      fetchRunMetrics(props.token, first, { keys: RUN_METRIC_KEYS.join(','), phase: 'run' }),
+      fetchRunMetrics(props.token, second, { keys: RUN_METRIC_KEYS.join(','), phase: 'run' })
+    ])
+    if (seq !== compareSeq) return
+    compareDataA.value = dataA
+    compareDataB.value = dataB
+  } catch (err) {
+    if (seq !== compareSeq) return
+    compareDataA.value = null
+    compareDataB.value = null
+    compareError.value = describeError(err)
+  } finally {
+    if (seq === compareSeq) compareLoading.value = false
+  }
+}
+
+watch([compareA, compareB], () => {
+  loadComparison()
+})
 
 // ------------------------------------------------------------------ create
 async function submitCreate() {
@@ -592,12 +882,14 @@ async function submitCreate() {
   }
   createBusy.value = true
   try {
-    const created = await createRun(props.token, { scenario, params })
+    const name = createForm.name.trim()
+    const created = await createRun(props.token, { scenario, params, name: name || undefined })
     createResult.value = created
     selectedRunId.value = created.runId
     localStorage.setItem(RUN_STORAGE_KEY, created.runId)
     filters.scenario = ''
     filters.status = ''
+    nameQuery.value = ''
     offset.value = 0
     await loadRuns()
     await selectRun(created.runId)
@@ -730,6 +1022,7 @@ watch(
 
 onBeforeUnmount(() => {
   pollSeq += 1
+  compareSeq += 1
 })
 </script>
 
@@ -757,6 +1050,19 @@ onBeforeUnmount(() => {
             <option value="">全部</option>
             <option v-for="status in STATUSES" :key="status" :value="status">{{ status }}</option>
           </select>
+        </label>
+        <label class="form-label">
+          名称 / runId（本页过滤）
+          <input v-model="nameQuery" class="input" data-testid="run-list-name-filter" placeholder="输入名称或 runId 片段" />
+        </label>
+        <label class="archived-toggle">
+          <input
+            type="checkbox"
+            :checked="showArchived"
+            data-testid="run-list-archived-toggle"
+            @change="toggleArchivedList"
+          />
+          显示已归档
         </label>
         <button type="button" class="btn" data-testid="run-filter-apply" :disabled="loadingList" @click="applyFilters">查询</button>
         <button type="button" class="btn ghost" data-testid="run-filter-reset" :disabled="loadingList" @click="resetFilters">重置</button>
@@ -788,33 +1094,71 @@ onBeforeUnmount(() => {
       <template v-if="!degraded">
         <div class="run-list" data-testid="run-list">
           <div class="run-row run-row-head">
+            <span>对比</span>
+            <span>测试名称</span>
             <span>runId</span>
             <span>scenario</span>
             <span>status</span>
+            <span>归档</span>
             <span>operator</span>
             <span>sourceCommit</span>
             <span>createdAt</span>
             <span>updatedAt</span>
+            <span>操作</span>
           </div>
-          <button
-            v-for="run in runs"
+          <div
+            v-for="run in visibleRuns"
             :key="run.runId"
-            type="button"
             class="run-row run-row-item"
             :class="{ selected: run.runId === selectedRunId }"
             :data-testid="`run-row-${run.runId}`"
+            role="button"
+            tabindex="0"
             @click="selectRun(run.runId)"
+            @keydown.enter.prevent="selectRun(run.runId)"
+            @keydown.space.prevent="selectRun(run.runId)"
           >
+            <input
+              type="checkbox"
+              class="run-compare-check"
+              :checked="isCompareSelected(run.runId)"
+              :data-testid="`run-compare-toggle-${run.runId}`"
+              :aria-label="`对比 run ${run.runId}`"
+              @click.stop
+              @keydown.stop
+              @change="toggleCompare(run.runId)"
+            />
+            <span class="run-name-cell" :title="run.name || '—'">{{ run.name || '—' }}</span>
             <code>{{ run.runId }}</code>
             <span>{{ run.scenario }}</span>
             <span class="badge" :class="statusTone(run.status)" :data-testid="`run-status-${run.runId}`">{{ run.status }}</span>
+            <span class="chip" :class="{ on: run.archived }" :data-testid="`run-archived-chip-${run.runId}`">{{ run.archived ? '已归档' : '未归档' }}</span>
             <span>{{ run.operator || '—' }}</span>
             <code class="run-commit">{{ (run.sourceCommit || '—').slice(0, 12) }}</code>
             <span>{{ timeLabel(run.createdAt) }}</span>
             <span>{{ timeLabel(run.updatedAt) }}</span>
-          </button>
-          <p v-if="!runs.length && !loadingList" class="empty" data-testid="run-list-empty">
-            台账里还没有 run；用下方表单创建一个 DRAFT。
+            <span class="run-row-actions" @click.stop @keydown.stop>
+              <button
+                type="button"
+                class="btn ghost"
+                :data-testid="`run-archive-${run.runId}`"
+                :disabled="Boolean(archiveBusy)"
+                @click="toggleArchive(run)"
+              >{{ archiveBusy === run.runId ? (run.archived ? '取消归档中…' : '归档中…') : (run.archived ? '取消归档' : '归档') }}</button>
+              <button
+                type="button"
+                class="btn ghost danger"
+                :data-testid="`run-delete-${run.runId}`"
+                :disabled="!canDelete(run) || deleteBusy"
+                :title="deleteHint(run)"
+                @click="askDelete(run)"
+              >删除</button>
+              <span v-if="!canDelete(run)" class="hint run-delete-hint">先停止/关闭</span>
+            </span>
+          </div>
+          <p v-if="!visibleRuns.length && !loadingList" class="empty" data-testid="run-list-empty">
+            <template v-if="nameQuery.trim()">{{ '当前页没有匹配 name/runId 的 run。' }}</template>
+            <template v-else>{{ '台账里还没有 run；用下方表单创建一个 DRAFT。' }}</template>
           </p>
         </div>
         <div class="ledger-pager">
@@ -825,20 +1169,61 @@ onBeforeUnmount(() => {
       </template>
     </section>
 
+    <section v-if="compareIds.length === 2" class="card ledger-compare-card" data-testid="run-compare">
+      <div class="card-head">
+        <h2>报告对比 <span class="count">2</span></h2>
+        <div class="bench-actions">
+          <span class="hint" data-testid="run-compare-status">{{ compareLoading ? '读取中…' : 'phase=run' }}</span>
+          <button type="button" class="btn ghost" data-testid="run-compare-clear" @click="clearCompare">清除对比</button>
+        </div>
+      </div>
+      <p class="hint">
+        A：{{ compareRunLabel(compareA) }} · B：{{ compareRunLabel(compareB) }}
+      </p>
+      <p class="notice info" data-testid="run-compare-note">单次结果为演示性数据，未重复验证</p>
+      <p v-if="compareError" class="error-banner" role="alert" data-testid="run-compare-error">{{ compareError }}</p>
+      <table class="data-table" data-testid="run-compare-table">
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th>A</th>
+            <th>B</th>
+            <th>差值（B − A）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in compareRows" :key="row.key">
+            <td>
+              <span>{{ row.label }}</span>
+              <br />
+              <code class="hint">{{ row.key }}</code>
+            </td>
+            <td>{{ row.aText }}</td>
+            <td>{{ row.bText }}</td>
+            <td>{{ row.deltaText }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <section class="card ledger-create-card">
       <div class="card-head">
         <h2>新建 run</h2>
         <span class="hint">POST /lab-api/lab/runs → DRAFT</span>
       </div>
       <form class="ledger-create" @submit.prevent="submitCreate">
-        <label class="form-label">
+        <label class="form-label ledger-name-field">
+          测试名称（可选）
+          <input v-model="createForm.name" class="input" maxlength="128" data-testid="run-create-name" placeholder="例如 双十一压测" />
+        </label>
+        <label class="form-label ledger-scenario-field">
           scenario
           <input v-model="createForm.scenario" class="input" data-testid="run-create-scenario" list="run-create-scenario-options" placeholder="例如 smoke / load / spike" />
         </label>
         <datalist id="run-create-scenario-options" data-testid="run-create-scenario-options">
           <option v-for="name in uiScenarioNames" :key="name" :value="name">{{ name }}</option>
         </datalist>
-        <label class="form-label">
+        <label class="form-label ledger-params-field">
           params (JSON)
           <textarea v-model="createForm.paramsText" class="input ledger-params-input" rows="3" data-testid="run-create-params" spellcheck="false"></textarea>
         </label>
@@ -905,6 +1290,36 @@ onBeforeUnmount(() => {
           <span v-if="operation.lastError" class="hint">错误：{{ operation.lastError }}</span>
         </div>
         <p v-if="pendingNote" class="notice" role="status" data-testid="run-operation-pending">{{ pendingNote }}</p>
+
+        <h3>档案字段</h3>
+        <dl v-if="selectedRun" class="kv-grid ledger-run-kv" data-testid="run-detail-kv">
+          <div class="kv-row">
+            <dt>测试名称</dt>
+            <dd data-testid="run-name">{{ selectedRun.name || '—' }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>场景</dt>
+            <dd>{{ selectedRun.scenario || '—' }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>节点</dt>
+            <dd data-testid="run-nodes">{{ detailNodes }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>流量模式 / 目标实例</dt>
+            <dd>{{ detailTraffic }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>写锁</dt>
+            <dd>{{ detailLock }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>归档状态</dt>
+            <dd>
+              <span class="chip" :class="{ on: selectedRun.archived }" data-testid="run-archived">{{ selectedRun.archived ? '已归档' : '未归档' }}</span>
+            </dd>
+          </div>
+        </dl>
 
         <dl v-if="selectedRun" class="ledger-facts">
           <dt>scenario</dt>
@@ -1184,5 +1599,115 @@ onBeforeUnmount(() => {
         窗口由控制器按 run 起止时间加抓取/排空宽限计算。
       </p>
     </template>
+
+    <div v-if="deleteTarget" class="modal-backdrop" data-testid="run-delete-modal" @click.self="cancelDelete">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="run-delete-title">
+        <h3 id="run-delete-title">删除 run</h3>
+        <dl class="kv-grid">
+          <div class="kv-row">
+            <dt>测试名称</dt>
+            <dd>{{ deleteTarget.name || '—' }}</dd>
+          </div>
+          <div class="kv-row">
+            <dt>runId</dt>
+            <dd><code>{{ deleteTarget.runId }}</code></dd>
+          </div>
+          <div class="kv-row">
+            <dt>status</dt>
+            <dd><span class="badge" :class="statusTone(deleteTarget.status)">{{ deleteTarget.status }}</span></dd>
+          </div>
+        </dl>
+        <p class="notice danger">
+          将级联删除该 run 的 steps、operations、fault events、metric windows、checks，
+          并清理 k6 报告目录；不可恢复。
+        </p>
+        <div class="rowline modal-actions">
+          <button type="button" class="btn ghost" data-testid="run-delete-cancel" :disabled="deleteBusy" @click="cancelDelete">取消</button>
+          <button type="button" class="btn danger" data-testid="run-delete-confirm" :disabled="deleteBusy" @click="confirmDelete">
+            {{ deleteBusy ? '删除中…' : '确认删除' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.run-list .run-row {
+  grid-template-columns: 44px 150px 170px minmax(120px, 1.2fr) 100px 88px 80px 100px 150px 150px minmax(190px, 1fr);
+  min-width: 1390px;
+}
+
+.run-compare-check {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.run-name-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.run-row-actions .btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.run-delete-hint {
+  font-size: 11px;
+}
+
+.run-row-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.archived-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.archived-toggle input {
+  accent-color: var(--accent);
+}
+
+.ledger-run-kv {
+  margin: 8px 0 14px;
+}
+
+.ledger-compare-card {
+  margin-top: 14px;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.ledger-create .ledger-name-field {
+  flex: 0 1 200px;
+}
+
+.ledger-create .ledger-scenario-field {
+  flex: 1 1 240px;
+}
+
+.ledger-create .ledger-params-field {
+  flex: 2 1 360px;
+}
+</style>

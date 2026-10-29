@@ -16,10 +16,14 @@ const props = defineProps({
   faults: { type: Array, default: () => [] },
   /** name (app-1…) -> { cpu, heapBytes, reqRate, p99Seconds, threads } or nulls. */
   metrics: { type: Object, default: () => ({}) },
-  promNote: { type: String, default: '' }
+  promNote: { type: String, default: '' },
+  /** Enabled Java nodes of the newest run; empty means "all configured". */
+  enabledNodes: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['open-thread'])
+
+const enabledSet = computed(() => (props.enabledNodes.length ? new Set(props.enabledNodes) : null))
 
 const faultsByTarget = computed(() => {
   const map = new Map()
@@ -40,6 +44,7 @@ const cards = computed(() =>
       container: container.name,
       state: container.state,
       health: container.health,
+      enabled: !enabledSet.value || enabledSet.value.has(name),
       faults: faultsByTarget.value.get(container.name) || [],
       ...metric
     }
@@ -65,6 +70,11 @@ function healthClass(health) {
       抓不到序列时显示「无数据」而不是 0。
     </p>
 
+    <div class="notice info" data-testid="instances-b4-note">
+      实例/JVM 配置属 B4：本页只读展示「当前状态 + 配置组库」；完整参数在向导第 3 步编辑。
+      未启用节点置灰显示「未启用」，不参与实验。Caffeine 过期/刷新按秒配置，0=不启用；关闭 L1 时清空本地条目并显示「不适用」。
+    </div>
+
     <div v-if="promNote" class="notice" role="status" data-testid="instances-prom-note">{{ promNote }}</div>
 
     <div v-if="!cards.length" class="empty" data-testid="instances-empty">
@@ -76,7 +86,7 @@ function healthClass(health) {
         v-for="card in cards"
         :key="card.name"
         class="card instance-card"
-        :class="`tone-${containerTone(card)}`"
+        :class="[`tone-${containerTone(card)}`, { off: !card.enabled }]"
         :data-testid="`instance-card-${card.name}`"
       >
         <header class="instance-head">
@@ -87,6 +97,7 @@ function healthClass(health) {
           <div class="instance-badges">
             <span class="badge" :class="card.state === 'running' ? 'ok' : 'muted'">{{ card.state }}</span>
             <span class="badge" :class="healthClass(card.health)">{{ card.health }}</span>
+            <span v-if="!card.enabled" class="badge muted" :data-testid="`instance-disabled-${card.name}`">未启用</span>
           </div>
         </header>
 
@@ -139,7 +150,8 @@ function healthClass(health) {
         </div>
 
         <footer class="instance-foot">
-          <span v-if="card.faults.length" class="instance-faults">
+          <span v-if="!card.enabled" class="chip" :data-testid="`instance-disabled-note-${card.name}`">未启用 · 完整参数在向导第 3 步</span>
+          <span v-else-if="card.faults.length" class="instance-faults">
             <span
               v-for="fault in card.faults"
               :key="fault.id"
@@ -152,6 +164,7 @@ function healthClass(health) {
             type="button"
             class="btn ghost"
             :data-testid="`instance-open-thread-${card.name}`"
+            :disabled="!card.enabled"
             @click="emit('open-thread', card.name)"
           >线程实验室 →</button>
         </footer>
@@ -163,6 +176,17 @@ function healthClass(health) {
     </p>
     <p class="hint">
       线程卡片里的「线程实验室 →」会把该实例带到线程页（同一实例下拉），不会注入任何故障。
+      完整 JVM/线程池/Caffeine/GC 日志参数在向导第 3 步；本页不提供应用或重启。
     </p>
   </section>
 </template>
+
+<style scoped>
+.instance-card.off {
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+.instance-card.off .metric-value {
+  color: var(--text-muted);
+}
+</style>

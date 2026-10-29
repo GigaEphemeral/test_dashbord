@@ -14,13 +14,19 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Guide pause freezes the countdown: {@link #freeze(Instant)} cancels the
  * scheduled revert and records the remaining time; {@link #resumeAt(Instant)}
  * moves the expiry forward by exactly that remaining time.</p>
+ *
+ * <p>A <b>manual hold</b> (design §16.8, {@code ttlSeconds=-1}) is a reverting
+ * action with no expiry: {@code ttlSeconds} and {@code expiresAt} are both
+ * {@code null}, so it never counts as expired, the watchdog never auto-reverts
+ * it and pause/resume have no countdown to freeze or restore. Only stop-all (or
+ * an explicit revert) ends it.</p>
  */
 final class ChaosAction {
 
     private final String id;
     private final String target;
     private final ChaosActionType type;
-    private final int ttlSeconds;
+    private final Integer ttlSeconds;
     private final Instant createdAt;
     private volatile Instant expiresAt;
     private final AtomicReference<ChaosActionStatus> status =
@@ -31,7 +37,7 @@ final class ChaosAction {
     private volatile long remainingMillis = -1;
     private volatile String lastError;
 
-    ChaosAction(String id, String target, ChaosActionType type, int ttlSeconds, Instant createdAt, Instant expiresAt) {
+    ChaosAction(String id, String target, ChaosActionType type, Integer ttlSeconds, Instant createdAt, Instant expiresAt) {
         this.id = id;
         this.target = target;
         this.type = type;
@@ -52,8 +58,13 @@ final class ChaosAction {
         return type;
     }
 
-    int ttlSeconds() {
+    Integer ttlSeconds() {
         return ttlSeconds;
+    }
+
+    /** True for a manual hold: a reverting action with no automatic revert. */
+    boolean manualHold() {
+        return expiresAt == null;
     }
 
     Instant createdAt() {
@@ -161,11 +172,13 @@ final class ChaosAction {
      * negative remainder is clamped to zero so resume reverts immediately
      * instead of losing the action. An action whose fault is still applying has
      * no task yet but must still keep its countdown, so APPLYING is captured too.
+     * A manual hold has no countdown at all and keeps {@code -1} ("not frozen").
      */
     long freeze(Instant now) {
         cancelSchedule();
         ChaosActionStatus current = status();
-        if (current == ChaosActionStatus.ACTIVE || current == ChaosActionStatus.APPLYING) {
+        if (expiresAt != null
+                && (current == ChaosActionStatus.ACTIVE || current == ChaosActionStatus.APPLYING)) {
             remainingMillis = Math.max(0L, Duration.between(now, expiresAt).toMillis());
         }
         return remainingMillis;
@@ -178,15 +191,19 @@ final class ChaosAction {
 
     /**
      * B2-04a API countdown. Returns {@code null} when the countdown is no longer
-     * meaningful: the action failed (the watchdog owns the retry) or was
-     * reverted. While paused the frozen remainder is authoritative - the live
-     * expiry has deliberately not moved yet - otherwise the expiry decides.
-     * Callers pass the service's monitor state and injected clock, never
-     * {@code System.currentTimeMillis()}.
+     * meaningful: a manual hold (no auto-revert), the action failed (the
+     * watchdog owns the retry) or was reverted. While paused the frozen
+     * remainder is authoritative - the live expiry has deliberately not moved
+     * yet - otherwise the expiry decides. Callers pass the service's monitor
+     * state and injected clock, never {@code System.currentTimeMillis()}.
      */
     Long remainingViewMillis(Instant now, boolean paused) {
         ChaosActionStatus current = status();
         if (current == ChaosActionStatus.REVERTED || current == ChaosActionStatus.FAILED) {
+            return null;
+        }
+        if (expiresAt == null) {
+            // Manual hold: the view renders null as "no auto-revert".
             return null;
         }
         if (paused) {
@@ -196,16 +213,28 @@ final class ChaosAction {
         return Math.max(0L, Duration.between(now, expiresAt).toMillis());
     }
 
-    /** Moves the expiry to {@code now + remaining} and returns the new expiry. */
+    /**
+     * Moves the expiry to {@code now + remaining} and returns the new expiry,
+     * or {@code null} for a manual hold, whose expiry never moves.
+     */
     Instant resumeAt(Instant now, long ttlMillis) {
+        if (expiresAt == null) {
+            return null;
+        }
         expiresAt = now.plusMillis(Math.max(0L, ttlMillis));
         remainingMillis = -1;
         return expiresAt;
     }
 
-    /** True when the action is ACTIVE and its (possibly frozen) expiry has passed. */
+    /**
+     * True when the action is ACTIVE and its (possibly frozen) expiry has
+     * passed. A manual hold has no expiry and is never expired, so neither the
+     * watchdog nor a TTL task can auto-revert it.
+     */
     boolean expiredAt(Instant now) {
-        return status() == ChaosActionStatus.ACTIVE && !expiresAt.isAfter(now);
+        return status() == ChaosActionStatus.ACTIVE
+                && expiresAt != null
+                && !expiresAt.isAfter(now);
     }
 
     ChaosActionView toView() {

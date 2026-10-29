@@ -24,19 +24,22 @@ import java.util.Optional;
  */
 public class RunLedgerRepository {
 
-    private static final String RUN_COLUMNS = "run_id, scenario, status, source_commit, operator, "
-            + "created_at, updated_at, started_at, ended_at";
+    private static final String RUN_COLUMNS = "run_id, scenario, name, nodes, status, source_commit, "
+            + "operator, created_at, updated_at, started_at, ended_at, archived";
 
     private static final RowMapper<RunRecord> RUN_MAPPER = (rs, rowNum) -> new RunRecord(
             rs.getString("run_id"),
             rs.getString("scenario"),
+            rs.getString("name"),
+            rs.getString("nodes"),
             RunStatus.valueOf(rs.getString("status")),
             rs.getString("source_commit"),
             rs.getString("operator"),
             instant(rs, "created_at"),
             instant(rs, "updated_at"),
             instant(rs, "started_at"),
-            instant(rs, "ended_at"));
+            instant(rs, "ended_at"),
+            rs.getBoolean("archived"));
 
     private final JdbcTemplate jdbc;
 
@@ -47,10 +50,11 @@ public class RunLedgerRepository {
     // ------------------------------------------------------------------ runs
 
     public void insertRun(RunRecord run) {
-        jdbc.update("INSERT INTO lab_run (" + RUN_COLUMNS + ") VALUES (?,?,?,?,?,?,?,?,?)",
-                run.runId(), run.scenario(), run.status().name(), run.sourceCommit(), run.operator(),
+        jdbc.update("INSERT INTO lab_run (" + RUN_COLUMNS + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                run.runId(), run.scenario(), run.name(), run.nodes(), run.status().name(),
+                run.sourceCommit(), run.operator(),
                 timestamp(run.createdAt()), timestamp(run.updatedAt()),
-                timestamp(run.startedAt()), timestamp(run.endedAt()));
+                timestamp(run.startedAt()), timestamp(run.endedAt()), run.archived());
     }
 
     public Optional<RunRecord> findRun(String runId) {
@@ -59,17 +63,16 @@ public class RunLedgerRepository {
         return rows.stream().findFirst();
     }
 
+    /** Pre-B3 listing: archived rows are included (tests and recovery surfaces). */
     public List<RunRecord> listRuns(String scenario, RunStatus status, int limit, int offset) {
+        return listRuns(scenario, status, true, limit, offset);
+    }
+
+    public List<RunRecord> listRuns(String scenario, RunStatus status, boolean includeArchived,
+                                    int limit, int offset) {
         StringBuilder sql = new StringBuilder("SELECT " + RUN_COLUMNS + " FROM lab_run WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        if (scenario != null) {
-            sql.append(" AND scenario = ?");
-            args.add(scenario);
-        }
-        if (status != null) {
-            sql.append(" AND status = ?");
-            args.add(status.name());
-        }
+        appendRunFilters(sql, args, scenario, status, includeArchived);
         sql.append(" ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?");
         args.add(limit);
         args.add(offset);
@@ -77,8 +80,19 @@ public class RunLedgerRepository {
     }
 
     public long countRuns(String scenario, RunStatus status) {
+        return countRuns(scenario, status, true);
+    }
+
+    public long countRuns(String scenario, RunStatus status, boolean includeArchived) {
         StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM lab_run WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        appendRunFilters(sql, args, scenario, status, includeArchived);
+        Long count = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0L : count;
+    }
+
+    private static void appendRunFilters(StringBuilder sql, List<Object> args, String scenario,
+                                         RunStatus status, boolean includeArchived) {
         if (scenario != null) {
             sql.append(" AND scenario = ?");
             args.add(scenario);
@@ -87,8 +101,19 @@ public class RunLedgerRepository {
             sql.append(" AND status = ?");
             args.add(status.name());
         }
-        Long count = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
-        return count == null ? 0L : count;
+        if (!includeArchived) {
+            sql.append(" AND archived = 0");
+        }
+    }
+
+    /** Archive flag only; the service owns which statuses may be archived. */
+    public int updateRunArchived(String runId, boolean archived) {
+        return jdbc.update("UPDATE lab_run SET archived = ? WHERE run_id = ?", archived, runId);
+    }
+
+    /** Hard delete; every child row cascades. Callers check the status first. */
+    public int deleteRun(String runId) {
+        return jdbc.update("DELETE FROM lab_run WHERE run_id = ?", runId);
     }
 
     public List<RunRecord> findRunsByStatuses(Collection<RunStatus> statuses) {
@@ -129,10 +154,15 @@ public class RunLedgerRepository {
                 RunStatus.UNKNOWN.name(), timestamp(at), runId, expected.name());
     }
 
-    /** Deletes runs outside the newest {@code keep}; child rows cascade. */
+    /**
+     * Deletes runs outside the newest {@code keep}; child rows cascade.
+     * Archived runs are never evicted by retention (the operator asked to keep
+     * them) and do not consume one of the {@code keep} slots.
+     */
     public int deleteRunsBeyondKeep(int keep) {
-        return jdbc.update("DELETE FROM lab_run WHERE run_id NOT IN ("
-                + "SELECT run_id FROM (SELECT run_id FROM lab_run ORDER BY created_at DESC, run_id DESC LIMIT ?) kept)",
+        return jdbc.update("DELETE FROM lab_run WHERE archived = 0 AND run_id NOT IN ("
+                + "SELECT run_id FROM (SELECT run_id FROM lab_run WHERE archived = 0 "
+                + "ORDER BY created_at DESC, run_id DESC LIMIT ?) kept)",
                 keep);
     }
 

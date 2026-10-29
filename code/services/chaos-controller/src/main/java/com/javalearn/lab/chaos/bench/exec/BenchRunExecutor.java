@@ -180,6 +180,31 @@ public class BenchRunExecutor {
     }
 
     /**
+     * B3-00a: removes {@code <reports-mount>/<runId>} when the ledger row is
+     * hard-deleted. Absent is a normal answer; an I/O failure is reported so the
+     * caller can note it instead of silently leaking files.
+     */
+    public boolean deleteReport(String runId) {
+        Path directory = reportDirectory(requireSafeRunId(runId));
+        if (!Files.exists(directory)) {
+            return false;
+        }
+        try (java.util.stream.Stream<Path> walk = Files.walk(directory)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        } catch (IOException | java.io.UncheckedIOException e) {
+            throw new BenchUnavailableException("cannot delete the k6 report directory '"
+                    + directory + "': " + e.getMessage(), e);
+        }
+        return true;
+    }
+
+    /**
      * Read-only inventory of {@code lab.role=k6} containers. B2-02b-2 decides
      * what to clean when the controller boots; this step only exposes it and
      * never removes anything by itself.

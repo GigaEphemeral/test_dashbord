@@ -16,7 +16,8 @@ const props = defineProps({
   syncTick: { type: Number, default: 0 },
   containers: { type: Array, default: () => [] },
   faults: { type: Array, default: () => [] },
-  toxiproxy: { type: Object, default: null }
+  toxiproxy: { type: Object, default: null },
+  showTopology: { type: Boolean, default: true }
 })
 
 const DEFAULT_KPI_KEYS = [
@@ -147,7 +148,7 @@ onBeforeUnmount(() => {
       title="核心 KPI"
     />
 
-    <section class="card">
+    <section v-if="showTopology" class="card">
       <div class="card-head">
         <h2>拓扑</h2>
         <span class="hint">节点全部来自 <code>GET /lab-api/containers</code>，故障徽标来自活动故障列表</span>

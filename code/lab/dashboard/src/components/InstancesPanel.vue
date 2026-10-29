@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import InstancesView from './InstancesView.vue'
 import ThreadLab from './ThreadLab.vue'
-import { describeError, fetchWindowMetrics } from '../api'
+import { describeError, fetchRuns, fetchWindowMetrics } from '../api'
 
 /**
  * Instance and JVM workspace. The instance cards read the same B1-03 window as
@@ -32,6 +32,9 @@ const tab = ref('cards')
 const targetInstance = ref(props.focusInstance)
 const instanceMetrics = ref({})
 const promNote = ref('')
+// The newest run's node selection is the only source of "enabled" today; an
+// empty list means the run predates B3-00a ("all configured").
+const enabledNodes = ref([])
 let inFlight = false
 let queued = false
 
@@ -110,10 +113,22 @@ function selectTab(id) {
   if (id === 'cards') loadMetrics()
 }
 
+async function loadEnabledNodes() {
+  if (!props.active || !props.token) return
+  try {
+    const page = await fetchRuns(props.token, { limit: 1 })
+    enabledNodes.value = page?.items?.[0]?.nodes || []
+  } catch {
+    // A ledger hiccup must not blank the instance page; treat it as "all on".
+    enabledNodes.value = []
+  }
+}
+
 watch(
   () => [props.active, props.syncTick, props.token],
   ([active]) => {
     if (active && tab.value === 'cards') loadMetrics()
+    if (active) loadEnabledNodes()
   },
   { immediate: true }
 )
@@ -168,6 +183,7 @@ onBeforeUnmount(() => {
       :faults="faults"
       :metrics="instanceMetrics"
       :prom-note="promNote"
+      :enabled-nodes="enabledNodes"
       @open-thread="openThread"
     />
     <ThreadLab

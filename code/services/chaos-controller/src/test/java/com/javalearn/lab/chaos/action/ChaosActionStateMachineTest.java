@@ -148,4 +148,42 @@ class ChaosActionStateMachineTest {
                 now, now.plusSeconds(1));
         assertThat(unfrozen.remainingViewMillis(now, true)).isNull();
     }
+
+    @Test
+    void manualHoldHasNoExpirySoItNeverAutoReverts() {
+        Instant now = Instant.parse("2026-10-26T10:00:00Z");
+        ChaosAction action = new ChaosAction("id-m", "jl-app-3", ChaosActionType.KILL, null, now, null);
+
+        assertThat(action.manualHold()).isTrue();
+        assertThat(action.expiresAt()).isNull();
+        // APPLYING and ACTIVE alike: a manual hold never counts as expired.
+        assertThat(action.expiredAt(now.plusSeconds(86_400))).isFalse();
+        assertThat(action.markApplied()).isTrue();
+        assertThat(action.expiredAt(now.plusSeconds(86_400))).isFalse();
+        assertThat(action.remainingViewMillis(now, false)).isNull();
+        assertThat(action.toView().ttlSeconds()).isNull();
+        assertThat(action.toView().expiresAt()).isNull();
+    }
+
+    @Test
+    void manualHoldSurvivesFreezeAndResumeWithoutACountdown() {
+        Instant now = Instant.parse("2026-10-26T10:00:00Z");
+        ChaosAction action = new ChaosAction("id-m", "jl-app-3", ChaosActionType.FREEZE, null, now, null);
+        action.markApplied();
+
+        // pause() must not NPE on a null expiry and must not fabricate a TTL.
+        assertThat(action.freeze(now.plusSeconds(10))).isEqualTo(-1L);
+        assertThat(action.remainingMillis()).isEqualTo(-1L);
+        assertThat(action.remainingViewMillis(now.plusSeconds(10), true)).isNull();
+
+        // resume() must not move the expiry (there is none).
+        assertThat(action.resumeAt(now.plusSeconds(20), 500)).isNull();
+        assertThat(action.expiresAt()).isNull();
+        assertThat(action.remainingViewMillis(now.plusSeconds(20), false)).isNull();
+        assertThat(action.expiredAt(now.plusSeconds(3_600))).isFalse();
+
+        // Stop-all / explicit revert still claims a manual hold.
+        assertThat(action.claimRevert()).isTrue();
+        assertThat(action.status()).isEqualTo(ChaosActionStatus.REVERTING);
+    }
 }

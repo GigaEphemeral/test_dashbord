@@ -104,6 +104,12 @@ public class LedgerProperties {
     /** Attempts to allocate a unique {@code run-yyyyMMdd-NNN} id. */
     private int runIdMaxAttempts = 10;
 
+    /** B3-00a: upper bound of enabled Java nodes in one run draft. */
+    private int maxNodes = 3;
+
+    /** B3-00a: upper bound of fault-timeline entries in one run draft. */
+    private int maxFaultItems = 16;
+
     /** B1-02: executor and synchronous wait budget for the operation contract. */
     private final Operation operation = new Operation();
 
@@ -156,6 +162,8 @@ public class LedgerProperties {
         range(maxPayloadBytes, 1024, 10_485_760, "lab.ledger.max-payload-bytes",
                 "LAB_LEDGER_MAX_PAYLOAD_BYTES");
         range(runIdMaxAttempts, 1, 100, "lab.ledger.run-id-max-attempts", "LAB_LEDGER_RUN_ID_MAX_ATTEMPTS");
+        range(maxNodes, 1, 64, "lab.ledger.max-nodes", "LAB_LEDGER_MAX_NODES");
+        range(maxFaultItems, 1, 256, "lab.ledger.max-fault-items", "LAB_LEDGER_MAX_FAULT_ITEMS");
         requireText(operation.getThreadName(), "lab.ledger.operation.thread-name",
                 "LAB_LEDGER_OPERATION_THREAD_NAME");
         range(operation.getPoolSize(), 1, 32, "lab.ledger.operation.pool-size",
@@ -495,6 +503,22 @@ public class LedgerProperties {
 
     public void setRunIdMaxAttempts(int runIdMaxAttempts) {
         this.runIdMaxAttempts = runIdMaxAttempts;
+    }
+
+    public int getMaxNodes() {
+        return maxNodes;
+    }
+
+    public void setMaxNodes(int maxNodes) {
+        this.maxNodes = maxNodes;
+    }
+
+    public int getMaxFaultItems() {
+        return maxFaultItems;
+    }
+
+    public void setMaxFaultItems(int maxFaultItems) {
+        this.maxFaultItems = maxFaultItems;
     }
 
     public Operation getOperation() {

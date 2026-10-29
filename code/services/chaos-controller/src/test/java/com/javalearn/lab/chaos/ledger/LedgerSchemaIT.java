@@ -1,6 +1,9 @@
 package com.javalearn.lab.chaos.ledger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.javalearn.lab.chaos.config.ChaosProperties;
+import com.javalearn.lab.chaos.schedule.FaultScheduleProperties;
+import com.javalearn.lab.chaos.schedule.FaultScheduleValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -99,6 +102,74 @@ class LedgerSchemaIT {
     }
 
     @Test
+    void runDraftFieldsRoundTripAndArchivedRowsLeaveTheDefaultList() {
+        Instant created = Instant.parse("2026-10-29T08:00:00.123Z");
+        RunRecord run = new RunRecord("run-20261029-101", "load", "缓存基线", "app-1,app-2",
+                RunStatus.COMPLETED, "abc1234", "local", created, created, created, created, true);
+
+        repository.insertRun(run);
+
+        RunRecord loaded = repository.findRun("run-20261029-101").orElseThrow();
+        assertThat(loaded).isEqualTo(run);
+        assertThat(loaded.nodeList()).containsExactly("app-1", "app-2");
+        assertThat(repository.listRuns(null, null, false, 10, 0)).isEmpty();
+        assertThat(repository.countRuns(null, null, false)).isZero();
+        assertThat(repository.listRuns(null, null, true, 10, 0)).containsExactly(run);
+        assertThat(repository.countRuns(null, null, true)).isEqualTo(1);
+
+        assertThat(repository.updateRunArchived("run-20261029-101", false)).isEqualTo(1);
+        assertThat(repository.listRuns(null, null, false, 10, 0)).extracting(RunRecord::runId)
+                .containsExactly("run-20261029-101");
+    }
+
+    @Test
+    void hardDeleteRemovesEveryChildRow() {
+        Instant now = LedgerTestDatabase.NOW;
+        repository.insertRun(LedgerTestDatabase.run("run-20261029-102", RunStatus.DRAFT, now));
+        repository.insertParam("run-20261029-102", "config", "{\"gcCollector\":\"G1\"}", now);
+        repository.insertStep(new RunStepRecord("run-20261029-102", "create", null, RunStatus.DRAFT,
+                now, 0L, null));
+
+        assertThat(repository.deleteRun("run-20261029-102")).isEqualTo(1);
+
+        assertThat(repository.findRun("run-20261029-102")).isEmpty();
+        assertThat(repository.findParams("run-20261029-102")).isEmpty();
+        assertThat(repository.findSteps("run-20261029-102")).isEmpty();
+    }
+
+    @Test
+    void draftNameNodesAndGroupsAreStoredTogether() {
+        RunLedgerService service = service();
+
+        var created = service.create(new RunCreateRequest("load", Map.of("LOAD_VUS", 10),
+                " 缓存基线 ", List.of("app-1", "app-2", "app-1"),
+                Map.of("gcCollector", "G1"),
+                List.of(Map.of("atSeconds", 10, "target", "jl-app-2", "action", "freeze",
+                        "recovery", "auto", "ttlSeconds", 30))));
+
+        RunRecord run = repository.findRun(created.runId()).orElseThrow();
+        assertThat(run.name()).isEqualTo("缓存基线");
+        assertThat(run.nodes()).isEqualTo("app-1,app-2");
+        assertThat(run.nodeList()).containsExactly("app-1", "app-2");
+        assertThat(repository.findParams(created.runId()))
+                .extracting(RunLedgerRepository.RunParamRow::groupName)
+                .containsExactlyInAnyOrder("request", "config", "faultSchedule");
+
+        assertThatThrownBy(() -> service.create(new RunCreateRequest("load", Map.of(), null,
+                List.of("http://app-1:8080"), null, null)))
+                .isInstanceOf(com.javalearn.lab.chaos.error.InvalidLedgerRequestException.class)
+                .hasMessageContaining("nodes");
+        assertThatThrownBy(() -> service.create(new RunCreateRequest("load", Map.of(),
+                "x".repeat(129), null, null, null)))
+                .isInstanceOf(com.javalearn.lab.chaos.error.InvalidLedgerRequestException.class)
+                .hasMessageContaining("name");
+        assertThatThrownBy(() -> service.create(new RunCreateRequest("load", Map.of(), null,
+                List.of("app-1", "app-2", "app-3", "app-4"), null, null)))
+                .isInstanceOf(com.javalearn.lab.chaos.error.InvalidLedgerRequestException.class)
+                .hasMessageContaining("max-nodes");
+    }
+
+    @Test
     void duplicateRunIdIsRetriedWithTheNextDailySequence() {
         Instant created = LedgerTestDatabase.NOW;
         repository.insertRun(LedgerTestDatabase.run("run-20261028-001", RunStatus.DRAFT, created));
@@ -118,6 +189,8 @@ class LedgerSchemaIT {
                 LedgerBootstrap.State.OK, "1", null, created));
         RunLedgerService service = new RunLedgerService(properties,
                 new LedgerTargetResolver(properties), bootstrap, stale, writer, stash,
+                new FaultScheduleValidator(properties, new ChaosProperties(),
+                        new FaultScheduleProperties()),
                 new ObjectMapper(), LedgerTestDatabase.clock());
 
         var view = service.create(new RunCreateRequest("spike", Map.of("vus", 10)));
@@ -146,7 +219,7 @@ class LedgerSchemaIT {
         assertThat(unique).isEqualTo(4); // one row per indexed column
         assertThat(jdbc.queryForObject("SELECT version FROM lab_ledger.flyway_schema_history "
                 + "WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1", String.class))
-                .isEqualTo("2");
+                .isEqualTo("3");
     }
 
     @Test
@@ -214,4 +287,23 @@ class LedgerSchemaIT {
             return super.maxRunSequence(prefix);
         }
     }
+    private RunLedgerService service() {
+        LedgerProperties properties = LedgerTestDatabase.properties(stashDir);
+        RunLedgerRepository repository = LedgerTestDatabase.repository();
+        LedgerBootstrap bootstrap = mock(LedgerBootstrap.class);
+        when(bootstrap.status()).thenReturn(new LedgerBootstrap.BootstrapStatus(
+                LedgerBootstrap.State.OK, "3", null, LedgerTestDatabase.NOW));
+        ObjectMapper objectMapper = new ObjectMapper();
+        LedgerStash stash = new LedgerStash(properties, repository, objectMapper,
+                LedgerTestDatabase.clock());
+        LedgerWriter writer = new LedgerWriter(repository, stash, objectMapper,
+                LedgerTestDatabase.clock());
+        return new RunLedgerService(properties, new LedgerTargetResolver(properties), bootstrap,
+                repository, writer, stash,
+                new FaultScheduleValidator(properties, new ChaosProperties(),
+                        new FaultScheduleProperties()),
+                objectMapper, LedgerTestDatabase.clock());
+    }
+
+
 }

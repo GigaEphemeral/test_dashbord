@@ -204,13 +204,43 @@ export function applyChaosAction(token, instance, action, ttlSeconds, idempotenc
 // Result-wrapped payloads: runs, operations, pre-check reports and metric
 // windows. Read helpers only name catalog keys; PromQL never leaves the server.
 
-export function fetchRuns(token, { scenario, status, limit, offset } = {}) {
-  return getJson(withQuery('/lab/runs', { scenario, status, limit, offset }), token)
+export function fetchRuns(token, { scenario, status, limit, offset, includeArchived } = {}) {
+  return getJson(
+    withQuery('/lab/runs', { scenario, status, limit, offset, includeArchived }),
+    token
+  )
 }
 
-/** Creates a DRAFT run; params is a JSON object (credentials are rejected server-side). */
-export function createRun(token, { scenario, params }) {
-  return postJson('/lab/runs', token, { scenario, params })
+/**
+ * Creates a DRAFT run. `params` is the k6 request map (credentials are
+ * rejected server-side); `name`/`nodes`/`config`/`faultSchedule` are the
+ * B3-00 draft fields and are stored in their own ledger groups.
+ */
+export function createRun(token, { scenario, params, name, nodes, config, faultSchedule }) {
+  const body = { scenario, params }
+  if (name) body.name = name
+  if (nodes && nodes.length) body.nodes = nodes
+  if (config) body.config = config
+  if (faultSchedule && faultSchedule.length) body.faultSchedule = faultSchedule
+  return postJson('/lab/runs', token, body)
+}
+
+/** B3-00a: hide/show a closed run; a live run is rejected with 409. */
+export function archiveRun(token, runId) {
+  return postJson(`/lab/runs/${encodeURIComponent(runId)}/archive`, token)
+}
+
+export function unarchiveRun(token, runId) {
+  return postJson(`/lab/runs/${encodeURIComponent(runId)}/unarchive`, token)
+}
+
+/** B3-00a: hard delete (artifacts first, then the cascading row delete). */
+export async function deleteRun(token, runId) {
+  const response = await fetch(`${API_BASE}/lab/runs/${encodeURIComponent(runId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(token)
+  })
+  return readJson(response)
 }
 
 export function fetchRun(token, runId) {
@@ -350,6 +380,20 @@ async function readProm(response) {
 export async function queryProm(expr) {
   const query = new URLSearchParams({ query: expr })
   return readProm(await fetch(`${PROM_BASE}/query?${query.toString()}`))
+}
+
+/**
+ * Range matrix for one PromQL expression (B3-00d timeline). `start`/`end` are
+ * epoch seconds; `step` is a Prometheus duration ("15s"). [] means no data.
+ */
+export async function queryPromRange(expr, start, end, step) {
+  const query = new URLSearchParams({
+    query: expr,
+    start: String(start),
+    end: String(end),
+    step
+  })
+  return readProm(await fetch(`${PROM_BASE}/query_range?${query.toString()}`))
 }
 
 // ---------------------------------------------------------------- thread lab

@@ -36,6 +36,10 @@
 > 真机 A01/A17/A20/A09/A12/A29 与遗留清单见 `step-S2-B2-00-closure.md`。
 > 历史：B2-04 后 chaos 676；B2-03 后 603；B2-02 后 591；B2-01 后 491；B1 收口 474。
 
+> **B3-00 现行基线（2026-10-29，交互对齐实现）**：reactor **1280**（chaos 725、app 469、jdk8 59、core 13、
+> platform 14）、console-smoke **132/0**、k6 node **113**、claims **47**、verify 109/1（smoke 7/7 为 B2 基线，本步未重跑）。
+> 真机证据与缺口见 `step-S2-B3-00a-interaction-alignment-implementation.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -250,6 +254,12 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 - 验收：UI 与交互稿 v4 一致；UI/CLI 场景一致；删除级联无残留；console-smoke 新基线。
 - 交接：`step-S2-B3-00-interaction-alignment.md`。
 
+> **实现状态（2026-10-29）：已完成代码实现（B3-00a）。** 交付：V3 台账字段（name/nodes/archived）与归档/彻底删除；
+> 节点选择门禁（预检查按启用节点校验、定向实例属于启用节点）；故障时间线（atSeconds 调度、manual kill/freeze 以
+> `ttlSeconds=-1` 手动保持、stop-all 可清理）；`load` 商品采样 `PRODUCT_ID_*`（默认 1/1/uniform/0）；控制台 6 分区、
+> 7 步向导、监控时间轴/k6 进度/实例表/拓扑“未启用”、实验记录名称/归档/删除/对比。B4 的应用并重启/回滚按钮保持禁用。
+> 闸门见 §0；交接 `step-S2-B3-00a-interaction-alignment-implementation.md`；独立审核随 B3 收口执行。
+
 ### B3-01 独立 Caffeine L1 开关（含关闭语义）
 
 - 开发：`off` = 绕过 L1 读写并清空本地条目；每实例独立；纳入六开关体系或独立配置 API（按现有风格）；
@@ -452,4 +462,5 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v1.5：B3-00 交互对齐实现完成——V3 台账字段与归档/删除、节点门禁、故障时间线（manual=-1 手动保持）、load 商品采样、6 分区控制台/7 步向导/监控时间轴/实验记录清理；§0 记录 B3-00 基线，B4 应用重启仍禁用 |
 | 2026-10-28 | v1.3：B0 收口——§0 闸门表加「B0 收口基线（现行）」列（reactor 851 / app 469 / chaos 296；console-smoke 42 未重跑并标注原因）；§1 顶部登记收口状态与真机台账指针；顺延项（cursor E2E、db-ha 真 `--yes`、failure-container-check 细节）在 `b0-live-verification.md` 登记 |

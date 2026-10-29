@@ -73,7 +73,8 @@ public class BenchRunLifecycleHook implements RunLifecycleHook {
         }
         try {
             Snapshot snapshot = catalog.load();
-            BenchLaunchPlan plan = planner.plan(snapshot, run.runId(), run.scenario(), params, hostDir);
+            BenchLaunchPlan plan = planner.plan(snapshot, run.runId(), run.scenario(), params,
+                    hostDir, run.nodeList());
             BenchExecutionState state = executor.start(plan);
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("k6Container", state.containerName());
@@ -120,6 +121,14 @@ public class BenchRunLifecycleHook implements RunLifecycleHook {
             details.put("k6StateError", e.getClass().getSimpleName() + ": " + e.getMessage());
             log.warn("Could not read the k6 state after stopping run {}: {}", runId, e.toString());
         }
+        return new LaunchResult(details);
+    }
+
+    @Override
+    public LaunchResult cleanupArtifacts(String runId) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("k6ContainerRemoved", executor.cleanup(runId));
+        details.put("k6ReportRemoved", executor.deleteReport(runId));
         return new LaunchResult(details);
     }
 

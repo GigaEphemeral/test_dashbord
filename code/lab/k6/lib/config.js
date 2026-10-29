@@ -10,6 +10,8 @@
  * exports one RUN_ID for the whole test; when k6 is invoked directly, pass
  * RUN_ID explicitly so every VU emits the same label.
  */
+import { parseSampling } from './product-sampling.js';
+
 const ENV = __ENV;
 
 function text(name, fallback) {
@@ -268,6 +270,9 @@ export const config = {
     seckillOrders: apiPath('SECKILL_ORDERS_PATH', '/api/seckill/orders'),
   },
   productId: integer('PRODUCT_ID', 1, 1),
+  // B3-00: load-only sampling range. Defaults (1..1) keep every load
+  // iteration on PRODUCT_ID's historical value, product 1.
+  productSampling: parseSampling(ENV),
   seckillProductId: integer('SECKILL_PRODUCT_ID', 20, 1),
   userPrefix: text('USER_PREFIX', 'k6'),
   order: {

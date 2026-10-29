@@ -31,10 +31,12 @@ import static com.javalearn.lab.chaos.ledger.LedgerViews.RunPageView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.RunView;
 import static com.javalearn.lab.chaos.ledger.LedgerViews.StepView;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -87,7 +89,7 @@ class LedgerControllerTest {
     @Test
     void listPassesFiltersAndPagingAndReturnsTheTotal() throws Exception {
         RunView run = run("DRAFT");
-        when(service.list("spike", "DRAFT", 10, 5))
+        when(service.list("spike", "DRAFT", 10, 5, false))
                 .thenReturn(new RunPageView(List.of(run), 1, 10, 5));
 
         mvc.perform(get("/lab/runs")
@@ -102,7 +104,66 @@ class LedgerControllerTest {
                 .andExpect(jsonPath("$.data.offset").value(5))
                 .andExpect(jsonPath("$.data.items[0].runId").value("run-20261028-001"));
 
-        verify(service).list("spike", "DRAFT", 10, 5);
+        verify(service).list("spike", "DRAFT", 10, 5, false);
+    }
+
+    @Test
+    void listIncludesArchivedOnlyWhenAsked() throws Exception {
+        when(service.list(null, null, null, null, true))
+                .thenReturn(new RunPageView(List.of(run("COMPLETED")), 1, 50, 0));
+
+        mvc.perform(get("/lab/runs").param("includeArchived", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].name").value("冒烟基线"))
+                .andExpect(jsonPath("$.data.items[0].nodes[1]").value("app-2"));
+
+        verify(service).list(null, null, null, null, true);
+    }
+
+    @Test
+    void archiveAndUnarchiveReturnTheUpdatedRun() throws Exception {
+        when(service.setArchived("run-20261028-001", true))
+                .thenReturn(new RunView("run-20261028-001", "spike", "冒烟基线", List.of("app-1"),
+                        "COMPLETED", "abc", "local", STARTED_AT, STARTED_AT, STARTED_AT, STARTED_AT,
+                        true));
+        when(service.setArchived("run-20261028-001", false))
+                .thenReturn(run("COMPLETED"));
+
+        mvc.perform(post("/lab/runs/run-20261028-001/archive"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.archived").value(true));
+
+        mvc.perform(post("/lab/runs/run-20261028-001/unarchive"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.archived").value(false));
+    }
+
+    @Test
+    void deleteReturnsTheArtifactSummary() throws Exception {
+        when(lifecycle.delete("run-20261028-001"))
+                .thenReturn(new LedgerViews.RunDeleteView("run-20261028-001", true,
+                        "{k6ContainerRemoved=true, k6ReportRemoved=true}"));
+
+        mvc.perform(delete("/lab/runs/run-20261028-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.runId").value("run-20261028-001"))
+                .andExpect(jsonPath("$.data.deleted").value(true))
+                .andExpect(jsonPath("$.data.artifacts").value(
+                        org.hamcrest.Matchers.containsString("k6ReportRemoved")));
+    }
+
+    @Test
+    void archivingALiveRunAnswers409() throws Exception {
+        when(service.setArchived("run-20261028-001", true))
+                .thenThrow(new com.javalearn.lab.chaos.error.LedgerConflictException(
+                        "run run-20261028-001 is RUNNING; stop it (or close an UNKNOWN run) before "
+                                + "you archive it"));
+
+        mvc.perform(post("/lab/runs/run-20261028-001/archive"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("40901"))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("RUNNING")));
     }
 
     @Test
@@ -180,7 +241,7 @@ class LedgerControllerTest {
 
     @Test
     void degradedListAlsoAnswers503() throws Exception {
-        when(service.list(any(), any(), any(), any())).thenThrow(
+        when(service.list(any(), any(), any(), any(), anyBoolean())).thenThrow(
                 new LedgerUnavailableException("ledger state is DEGRADED: connection refused"));
 
         mvc.perform(get("/lab/runs"))
@@ -410,8 +471,8 @@ class LedgerControllerTest {
     }
 
     private static RunView run(String status) {
-        return new RunView("run-20261028-001", "spike", status, "abc", "local",
-                STARTED_AT, STARTED_AT, null, null);
+        return new RunView("run-20261028-001", "spike", "冒烟基线", List.of("app-1", "app-2"),
+                status, "abc", "local", STARTED_AT, STARTED_AT, null, null, false);
     }
 
     private static OperationExecution execution(OperationStatus status, boolean replay, boolean pending,

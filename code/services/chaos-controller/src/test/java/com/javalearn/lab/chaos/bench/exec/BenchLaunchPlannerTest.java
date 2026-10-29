@@ -114,6 +114,19 @@ class BenchLaunchPlannerTest {
     }
 
     @Test
+    void productSamplingParamsAreRenderedForLoad() {
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "load",
+                Map.of("PRODUCT_ID_MIN", 5000, "PRODUCT_ID_MAX", 20000,
+                        "PRODUCT_ID_DISTRIBUTION", "normal", "PRODUCT_ID_CONCENTRATION", 55));
+
+        assertEquals("5000", plan.env().get("PRODUCT_ID_MIN"));
+        assertEquals("20000", plan.env().get("PRODUCT_ID_MAX"));
+        assertEquals("normal", plan.env().get("PRODUCT_ID_DISTRIBUTION"));
+        assertEquals("55", plan.env().get("PRODUCT_ID_CONCENTRATION"));
+        assertEquals("/scripts/scenarios/load.js", plan.argv().get(plan.argv().size() - 1));
+    }
+
+    @Test
     void nullParamsMeanManifestDefaults() {
         BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "spike", null);
         assertEquals("800", plan.env().get("SPIKE_VUS"));
@@ -369,6 +382,20 @@ class BenchLaunchPlannerTest {
     }
 
     @Test
+    void directedTargetMustBeOneOfTheRunEnabledNodes() {
+        BenchLaunchPlan plan = planner.plan(SNAPSHOT, RUN_ID, "smoke",
+                Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "app-2"),
+                "/host/k6", List.of("app-2", "app-3"));
+        assertEquals("app-2", plan.traffic().targetInstance());
+
+        BenchLaunchRejectedException error = assertThrows(BenchLaunchRejectedException.class,
+                () -> planner.plan(SNAPSHOT, RUN_ID, "smoke",
+                        Map.of("TRAFFIC_MODE", "target-instance", "TARGET_INSTANCE", "app-3"),
+                        "/host/k6", List.of("app-1", "app-2")));
+        assertTrue(error.getMessage().contains("enabled nodes"), error.getMessage());
+    }
+
+    @Test
     void unknownTrafficModeIsRejected() {
         assertRejected("smoke", Map.of("TRAFFIC_MODE", "direct"), "unknown traffic mode");
         assertRejected("smoke", Map.of("TRAFFIC_MODE", "VIA-NGINX"), "unknown traffic mode");
@@ -484,6 +511,8 @@ class BenchLaunchPlannerTest {
                 "P95_MS", 300, "P99_MS", 800, "ERROR_RATE", 0.01, "CHECKS_RATE", 0.99)));
         scenarios.put("load", scenario("load", params(
                 "LOAD_DURATION", "10m", "LOAD_START_VUS", 50, "LOAD_VUS", 200,
+                "PRODUCT_ID_MIN", 1, "PRODUCT_ID_MAX", 1,
+                "PRODUCT_ID_DISTRIBUTION", "uniform", "PRODUCT_ID_CONCENTRATION", 0,
                 "P95_MS", 300, "P99_MS", 800, "ERROR_RATE", 0.01)));
         scenarios.put("stress", scenario("stress", params(
                 "STRESS_STAGES", List.of(Map.of("duration", "1m", "target", 50)),

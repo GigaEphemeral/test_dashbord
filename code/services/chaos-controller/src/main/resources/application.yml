@@ -69,6 +69,9 @@ lab:
     query-max-limit: ${LAB_LEDGER_QUERY_MAX_LIMIT:200}
     max-payload-bytes: ${LAB_LEDGER_MAX_PAYLOAD_BYTES:65536}
     run-id-max-attempts: ${LAB_LEDGER_RUN_ID_MAX_ATTEMPTS:10}
+    # B3-00a draft limits: enabled Java nodes and fault-timeline entries.
+    max-nodes: ${LAB_LEDGER_MAX_NODES:3}
+    max-fault-items: ${LAB_LEDGER_MAX_FAULT_ITEMS:16}
     # B1-02 operation contract: every environment-changing request writes one
     # lab_operation row and returns operationId. Work runs on this dedicated
     # daemon pool, never on the chaos TTL/revert scheduler. sync-wait-ms is the
@@ -90,6 +93,14 @@ lab:
       ttl-seconds: ${LAB_LEDGER_ENV_LOCK_TTL_SECONDS:1800}
       # Retries when the lock row keeps changing between insert and read.
       acquire-attempts: ${LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS:3}
+  # B3-00b run-scoped fault timeline: offsets are relative to the k6 launch;
+  # the validator normalises manual holds and persists the canonical list.
+  # Same defaults in compose.base.yml and .env.example.
+  fault-schedule:
+    max-offset-seconds: ${LAB_FAULT_SCHEDULE_MAX_OFFSET_SECONDS:3600}
+    thread-name: ${LAB_FAULT_SCHEDULE_THREAD_NAME:fault-schedule}
+    pool-size: ${LAB_FAULT_SCHEDULE_POOL_SIZE:2}
+
   # Stage2 B1-03 metrics aggregation: chaos-controller queries Prometheus
   # /api/v1/query_range only through the versioned catalog (no arbitrary PromQL
   # from the frontend). The run window is [runStart - scrape-grace,

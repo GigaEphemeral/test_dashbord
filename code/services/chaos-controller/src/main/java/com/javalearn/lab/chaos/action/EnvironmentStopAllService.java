@@ -6,9 +6,11 @@ import com.javalearn.lab.chaos.bench.exec.BenchRunExecutor;
 import com.javalearn.lab.chaos.bench.exec.K6ContainerGateway;
 import com.javalearn.lab.chaos.config.ChaosProperties;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
+import com.javalearn.lab.chaos.schedule.FaultScheduler;
 import com.javalearn.lab.chaos.traffic.TrafficService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -71,17 +73,31 @@ public class EnvironmentStopAllService {
     private final AppProxyService appProxyService;
     private final BenchRunExecutor benchRunExecutor;
     private final ChaosProperties properties;
+    private final FaultScheduler faultSchedule;
 
     public EnvironmentStopAllService(ChaosActionService chaosActionService,
                                      TrafficService trafficService,
                                      AppProxyService appProxyService,
                                      BenchRunExecutor benchRunExecutor,
                                      ChaosProperties properties) {
+        this(chaosActionService, trafficService, appProxyService, benchRunExecutor, properties,
+                FaultScheduler.NONE);
+    }
+
+    /** B3-00b: stop-all also cancels pending run-scoped fault-schedule tasks. */
+    @Autowired
+    public EnvironmentStopAllService(ChaosActionService chaosActionService,
+                                     TrafficService trafficService,
+                                     AppProxyService appProxyService,
+                                     BenchRunExecutor benchRunExecutor,
+                                     ChaosProperties properties,
+                                     FaultScheduler faultSchedule) {
         this.chaosActionService = chaosActionService;
         this.trafficService = trafficService;
         this.appProxyService = appProxyService;
         this.benchRunExecutor = benchRunExecutor;
         this.properties = properties;
+        this.faultSchedule = faultSchedule == null ? FaultScheduler.NONE : faultSchedule;
     }
 
     /** One-button restore; never throws for a failing sub-step. */
@@ -203,6 +219,15 @@ public class EnvironmentStopAllService {
                         container.containerName());
                 failed++;
                 continue;
+            }
+
+            // B3-00b: a pending scheduled fault must not fire after stop-all
+            // stopped its k6. Best-effort: a cancel failure never blocks cleanup.
+            try {
+                faultSchedule.cancel(runId);
+            } catch (RuntimeException e) {
+                log.warn("stop-all: cancelling the fault schedule of run {} failed: {}",
+                        runId, e.toString());
             }
 
             boolean problem = false;

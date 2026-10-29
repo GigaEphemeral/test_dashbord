@@ -138,6 +138,16 @@ public class BenchLaunchPlanner {
      */
     public BenchLaunchPlan plan(Snapshot snapshot, String runId, String scenarioName,
                                 Map<String, Object> params, String scriptsHostDir) {
+        return plan(snapshot, runId, scenarioName, params, scriptsHostDir, List.of());
+    }
+
+    /**
+     * B3-00a: same plan, restricted to the run's enabled Java nodes. A directed
+     * target outside the selection is rejected before anything is launched.
+     */
+    public BenchLaunchPlan plan(Snapshot snapshot, String runId, String scenarioName,
+                                Map<String, Object> params, String scriptsHostDir,
+                                List<String> enabledNodes) {
         if (snapshot == null) {
             throw new BenchLaunchRejectedException("scenario snapshot is required to plan a k6 launch");
         }
@@ -145,7 +155,8 @@ public class BenchLaunchPlanner {
         Scenario definition = uiScenario(snapshot, scenario);
         String safeRunId = sanitizeRunId(runId);
         Map<String, Object> effective = effectiveParams(scenario, definition, params);
-        BenchLaunchPlan.Traffic traffic = resolveTraffic(params);
+        BenchLaunchPlan.Traffic traffic = resolveTraffic(params,
+                enabledNodes == null ? List.of() : enabledNodes);
 
         String hostDir = scriptsHostDir == null ? "" : scriptsHostDir.trim();
         if (hostDir.isEmpty()) {
@@ -490,7 +501,8 @@ public class BenchLaunchPlanner {
      * <p>A broken fixed table or port is a configuration problem
      * ({@link BenchUnavailableException}, 503/50303), not a bad request.</p>
      */
-    private BenchLaunchPlan.Traffic resolveTraffic(Map<String, Object> params) {
+    private BenchLaunchPlan.Traffic resolveTraffic(Map<String, Object> params,
+                                                   List<String> enabledNodes) {
         Map<String, Object> request = params == null ? Map.of() : params;
         String mode = MODE_VIA_NGINX;
         if (request.containsKey(TRAFFIC_MODE)) {
@@ -528,6 +540,11 @@ public class BenchLaunchPlanner {
                     + "'; the fixed table comes from LAB_BENCH_EXEC_TARGET_INSTANCES: "
                     + String.join(", ", instances) + " (service names only, never URLs, hosts "
                     + "or ports)");
+        }
+        if (!enabledNodes.isEmpty() && !enabledNodes.contains(target)) {
+            throw new BenchLaunchRejectedException("target instance '" + target
+                    + "' is not one of this run's enabled nodes (" + String.join(", ", enabledNodes)
+                    + "); enable it in the draft or pick another target");
         }
         return new BenchLaunchPlan.Traffic(mode, target, "http://" + target + ":" + port, true,
                 false, upstream);

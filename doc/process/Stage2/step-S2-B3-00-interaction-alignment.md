@@ -7,6 +7,7 @@
 > 测试 / verify：文档断言 **41/41 PASS**；HTML 设计稿用 Playwright（Edge headless）验证导航/门禁/GC 参数/重启/删除弹窗无 JS 错误；本步未改代码，**未重跑 Maven / verify / smoke**
 > 运行状态：本步未修改运行环境；B2 收口时控制器 healthy，当前无 k6 运行容器
 > 口径指针：2026-10-29 本文第 4/5 节的「未做 / 未验证 / 待补」是**当时**的状态快照，后续批次可能已消化；当前缺口口径统一看 `doc/design/Stage1/details/README.md` §3.2。
+> 实现交接（2026-10-29 后续）：B3-00 的代码实现与真机证据见 `step-S2-B3-00a-interaction-alignment-implementation.md`；本文保留为设计阶段交接。
 
 # 当前进展
 

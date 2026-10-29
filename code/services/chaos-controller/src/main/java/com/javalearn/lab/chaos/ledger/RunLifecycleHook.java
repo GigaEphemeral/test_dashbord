@@ -48,6 +48,14 @@ public interface RunLifecycleHook {
         return LaunchResult.none();
     }
 
+    /**
+     * Best-effort removal of everything this hook created for a run, invoked
+     * before the ledger row is hard-deleted (B3-00a). Default is a no-op.
+     */
+    default LaunchResult cleanupArtifacts(String runId) {
+        return LaunchResult.none();
+    }
+
     static RunLifecycleHook none() {
         return new RunLifecycleHook() {
         };

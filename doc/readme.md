@@ -522,8 +522,9 @@ bench：`bash code/lab/scripts/bench.sh smoke|load|stress|spike|soak -- LOAD_DUR
 ## 10. Stage2 建设规划（规划中，未实现）
 
 Stage2 的需求基线与改造方案在 `doc/design/Stage2/`，事实底座在 `doc/process/Stage2/架构现状与功能清单.md`，
-开发/测试/验收计划在 `doc/process/Stage2/stage2-开发测试与验收计划.md`。**本节只做导览：下列能力当前均未实现，
-本文档其余章节（§3–§9）描述的都是 Stage1 现状。**
+开发/测试/验收计划在 `doc/process/Stage2/stage2-开发测试与验收计划.md`。**本节只做导览：B3-00 交互对齐
+（6 分区工作区、7 步向导、节点门禁、故障时间线、实验记录名称/归档/删除、监控时间轴）已实现；下表其余 B3–B5
+能力仍未实现，本文档其余章节（§3–§9）描述的都是 Stage1 现状。**
 
 Stage2 的核心是把 Stage1 已有能力整合成一条 UI 可完成的闭环：**配置实例与 JVM/缓存参数 → UI 启动 k6 → 注入/恢复故障 →
 按实例与时间窗观测 → 对比任意两次 run → 业务对账与归档**。实施批次与验收口径（改造方案 §11/§12）：

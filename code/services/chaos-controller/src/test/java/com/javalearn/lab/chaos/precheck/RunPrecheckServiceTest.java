@@ -568,4 +568,10 @@ class RunPrecheckServiceTest {
                     List.of(new PrometheusPoint(atEpochSeconds, value)))));
         }
     }
+
+    @Test
+    void scopedAppQueryMatchesOnlyEnabledNodeInstances() {
+        assertThat(RunPrecheckService.appUpQuery(java.util.List.of("app-1", "app-2")))
+                .isEqualTo("sum(up{job=\"seckill-app\",instance=~\"(app-1|app-2):.*\"})");
+    }
 }

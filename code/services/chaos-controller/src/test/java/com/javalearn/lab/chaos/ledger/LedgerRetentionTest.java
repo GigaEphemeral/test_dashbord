@@ -57,6 +57,27 @@ class LedgerRetentionTest {
     }
 
     @Test
+    void archivedRunsAreNeverPrunedAndDoNotConsumeTheKeepBudget() {
+        properties.setRetentionRuns(2);
+        Instant base = LedgerTestDatabase.NOW.minusSeconds(100);
+        repository.insertRun(new RunRecord("run-20261028-001", "load", "保留的基线", null,
+                RunStatus.COMPLETED, "abc", "local", base, base, base, base, true));
+        for (int i = 2; i <= 4; i++) {
+            String runId = String.format("run-20261028-%03d", i);
+            repository.insertRun(LedgerTestDatabase.run(runId, RunStatus.COMPLETED,
+                    base.plusSeconds(i * 10L)));
+        }
+
+        int deleted = new LedgerRetention(properties, repository).prune();
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findRun("run-20261028-001")).isPresent();
+        assertThat(repository.findRun("run-20261028-002")).isEmpty();
+        assertThat(repository.findRun("run-20261028-003")).isPresent();
+        assertThat(repository.findRun("run-20261028-004")).isPresent();
+    }
+
+    @Test
     void pruningBelowTheCapChangesNothing() {
         properties.setRetentionRuns(10);
         repository.insertRun(LedgerTestDatabase.run("run-20261028-101", RunStatus.DRAFT,

@@ -554,3 +554,77 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-28
+
+- id: b3-run-draft-fields
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+  statement: "B3-00a：lab_run 增加 name/nodes/archived（V3 迁移），草稿可带节点选择与配置组/故障时间线参数组"
+  verify:
+    kind: shell
+    command: "grep -q 'ADD COLUMN name' code/services/chaos-controller/src/main/resources/db/ledger/V3__run_draft_fields.sql && grep -q 'max-nodes' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/RunLedgerService.java && grep -q 'getMaxFaultItems' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerProperties.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-run-archive-delete
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+  statement: "B3-00a：实验记录支持归档/取消归档/彻底删除；删除要求草稿或终态，先清 k6 报告目录，行删除级联子表"
+  verify:
+    kind: shell
+    command: "grep -q '/lab/runs/{runId}/archive' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerController.java && grep -q DeleteMapping code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/LedgerController.java && grep -q deleteReport code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchRunExecutor.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-node-scoped-precheck
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+  statement: "B3-00a：预检查按启用节点数校验 seckill-app 抓取目标，定向实例必须属于启用节点"
+  verify:
+    kind: shell
+    command: "grep -q appUpQuery code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/precheck/RunPrecheckService.java && grep -q 'enabled nodes' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/bench/exec/BenchLaunchPlanner.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-fault-timeline
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+    - doc/design/Stage2/stage2改造方案.md
+  statement: "B3-00b：故障时间线按 atSeconds 相对 k6 启动调度；recovery=manual 的 kill/freeze 以 ttlSeconds=-1 手动保持，stop-all 仍可清理"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/schedule/FaultScheduleService.java && grep -q 'faultSchedule.arm' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/RunLifecycleService.java && grep -q 'requestedTtl == -1' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/action/ChaosActionService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-product-sampling
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+  statement: "B3-00：load 场景支持 PRODUCT_ID_MIN/MAX/DISTRIBUTION/CONCENTRATION 采样（默认 1/1/uniform/0 保持旧行为）"
+  verify:
+    kind: shell
+    command: "test -f code/lab/k6/lib/product-sampling.js && grep -q PRODUCT_ID_CONCENTRATION code/lab/k6/scenarios/manifest.json && grep -q pickProductId code/lab/k6/scenarios/load.js"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-console-six-sections
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
+  statement: "B3-00c：控制台收敛为 6 个一级分区（无 nav-faults），故障与缓存能力并入实时监控与操作的实时操作/实验工具标签"
+  verify:
+    kind: shell
+    command: "grep -q \"id: 'observe'\" code/lab/dashboard/src/App.vue && ! grep -q \"id: 'faults'\" code/lab/dashboard/src/App.vue && grep -q monitor-tab-tools code/lab/scripts/console-smoke.mjs"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

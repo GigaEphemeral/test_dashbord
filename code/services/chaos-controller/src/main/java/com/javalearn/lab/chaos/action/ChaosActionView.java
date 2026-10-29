@@ -20,7 +20,8 @@ import java.time.Instant;
  *                     countdown is frozen too
  * @param remainingMs  B2-04a: remaining TTL in milliseconds. While paused this is
  *                     the frozen remainder; otherwise {@code max(0, expiresAt - now)}.
- *                     {@code null} for one-shot actions (no TTL) and for
+ *                     {@code null} for one-shot actions (no TTL), manual holds
+ *                     (design §16.8: no automatic revert, so no countdown) and for
  *                     REVERTED/FAILED actions, whose countdown no longer matters
  */
 public record ChaosActionView(String id,

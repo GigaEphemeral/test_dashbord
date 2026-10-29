@@ -45,24 +45,44 @@ public class LedgerWriter {
     }
 
     /**
-     * Inserts the run plus its parameter snapshot. Returns normally even when
+     * Inserts the run plus its parameter snapshots. Returns normally even when
      * the write was stashed; {@link DuplicateKeyException} is rethrown for the
      * run-id retry loop.
      */
     public void persistCreate(RunRecord run, String paramsJson) {
+        persistCreate(run, Map.of("request", paramsJson));
+    }
+
+    /**
+     * B3-00a: the draft can carry more than {@code request}. Every group is one
+     * {@code lab_run_param} row; only {@code request} ever reaches the k6
+     * planner. The stash body keeps the same shape so a replay re-creates all
+     * groups.
+     */
+    public void persistCreate(RunRecord run, Map<String, String> groupsByGroup) {
+        Map<String, String> groups = groupsByGroup == null || groupsByGroup.isEmpty()
+                ? Map.of("request", "{}") : groupsByGroup;
         try {
             repository.insertRun(run);
-            repository.insertParam(run.runId(), "request", paramsJson, run.createdAt());
+            groups.forEach((group, payload) ->
+                    repository.insertParam(run.runId(), group, payload, run.createdAt()));
             markWritten();
         } catch (DuplicateKeyException e) {
             throw e;
         } catch (DataAccessException e) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("scenario", run.scenario());
+            body.put("name", run.name());
+            body.put("nodes", run.nodes());
             body.put("status", run.status().name());
             body.put("sourceCommit", run.sourceCommit());
             body.put("operator", run.operator());
-            body.put("params", readTree(paramsJson));
+            Map<String, JsonNode> stashGroups = new LinkedHashMap<>();
+            groups.forEach((group, payload) -> stashGroups.put(group, readTree(payload)));
+            // "params" keeps the legacy flat request payload (older stash files
+            // and humans read it); "groups" is the complete replay source.
+            body.put("params", readTree(groups.getOrDefault("request", "{}")));
+            body.put("groups", stashGroups);
             stash.stash("RUN_CREATE", run.runId(), body, run.createdAt());
             markFailed(e);
         }

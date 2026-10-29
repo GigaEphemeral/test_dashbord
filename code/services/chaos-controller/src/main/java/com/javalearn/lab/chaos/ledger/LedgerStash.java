@@ -211,18 +211,36 @@ public class LedgerStash {
             RunRecord run = new RunRecord(
                     runId,
                     text(body, "scenario"),
+                    nullableText(body, "name"),
+                    nullableText(body, "nodes"),
                     RunStatus.valueOf(text(body, "status")),
                     nullableText(body, "sourceCommit"),
                     text(body, "operator"),
                     createdAt,
                     createdAt,
                     null,
-                    null);
+                    null,
+                    false);
             repository.insertRun(run);
         }
-        JsonNode params = body.path("params");
-        // The run insert may have succeeded while the params insert failed; only
+        // B3-00a writes every param group under "groups"; a pre-B3 stash file
+        // only has the flat "params" object and is replayed as group "request".
+        JsonNode groups = body.path("groups");
+        // The run insert may have succeeded while a params insert failed; only
         // skip when a snapshot is already present (idempotent replay).
+        if (groups.isObject() && !groups.isEmpty() && repository.findParams(runId).isEmpty()) {
+            groups.fields().forEachRemaining(entry -> {
+                try {
+                    repository.insertParam(runId, entry.getKey(),
+                            objectMapper.writeValueAsString(entry.getValue()), createdAt);
+                } catch (JsonProcessingException e) {
+                    throw new IllegalStateException("could not serialize stashed param group '"
+                            + entry.getKey() + "' for " + runId, e);
+                }
+            });
+            return;
+        }
+        JsonNode params = body.path("params");
         if (!params.isMissingNode() && !params.isNull() && repository.findParams(runId).isEmpty()) {
             try {
                 repository.insertParam(runId, "request", objectMapper.writeValueAsString(params), createdAt);

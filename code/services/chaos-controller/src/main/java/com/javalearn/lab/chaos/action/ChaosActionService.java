@@ -70,6 +70,13 @@ import java.util.concurrent.TimeUnit;
  * on this service's monitor so a racing pause can never leave a full-TTL task
  * attached, and resume moves every expiry before it unpauses the watchdog.</p>
  *
+ * <p><b>Manual hold</b> (design §16.8): {@code ttlSeconds=-1} on a reverting
+ * action arms no automatic revert at all. The action is tracked exactly like a
+ * TTL action (ACTIVE in {@link #active}, duplicated-target 409, datastore/probe
+ * refusals, stop-all) but carries no expiry, so the watchdog can never
+ * auto-revert it; only stop-all or an explicit revert ends the hold. Pause and
+ * resume have no countdown to freeze or restore for such an action.</p>
+ *
  * <p>Documented limitations: a revert that already claimed its CAS may still
  * complete shortly after {@code pause} returns; FAILED retries stay frozen
  * until resume (pausing is deliberately "freeze the whole lab"); a plain
@@ -235,8 +242,9 @@ public class ChaosActionService {
         }
 
         Instant now = clock.instant();
+        // ttl == null means "manual hold": a reverting action with no expiry.
         ChaosAction action = new ChaosAction(UUID.randomUUID().toString(), target, type, ttl,
-                now, now.plusSeconds(ttl));
+                now, ttl == null ? null : now.plusSeconds(ttl));
         // Register and schedule under the pause/resume monitor: otherwise a
         // pause() landing between the `paused` check and schedule() could not
         // cancel this future (freeze runs before it exists), leaving a full-TTL
@@ -245,9 +253,10 @@ public class ChaosActionService {
             register(action);
             if (paused) {
                 // Freeze immediately: the action stays visible with its full TTL
-                // remaining and is scheduled when the guide resumes.
+                // remaining and is scheduled when the guide resumes. A manual
+                // hold has no countdown to freeze (freeze keeps it null-safe).
                 action.freeze(now);
-            } else {
+            } else if (ttl != null) {
                 // Schedule before touching Docker so a lost thread can never leave
                 // the container without a revert path; while the fault is still
                 // applying the revert task claims nothing (see
@@ -292,23 +301,31 @@ public class ChaosActionService {
         }
         action.markApplied();
         boolean stopRequested = action.isStopRequested();
-        if (stopRequested || !action.expiresAt().isAfter(clock.instant())) {
+        if (stopRequested || (action.expiresAt() != null
+                && !action.expiresAt().isAfter(clock.instant()))) {
             // Either the apply itself outlived the TTL (slow stop + short TTL),
             // or stop-all fired while the fault was still applying: revert now
-            // instead of waiting for the next watchdog sweep.
+            // instead of waiting for the next watchdog sweep. A manual hold has
+            // no expiry and is only reverted when stop-all asked for it.
             autoRevert(action, stopRequested ? "stop-all" : "ttl");
         }
 
+        String ttlLabel = ttlLabel(ttl);
         countAction(type, target, "accepted");
-        log.info("Chaos {} applied to {} (id={}, ttl={}s, expiresAt={})",
-                type.wireName(), target, action.id(), ttl, action.expiresAt());
+        log.info("Chaos {} applied to {} (id={}, {}, expiresAt={})",
+                type.wireName(), target, action.id(), ttlLabel, action.expiresAt());
         safeAnnotate(actionTags(action),
                 "chaos " + type.wireName() + " on " + target
                         + " id=" + action.id()
-                        + " ttl=" + ttl + "s"
+                        + " " + ttlLabel
                         + " expires=" + action.expiresAt()
                         + " revert=" + type.revertAction().wireName());
         return viewOf(action, clock.instant());
+    }
+
+    /** {@code ttl=Ns} for an automatic revert, the manual-hold wording otherwise. */
+    private static String ttlLabel(Integer ttl) {
+        return ttl == null ? "manual hold (no auto revert)" : "ttl=" + ttl + "s";
     }
 
     /** Snapshot of actions that still carry a pending or failed revert. */
@@ -316,7 +333,9 @@ public class ChaosActionService {
         Instant now = clock.instant();
         boolean pausedNow = paused;
         return active.values().stream()
-                .sorted(Comparator.comparing(ChaosAction::expiresAt))
+                // Manual holds have no expiry; list them after every TTL action.
+                .sorted(Comparator.comparing(ChaosAction::expiresAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(action -> action.toView().withRuntime(pausedNow,
                         action.remainingViewMillis(now, pausedNow)))
                 .toList();
@@ -377,6 +396,11 @@ public class ChaosActionService {
         List<ChaosAction> resuming = new ArrayList<>();
         for (ChaosAction action : active.values()) {
             if (action.status() != ChaosActionStatus.ACTIVE) {
+                continue;
+            }
+            if (action.expiresAt() == null) {
+                // Manual hold: no countdown exists, so there is nothing to
+                // restore and definitely nothing to schedule.
                 continue;
             }
             long remaining = action.remainingMillis();
@@ -501,6 +525,9 @@ public class ChaosActionService {
             Instant now = clock.instant();
             for (ChaosAction action : active.values()) {
                 if (action.expiredAt(now)) {
+                    // A manual hold never reaches this branch: it has no expiry
+                    // (expiredAt is false), so the watchdog can never auto-revert
+                    // it. Stop-all / an explicit revert still can.
                     log.warn("Watchdog: action {} ({} on {}) expired without revert; reverting",
                             action.id(), action.type().wireName(), action.target());
                     autoRevert(action, "watchdog");
@@ -555,7 +582,7 @@ public class ChaosActionService {
         safeAnnotate(actionTags(action),
                 "chaos reverted " + action.type().wireName() + " on " + action.target()
                         + " id=" + action.id()
-                        + " ttl=" + action.ttlSeconds() + "s"
+                        + " " + ttlLabel(action.ttlSeconds())
                         + " revert=" + action.type().revertAction().wireName()
                         + " trigger=" + trigger);
         probeReadinessAsync(action.target(), action.type().revertAction());
@@ -621,7 +648,9 @@ public class ChaosActionService {
         countAction(action.type(), action.target(), "rejected");
         throw new ChaosConflictException("Target " + action.target()
                 + " already has active chaos action " + existing.id()
-                + " (" + existing.type().wireName() + ", expires " + existing.expiresAt() + ")");
+                + " (" + existing.type().wireName() + ", "
+                + (existing.manualHold() ? "manual hold" : "expires " + existing.expiresAt())
+                + ")");
     }
 
     private ContainerView requireLabTarget(ChaosActionType type, String target) {
@@ -647,9 +676,15 @@ public class ChaosActionService {
         if (requestedTtl == null) {
             return defaultTtl;
         }
+        if (requestedTtl == -1) {
+            // Design §16.8: -1 is a manual hold - no automatic revert, but the
+            // action is still tracked so stop-all / the watchdog contract holds.
+            return null;
+        }
         if (requestedTtl < 1 || requestedTtl > max) {
             throw new InvalidChaosActionException(
-                    "ttlSeconds must be between 1 and " + max + " (got " + requestedTtl + ")");
+                    "ttlSeconds must be between 1 and " + max
+                            + " (or -1 for a manual hold; got " + requestedTtl + ")");
         }
         return requestedTtl;
     }

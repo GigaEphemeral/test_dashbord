@@ -543,6 +543,8 @@ services:
       LAB_LEDGER_QUERY_MAX_LIMIT: ${LAB_LEDGER_QUERY_MAX_LIMIT:-200}
       LAB_LEDGER_MAX_PAYLOAD_BYTES: ${LAB_LEDGER_MAX_PAYLOAD_BYTES:-65536}
       LAB_LEDGER_RUN_ID_MAX_ATTEMPTS: ${LAB_LEDGER_RUN_ID_MAX_ATTEMPTS:-10}
+      LAB_LEDGER_MAX_NODES: ${LAB_LEDGER_MAX_NODES:-3}
+      LAB_LEDGER_MAX_FAULT_ITEMS: ${LAB_LEDGER_MAX_FAULT_ITEMS:-16}
       # B1-02 operation contract: dedicated daemon pool + sync budget, idempotency
       # window and the single-write-run lock TTL. Byte-identical defaults to
       # application.yml and .env.example.
@@ -553,6 +555,11 @@ services:
       LAB_LEDGER_ENV_LOCK_KEY: ${LAB_LEDGER_ENV_LOCK_KEY:-env:write-run}
       LAB_LEDGER_ENV_LOCK_TTL_SECONDS: ${LAB_LEDGER_ENV_LOCK_TTL_SECONDS:-1800}
       LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS: ${LAB_LEDGER_ENV_LOCK_ACQUIRE_ATTEMPTS:-3}
+      # B3-00b run-scoped fault timeline scheduler (daemon pool; offsets are
+      # relative to the k6 launch). Same defaults as application.yml/.env.example.
+      LAB_FAULT_SCHEDULE_MAX_OFFSET_SECONDS: ${LAB_FAULT_SCHEDULE_MAX_OFFSET_SECONDS:-3600}
+      LAB_FAULT_SCHEDULE_THREAD_NAME: ${LAB_FAULT_SCHEDULE_THREAD_NAME:-fault-schedule}
+      LAB_FAULT_SCHEDULE_POOL_SIZE: ${LAB_FAULT_SCHEDULE_POOL_SIZE:-2}
       # Stage2 B1-03 metrics aggregation (Prometheus window queries through the
       # versioned catalog). Same defaults as application.yml and .env.example.
       # A blank dashboard UID keeps the Grafana deep link on Explore; Grafana
