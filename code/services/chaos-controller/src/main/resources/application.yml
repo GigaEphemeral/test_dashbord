@@ -200,6 +200,30 @@ lab:
     grafana-dashboard-uid: ${LAB_METRICS_GRAFANA_DASHBOARD_UID:}
     catalog-location: ${LAB_METRICS_CATALOG_LOCATION:classpath:metrics/catalog.yml}
 
+  # Stage2 B5-01a topology contract (GET /lab/topology). The full design §16.3
+  # structure is static; only the enabled set varies. Prometheus access is the
+  # existing instant-query gateway (no second datasource). Every job/label/
+  # instance suffix is externalized so a renamed exporter does not need a
+  # controller rebuild. cache-seconds defaults to 2s for the 5s console poll.
+  topology:
+    rate-window: ${LAB_TOPOLOGY_RATE_WINDOW:1m}
+    cache-seconds: ${LAB_TOPOLOGY_CACHE_SECONDS:2}
+    container-prefix: ${LAB_TOPOLOGY_CONTAINER_PREFIX:jl-}
+    cluster-nodes: ${LAB_TOPOLOGY_CLUSTER_NODES:3}
+    app-job: ${LAB_TOPOLOGY_APP_JOB:seckill-app}
+    app-instance-suffix: "${LAB_TOPOLOGY_APP_INSTANCE_SUFFIX::8080}"
+    app-heap-area: ${LAB_TOPOLOGY_APP_HEAP_AREA:heap}
+    pool-name: ${LAB_TOPOLOGY_POOL_NAME:business}
+    redis-job: ${LAB_TOPOLOGY_REDIS_JOB:redis-exporter-ha}
+    redis-node-label: ${LAB_TOPOLOGY_REDIS_NODE_LABEL:node}
+    mysql-job: ${LAB_TOPOLOGY_MYSQL_JOB:mysqld-exporter-ha}
+    mysql-member-label: ${LAB_TOPOLOGY_MYSQL_MEMBER_LABEL:member}
+    nginx-job: ${LAB_TOPOLOGY_NGINX_JOB:nginx-exporter}
+    rabbit-job: ${LAB_TOPOLOGY_RABBIT_JOB:rabbitmq-queue}
+    # Exporter/sidecar containers returned with hidden=true unless
+    # includeSidecars=true. Missing names stay listed as NOT_RUNNING.
+    sidecars: ${LAB_TOPOLOGY_SIDECARS:jl-nginx-exporter,jl-redis-exporter,jl-redis-1-exporter,jl-redis-2-exporter,jl-redis-3-exporter,jl-mysqld-exporter,jl-mysql-1-exporter,jl-mysql-2-exporter,jl-mysql-3-exporter}
+
   # Stage2 B1-04 run pre-check: a read-only gate executed by
   # POST /lab/runs/{runId}/start BEFORE any transition and before the
   # write-run lock. Blocking items answer 409/40903 and keep the run DRAFT;

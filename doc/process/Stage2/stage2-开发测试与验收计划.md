@@ -62,6 +62,9 @@
 > **B5-00 基线（2026-10-29）**：mysql 集群 3/3 ONLINE、probe_up=1；console-smoke **145/0**（恢复完整分支）；
 > `instances.stable` BLOCK 真机验证通过。B5 决策：mysql-3 允许重建、稳定期 BLOCK、jdk-matrix 方案 A、B5-04 按提议范围。
 
+> **B5-01a/04a 基线（2026-10-29）**：拓扑端点真机 200（25 节点/30 边，router UNWIRED）；拓扑新测 14/0；
+> 缺口计划 50 行分类完成。控台 145/0、claims 60。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -432,6 +435,9 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
   （Nginx/app/Redis/Sentinel/MySQL/Router/RabbitMQ/Toxiproxy），未启用置灰并显示“未启用”；exporter/sidecar 默认隐藏。
 - 测试：console-smoke 注入一次 freeze 断言节点变红与 tooltip 真实值（A16）。
 - 验收：压测中热度变化与 Grafana 同源一致。
+> **实现状态（2026-10-29，B5-01a）：契约完成。** `GET /lab/topology` 返回 16 类节点/静态边/健康/启用/
+> JDK/镜像/指标/质量状态；sidecar 默认隐藏；router/sentinel/toxiproxy 无源标 UNWIRED；真机 25 节点/30 边。
+> 热度 UI/tooltip 与 A16 断言归 B5-01b/c。交接 `step-S2-B5-01a-topology-contract.md`。
 
 ### B5-02 实例分流统计面板
 
@@ -451,6 +457,9 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 
 - 开发：Router 自身指标、Tomcat 线程池细节、cAdvisor 网络等按字典逐项补采或明确降级标注。
 - 验收：字典无"未定论"条目。
+> **实现状态（2026-10-29，B5-04a）：分级完成。** `b5-metrics-gap-plan.md` 逐行复核 220 条，50 条缺口分
+> WIRE/DERIVED/UNWIRED/DEGRADED，列 B5-04b 前 7 项；纠正 7 处字典/目录过期口径（cache 估算大小、L2 键数、
+> L1 开关、executor.rejected、redis role、重启次数、cAdvisor 根因）。B5-04b 实施待做。
 
 ### B5-05 A01–A32 全量验收
 
@@ -541,6 +550,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v2.2：B5-01a 拓扑契约 + B5-04a 缺口分级完成；§0 记录 Wave 1 基线 |
 | 2026-10-29 | v2.1：新增并完成 **B5-00 前置门禁**（mysql-3 clone 复组、稳定期 BLOCK、冒烟 145）；§9 追加 4 项 B5 确认 |
 | 2026-10-29 | v2.0：B4-04 实现并收口——实例配置页/JDK8 LIMITED/GC 日志查看；§5 置收口状态，§0 记录 B4 批次基线 |
 | 2026-10-29 | v1.9：B4-03 实现——GC 日志版本适配/可写路径/回读端点；§0 记录 B4-03 基线 |

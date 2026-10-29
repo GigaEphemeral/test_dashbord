@@ -784,3 +784,16 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b5-topology-contract
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B5-01a-topology-contract.md
+  statement: "B5-01a：GET /lab/topology 返回完整拓扑节点/边/启用状态/健康/JDK/指标质量，缺数据为 null + UNWIRED/NO_DATA"
+  verify:
+    kind: shell
+    command: "grep -q '/lab/topology' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/topology/TopologyController.java && grep -q 'UNWIRED' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/topology/TopologyService.java && grep -q enabledNodes code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/topology/TopologyViews.java && grep -q LAB_TOPOLOGY_RATE_WINDOW code/services/chaos-controller/src/main/resources/application.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
