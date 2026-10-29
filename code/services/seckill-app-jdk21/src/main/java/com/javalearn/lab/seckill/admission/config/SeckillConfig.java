@@ -22,6 +22,7 @@ import com.javalearn.lab.seckill.order.app.OrderQueryService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +30,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Duration;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * Wires the seckill admission ports to their Redis/Redisson/RabbitMQ
@@ -122,14 +124,16 @@ public class SeckillConfig {
             SeckillStockStore seckillStockStore,
             OrderApplicationService orderApplicationService,
             OrderQueryService orderQueryService,
-            SeckillMetrics seckillMetrics) {
+            SeckillMetrics seckillMetrics,
+            @Qualifier("businessExecutor") ThreadPoolExecutor businessExecutor) {
         return new SeckillOrderConsumer(
                 properties,
                 seckillRequestStore,
                 seckillStockStore,
                 orderApplicationService,
                 orderQueryService,
-                seckillMetrics);
+                seckillMetrics,
+                businessExecutor);
     }
 
     @Bean

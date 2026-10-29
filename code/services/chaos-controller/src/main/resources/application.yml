@@ -28,6 +28,24 @@ lab:
     max-connections: ${LAB_DOCKER_MAX_CONNECTIONS:16}
     connection-timeout-seconds: ${LAB_DOCKER_CONNECTION_TIMEOUT_SECONDS:5}
     response-timeout-seconds: ${LAB_DOCKER_RESPONSE_TIMEOUT_SECONDS:30}
+  # Stage2 B4-01 per-instance JVM/GC/pool configuration. All numbers and
+  # allow-lists are externalized; compose forwarding (B4-02) uses the same env
+  # names. The memory budget is xmx + metaspace + direct + maxPoolSize*stack +
+  # native reserve and must fit in memory-limit-mb.
+  instance:
+    names: ${LAB_INSTANCE_NAMES:app-1,app-2,app-3}
+    container-prefix: ${LAB_INSTANCE_CONTAINER_PREFIX:jl-}
+    memory-limit-mb: ${LAB_INSTANCE_MEMORY_LIMIT_MB:768}
+    thread-stack-mb: ${LAB_INSTANCE_THREAD_STACK_MB:1}
+    native-reserve-mb: ${LAB_INSTANCE_NATIVE_RESERVE_MB:128}
+    default-metaspace-mb: ${LAB_INSTANCE_DEFAULT_METASPACE_MB:128}
+    default-direct-memory-mb: ${LAB_INSTANCE_DEFAULT_DIRECT_MEMORY_MB:64}
+    max-extra-args: ${LAB_INSTANCE_MAX_EXTRA_ARGS:16}
+    max-extra-args-length: ${LAB_INSTANCE_MAX_EXTRA_ARGS_LENGTH:1024}
+    # Only verified image tags are accepted; UI options must come from here.
+    image-tags: ${LAB_INSTANCE_IMAGE_TAGS:jdk21,jdk8}
+    # GC-log/heap-dump paths must resolve inside this root; arbitrary paths are rejected.
+    gc-log-root: ${LAB_INSTANCE_GC_LOG_ROOT:/app/logs}
   # Stage2 B1-01 ledger: run/operation/snapshot/fault/audit rows live in the
   # stack MySQL's dedicated `lab_ledger` database (standalone mysql:3306; db-ha
   # through mysql-router:6446, the same topology switch as the app tier and

@@ -14,7 +14,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class L1Switch {
 
-    private final AtomicBoolean enabled = new AtomicBoolean(true);
+    private final AtomicBoolean enabled;
+
+    public L1Switch() {
+        this(true);
+    }
+
+    /**
+     * @param initial startup state; {@code false} is the
+     *                {@code LAB_CACHE_L1_ENABLED=false} configuration (B4-01)
+     */
+    public L1Switch(boolean initial) {
+        this.enabled = new AtomicBoolean(initial);
+    }
 
     public boolean isEnabled() {
         return enabled.get();

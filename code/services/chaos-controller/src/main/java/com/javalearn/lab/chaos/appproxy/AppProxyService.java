@@ -28,6 +28,8 @@ import java.util.regex.Pattern;
  *   <li>Cache lab, GET: {@code /lab/cache/state}, {@code /lab/cache/preheat}</li>
  *   <li>Cache lab, POST: {@code /lab/cache/mode} (JSON body),
  *       {@code /lab/cache/seed}, {@code /lab/cache/preheat}</li>
+ *   <li>Business pool, GET: {@code /lab/pool} (B4-01 readback; it is outside
+ *       {@code /lab/cache}, so it needs its own entry)</li>
  * </ul>
  * <p>Only {@code POST /lab/thread/fault} and {@code POST /lab/cache/mode} carry
  * a request body; every other allowed POST is forwarded without one.</p>
@@ -42,6 +44,11 @@ public class AppProxyService {
 
     private static final String THREAD = "/lab/thread";
     private static final String CACHE = "/lab/cache";
+    /** B4-01 business-executor readback; not below {@link #CACHE}. */
+    private static final String POOL = "/lab/pool";
+
+    /** B4-01 read-only pool view. The pool is startup-configured, so no POST. */
+    private static final Set<String> POOL_GET_PATHS = Set.of(POOL);
 
     private static final Set<String> THREAD_GET_PATHS = Set.of(
             THREAD + "/state",
@@ -144,7 +151,9 @@ public class AppProxyService {
             return false;
         }
         if ("GET".equals(method)) {
-            return THREAD_GET_PATHS.contains(path) || CACHE_GET_PATHS.contains(path);
+            return THREAD_GET_PATHS.contains(path)
+                    || CACHE_GET_PATHS.contains(path)
+                    || POOL_GET_PATHS.contains(path);
         }
         if ("POST".equals(method)) {
             return THREAD_POST_PATHS.contains(path)

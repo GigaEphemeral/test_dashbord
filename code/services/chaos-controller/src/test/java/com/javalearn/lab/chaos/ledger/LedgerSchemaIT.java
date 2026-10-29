@@ -39,7 +39,7 @@ class LedgerSchemaIT {
     }
 
     @Test
-    void flywayCreatesExactlyTheTenLedgerTablesInInnoDbUtf8mb4() {
+    void flywayCreatesEveryLedgerTableInInnoDbUtf8mb4() {
         JdbcTemplate jdbc = LedgerTestDatabase.jdbc();
         List<String> tables = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables "
@@ -48,16 +48,16 @@ class LedgerSchemaIT {
                 String.class);
 
         assertThat(tables).containsExactly(
-                "lab_env_lock", "lab_fault_event", "lab_ledger_stash", "lab_metric_window",
-                "lab_operation", "lab_run", "lab_run_check", "lab_run_env", "lab_run_param",
-                "lab_run_step");
+                "lab_env_lock", "lab_fault_event", "lab_instance_config", "lab_ledger_stash",
+                "lab_metric_window", "lab_operation", "lab_run", "lab_run_check", "lab_run_env",
+                "lab_run_param", "lab_run_step");
 
         Integer innoDbUtf8 = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables "
                         + "WHERE table_schema = 'lab_ledger' AND table_name LIKE 'lab\\_%' "
                         + "AND engine = 'InnoDB' AND table_collation = 'utf8mb4_0900_ai_ci'",
                 Integer.class);
-        assertThat(innoDbUtf8).isEqualTo(10);
+        assertThat(innoDbUtf8).isEqualTo(11);
     }
 
     @Test
@@ -219,7 +219,7 @@ class LedgerSchemaIT {
         assertThat(unique).isEqualTo(4); // one row per indexed column
         assertThat(jdbc.queryForObject("SELECT version FROM lab_ledger.flyway_schema_history "
                 + "WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1", String.class))
-                .isEqualTo("3");
+                .isEqualTo("4");
     }
 
     @Test

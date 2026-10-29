@@ -15,6 +15,7 @@ import com.javalearn.lab.seckill.order.domain.OrderRepository;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +24,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -63,12 +67,17 @@ class SeckillConsumerOversoldCounterTest {
 
     private SimpleMeterRegistry meterRegistry;
     private SeckillMetrics seckillMetrics;
+    private ThreadPoolExecutor businessExecutor;
     private SeckillOrderConsumer consumer;
 
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         seckillMetrics = new SeckillMetrics(meterRegistry);
+        businessExecutor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(10),
+                new ThreadPoolExecutor.AbortPolicy());
         OrderMetrics orderMetrics = new OrderMetrics(meterRegistry);
         JpaInventoryRepositoryAdapter inventoryRepository =
                 new JpaInventoryRepositoryAdapter(inventoryStockJpaRepository, meterRegistry);
@@ -78,7 +87,13 @@ class SeckillConsumerOversoldCounterTest {
         OrderApplicationService applicationService =
                 new OrderApplicationService(transactionService, orderQueryService, orderMetrics);
         consumer = new SeckillOrderConsumer(new SeckillProperties(), requestStore, stockStore,
-                applicationService, orderQueryService, seckillMetrics);
+                applicationService, orderQueryService, seckillMetrics, businessExecutor);
+    }
+
+    @AfterEach
+    void shutdownExecutor() throws InterruptedException {
+        businessExecutor.shutdownNow();
+        businessExecutor.awaitTermination(2L, TimeUnit.SECONDS);
     }
 
     @Test

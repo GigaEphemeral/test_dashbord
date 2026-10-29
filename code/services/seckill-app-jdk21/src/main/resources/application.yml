@@ -116,6 +116,24 @@ app:
     token-key-prefix: ${LOGIN_TOKEN_KEY_PREFIX:login:token:}
     token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:1800}
 
+  # B4-01 bounded business executor (design §4.4/§16.5). The Rabbit listener
+  # submits the seckill order work here and waits, so these six numbers decide
+  # the whole hop between the broker and SeckillOrderConsumer#process. Every
+  # value is a startup parameter: the console restarts the container to apply a
+  # change (B4-02) and reads the effective values back through GET /lab/pool.
+  # A full queue hands the task to rejection-policy; AbortPolicy marks the
+  # request FAILED and restores its Redis reservation (never a silent drop).
+  business-pool:
+    core-pool-size: ${BUSINESS_POOL_CORE_SIZE:4}
+    max-pool-size: ${BUSINESS_POOL_MAX_SIZE:8}
+    queue-capacity: ${BUSINESS_POOL_QUEUE_CAPACITY:50}
+    # Keep-alive of threads above the core size.
+    keep-alive-seconds: ${BUSINESS_POOL_KEEP_ALIVE_SECONDS:60}
+    # AbortPolicy | CallerRunsPolicy | DiscardPolicy | DiscardOldestPolicy.
+    rejection-policy: ${BUSINESS_POOL_REJECTION_POLICY:AbortPolicy}
+    # Prefix of the worker thread names, visible in thread dumps.
+    thread-name-prefix: ${BUSINESS_POOL_THREAD_NAME_PREFIX:business-pool}
+
   # Internal runtime lab API (Task 17). Nginx does not proxy /lab/**; the app
   # instances have no host port, so only in-network callers (docker exec, the
   # chaos-controller later) can reach it. The token is never logged.
@@ -310,6 +328,16 @@ app:
           # off only for diagnostics; with the cache toggle off the L1 never exists
           # and NO series are registered either way (absence = not applicable).
           micrometer-stats-enabled: ${LAB_CACHE_L1_MICROMETER_STATS_ENABLED:true}
+          # B4-01 startup state of the per-JVM Caffeine switch. false starts the
+          # JVM with L1 bypassed (reads go L2 -> source, writes fill only L2),
+          # exactly like a runtime POST /lab/cache/l1 false; the runtime endpoint
+          # can still flip it afterwards.
+          enabled: ${LAB_CACHE_L1_ENABLED:true}
+          # B4-01 idle expiry of an L1 entry, in seconds (design §16.6
+          # "按秒配置，0 表示不启用"). 0 keeps the historical write-expiry-only
+          # behaviour; a positive value evicts entries that were not read for
+          # that long.
+          expire-after-access-seconds: ${LAB_CACHE_L1_EXPIRE_AFTER_ACCESS_SECONDS:0}
 
     # Fault-thread lab (Task M5-1 / design 9.1). /lab/thread/** injects the seven
     # faulty-thread modes; every thread count, TTL, interval, chunk size, pool size

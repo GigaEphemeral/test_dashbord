@@ -11,16 +11,23 @@ import com.javalearn.lab.seckill.order.domain.Order;
 import com.javalearn.lab.seckill.order.domain.OrderStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -58,18 +65,32 @@ class SeckillOrderConsumerTest {
     private OrderQueryService orderQueryService;
 
     private SimpleMeterRegistry meterRegistry;
+    private ThreadPoolExecutor businessExecutor;
     private SeckillOrderConsumer consumer;
 
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
+        // A real (tiny) bounded pool, exactly like production: one worker and a
+        // ten-slot queue make the saturation path deterministic without sleeps.
+        businessExecutor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(10),
+                new ThreadPoolExecutor.AbortPolicy());
         consumer = new SeckillOrderConsumer(
                 properties(),
                 requestStore,
                 stockStore,
                 orderApplicationService,
                 orderQueryService,
-                new SeckillMetrics(meterRegistry));
+                new SeckillMetrics(meterRegistry),
+                businessExecutor);
+    }
+
+    @AfterEach
+    void shutdownExecutor() throws InterruptedException {
+        businessExecutor.shutdownNow();
+        businessExecutor.awaitTermination(2L, TimeUnit.SECONDS);
     }
 
     @Test
@@ -138,6 +159,42 @@ class SeckillOrderConsumerTest {
         verify(stockStore, never()).restore(anyLong(), anyInt());
         assertThat(consumerCounter("duplicate")).isEqualTo(1.0d);
         assertThat(consumerCounter("failed")).isZero();
+    }
+
+    @Test
+    void aFullPoolWithAbortPolicyMarksTheRequestFailedAndRestoresTheReservation() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try {
+            // One running task + ten queued fillers = the tiny pool is full.
+            businessExecutor.execute(() -> {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertThat(started.await(2L, TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 10; i++) {
+                businessExecutor.execute(() -> {
+                });
+            }
+            given(stockStore.restore(20L, 1)).willReturn(true);
+
+            // AbortPolicy refuses the consumer's submission synchronously; the
+            // listener must compensate exactly like a processing failure.
+            assertThatThrownBy(() -> consumer.onMessage(MESSAGE))
+                    .isInstanceOf(AmqpRejectAndDontRequeueException.class)
+                    .hasMessageContaining("rejected by the business pool")
+                    .hasMessageContaining("request-1");
+        } finally {
+            release.countDown();
+        }
+
+        verify(requestStore).markFailed(eq("request-1"), anyString());
+        verify(stockStore).restore(20L, 1);
+        verify(orderApplicationService, never()).create(any(), any(OrderRequestSource.class));
     }
 
     private double consumerCounter(String result) {

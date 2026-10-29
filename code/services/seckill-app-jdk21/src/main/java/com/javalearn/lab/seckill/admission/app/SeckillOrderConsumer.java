@@ -13,6 +13,10 @@ import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * Paced consumer of accepted seckill requests.
@@ -27,6 +31,14 @@ import java.util.Optional;
  * <p>{@code consumer.delay-ms} is applied before handling to simulate paced
  * processing and to make queue depth visible in demos. It is fully
  * configurable.</p>
+ *
+ * <p>Since B4-01 the work runs on the bounded business executor
+ * ({@code app.business-pool.*}) instead of the listener thread: the listener
+ * submits and waits, so the lab can set core/max/queue/rejection and watch
+ * {@code executor_active_threads}/{@code executor_queued_tasks}/
+ * {@code executor_rejected_total} move under load. A refused task is treated
+ * exactly like a processing failure - the request is marked FAILED and the
+ * Redis reservation restored - so no accepted request is silently dropped.</p>
  */
 public class SeckillOrderConsumer {
 
@@ -38,25 +50,56 @@ public class SeckillOrderConsumer {
     private final OrderApplicationService orderApplicationService;
     private final OrderQueryService orderQueryService;
     private final SeckillMetrics metrics;
+    private final ThreadPoolExecutor businessExecutor;
 
     public SeckillOrderConsumer(SeckillProperties properties,
                                 SeckillRequestStore requestStore,
                                 SeckillStockStore stockStore,
                                 OrderApplicationService orderApplicationService,
                                 OrderQueryService orderQueryService,
-                                SeckillMetrics metrics) {
+                                SeckillMetrics metrics,
+                                ThreadPoolExecutor businessExecutor) {
         this.properties = properties;
         this.requestStore = requestStore;
         this.stockStore = stockStore;
         this.orderApplicationService = orderApplicationService;
         this.orderQueryService = orderQueryService;
         this.metrics = metrics;
+        this.businessExecutor = businessExecutor;
     }
 
     @RabbitListener(queues = "${app.seckill.mq.queue}")
     public void onMessage(SeckillOrderMessage message) {
-        applyProcessingDelay();
-        if (!process(message)) {
+        boolean processed;
+        try {
+            // The wait is intentional: the broker acknowledges the delivery only
+            // after the bounded pool finished (or refused) the work, so a
+            // saturated pool is visible in executor_queued_tasks instead of
+            // silently becoming unbounded listener concurrency.
+            Future<Boolean> future = businessExecutor.submit(() -> {
+                applyProcessingDelay();
+                return process(message);
+            });
+            processed = future.get();
+        } catch (RejectedExecutionException rejected) {
+            log.warn("Business executor refused the seckill request {}: {}",
+                    message.requestId(), rejected.toString());
+            recordFailure(message, rejected);
+            throw new AmqpRejectAndDontRequeueException(
+                    "Seckill order request rejected by the business pool: " + message.requestId(),
+                    rejected);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AmqpRejectAndDontRequeueException(
+                    "Interrupted while waiting for the seckill order request "
+                            + message.requestId(), interrupted);
+        } catch (ExecutionException failure) {
+            // process() handles its own failures; this is an unexpected Error.
+            log.error("Business executor failed while handling seckill request {}",
+                    message.requestId(), failure.getCause());
+            processed = false;
+        }
+        if (!processed) {
             // The request is already marked FAILED and the Redis reservation was
             // restored; reject without requeue so the broker does not loop.
             throw new AmqpRejectAndDontRequeueException(

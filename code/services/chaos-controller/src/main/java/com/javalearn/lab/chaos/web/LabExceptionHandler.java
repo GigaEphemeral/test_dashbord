@@ -16,8 +16,11 @@ import com.javalearn.lab.chaos.error.ContainerNotAllowedException;
 import com.javalearn.lab.chaos.error.ContainerNotFoundException;
 import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.EnvLockConflictException;
+import com.javalearn.lab.chaos.error.InstanceConfigConflictException;
+import com.javalearn.lab.chaos.error.InstanceNotFoundException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
+import com.javalearn.lab.chaos.error.InvalidInstanceConfigException;
 import com.javalearn.lab.chaos.error.InvalidLedgerRequestException;
 import com.javalearn.lab.chaos.error.InvalidMetricsRequestException;
 import com.javalearn.lab.chaos.error.InvalidScenarioException;
@@ -305,6 +308,31 @@ public class LabExceptionHandler {
     public ResponseEntity<Result<Void>> handleInvalidLedgerRequest(InvalidLedgerRequestException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    // ------------------------------------------------ instance config (B4-01)
+
+    @ExceptionHandler(InstanceNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleInstanceNotFound(InstanceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidInstanceConfigException.class)
+    public ResponseEntity<Result<Void>> handleInvalidInstanceConfig(InvalidInstanceConfigException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.failure(CommonErrorCode.INVALID_ARGUMENT, ex.getMessage()));
+    }
+
+    /**
+     * B4-01: startup fields are frozen while a run is RUNNING. 409 with its own
+     * code (40906) so the console can name the run and point at its stop action.
+     */
+    @ExceptionHandler(InstanceConfigConflictException.class)
+    public ResponseEntity<Result<Void>> handleInstanceConfigConflict(InstanceConfigConflictException ex) {
+        log.warn("Instance config refused: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.INSTANCE_CONFIG_LOCKED, ex.getMessage()));
     }
 
     @ExceptionHandler(LedgerConflictException.class)

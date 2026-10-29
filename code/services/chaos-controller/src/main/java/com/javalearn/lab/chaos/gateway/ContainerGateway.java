@@ -26,6 +26,18 @@ public interface ContainerGateway {
      */
     ContainerView inspectLabContainer(String containerName);
 
+    /**
+     * Stage2 B4-01: reads image tag/id and the container environment for the
+     * effective-config readback. The default keeps every existing gateway
+     * implementation/tests source-compatible and reports "no facts available";
+     * the Docker implementation overrides it.
+     *
+     * <p>Read-only: nothing is created, started or removed.</p>
+     */
+    default java.util.Optional<ContainerFacts> inspectLabContainerFacts(String containerName) {
+        return java.util.Optional.empty();
+    }
+
     /** Docker stop (manual stop so {@code unless-stopped} does not restart it). */
     void stop(String containerName, int graceSeconds);
 

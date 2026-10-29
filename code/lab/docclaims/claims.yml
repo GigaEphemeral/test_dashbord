@@ -693,3 +693,29 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b4-instance-config-schema
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-01-instance-config-schema.md
+  statement: "B4-01：实例配置 schema 有 JDK/GC/池/Caffeine/GC 日志白名单与预算校验，草稿存 lab_instance_config，提供 validate/save/effective"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigValidator.java && test -f code/services/chaos-controller/src/main/resources/db/ledger/V4__instance_config.sql && grep -q '/lab/instances/{instance}/config' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigController.java && grep -q memoryLimitMb code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigValidator.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b4-app-runtime-knobs
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-01-instance-config-schema.md
+  statement: "B4-01：app 有界业务线程池与 GET /lab/pool 回读，Caffeine 启动开关/访问过期由 env 配置"
+  verify:
+    kind: shell
+    command: "test -f code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/admission/config/BusinessPoolConfig.java && grep -q '/lab/pool' code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/lab/api/LabBusinessPoolController.java && grep -q LAB_CACHE_L1_ENABLED code/services/seckill-app-jdk21/src/main/resources/application.yml && grep -q '\"/lab/pool\"' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/appproxy/AppProxyService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

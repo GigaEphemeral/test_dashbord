@@ -62,6 +62,9 @@ class LabCachePreheatPropertiesTest {
                 .isEqualTo("${LAB_CACHE_L1_REFRESH_AFTER_WRITE_SECONDS:10}");
         assertThat(stringOf(l1, "expire-after-write-seconds"))
                 .isEqualTo("${LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS:60}");
+        assertThat(stringOf(l1, "enabled")).isEqualTo("${LAB_CACHE_L1_ENABLED:true}");
+        assertThat(stringOf(l1, "expire-after-access-seconds"))
+                .isEqualTo("${LAB_CACHE_L1_EXPIRE_AFTER_ACCESS_SECONDS:0}");
     }
 
     @Test
@@ -83,6 +86,8 @@ class LabCachePreheatPropertiesTest {
         assertThat(bound.getL1().getMaximumSize()).isEqualTo(10_000L);
         assertThat(bound.getL1().getRefreshAfterWriteSeconds()).isEqualTo(10L);
         assertThat(bound.getL1().getExpireAfterWriteSeconds()).isEqualTo(60L);
+        assertThat(bound.getL1().isEnabled()).isTrue();
+        assertThat(bound.getL1().getExpireAfterAccessSeconds()).isZero();
     }
 
     @Test

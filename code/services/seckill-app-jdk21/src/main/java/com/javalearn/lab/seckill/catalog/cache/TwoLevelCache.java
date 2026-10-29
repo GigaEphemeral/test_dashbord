@@ -108,10 +108,19 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
         this.valueType = valueType;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
-        this.l1 = Caffeine.newBuilder()
+        // B4-01: the switch starts at the configured value (env
+        // LAB_CACHE_L1_ENABLED). A JVM started with L1 off therefore has an
+        // empty Caffeine layer from the first request, exactly like a runtime
+        // disable, while POST /lab/cache/l1 can still flip it afterwards.
+        this.l1Enabled.set(settings.l1Enabled());
+        Caffeine<Object, Object> builder = Caffeine.newBuilder()
                 .maximumSize(settings.maximumSize())
                 .refreshAfterWrite(settings.refreshAfterWrite())
-                .expireAfterWrite(settings.expireAfterWrite())
+                .expireAfterWrite(settings.expireAfterWrite());
+        if (!settings.expireAfterAccess().isZero()) {
+            builder = builder.expireAfterAccess(settings.expireAfterAccess());
+        }
+        this.l1 = builder
                 .recordStats()
                 .build(new CacheLoader<Object, Object>() {
                     @Override

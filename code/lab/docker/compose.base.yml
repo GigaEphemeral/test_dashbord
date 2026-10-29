@@ -100,6 +100,17 @@ x-app-env: &app-env
   # D4 order-accept SLO buckets (Task 18). Micrometer parses the comma-separated
   # duration list; externalizing it keeps the histogram configuration out of code.
   ORDER_ACCEPT_SLO: ${ORDER_ACCEPT_SLO:-50ms,100ms,300ms,500ms,1s,2s}
+  # B4-01 bounded business executor (design §4.4/§16.5). Every value is the
+  # SAME default application.yml declares; these are startup parameters, so a
+  # change takes effect on the controlled restart (B4-02) and is read back
+  # through GET /lab/pool. AbortPolicy marks a refused request FAILED and
+  # restores its Redis reservation instead of dropping it silently.
+  BUSINESS_POOL_CORE_SIZE: ${BUSINESS_POOL_CORE_SIZE:-4}
+  BUSINESS_POOL_MAX_SIZE: ${BUSINESS_POOL_MAX_SIZE:-8}
+  BUSINESS_POOL_QUEUE_CAPACITY: ${BUSINESS_POOL_QUEUE_CAPACITY:-50}
+  BUSINESS_POOL_KEEP_ALIVE_SECONDS: ${BUSINESS_POOL_KEEP_ALIVE_SECONDS:-60}
+  BUSINESS_POOL_REJECTION_POLICY: ${BUSINESS_POOL_REJECTION_POLICY:-AbortPolicy}
+  BUSINESS_POOL_THREAD_NAME_PREFIX: ${BUSINESS_POOL_THREAD_NAME_PREFIX:-business-pool}
   # Cache family (Stage2 B0-04). These LAB_CACHE_* keys are the compose-side
   # wiring of app.lab.cache.*; every default declared here
   # is the SAME value application.yml declares, so an absent .env entry keeps the
@@ -160,6 +171,11 @@ x-app-env: &app-env
   LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS: ${LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS:-60}
   # B0-03 Caffeine stats export; leave this key's position untouched (owned by B0-03).
   LAB_CACHE_L1_MICROMETER_STATS_ENABLED: ${LAB_CACHE_L1_MICROMETER_STATS_ENABLED:-true}
+  # B4-01 startup Caffeine L1 posture: enabled=false starts the JVM with L1
+  # bypassed (reads L2 -> source, writes only L2); 0 disables idle expiry and
+  # keeps the historical write-expiry-only behaviour (design §16.6).
+  LAB_CACHE_L1_ENABLED: ${LAB_CACHE_L1_ENABLED:-true}
+  LAB_CACHE_L1_EXPIRE_AFTER_ACCESS_SECONDS: ${LAB_CACHE_L1_EXPIRE_AFTER_ACCESS_SECONDS:-0}
   #   Experiment dataset (seeding) and the state view's SCAN hint.
   LAB_CACHE_SEED_PRODUCT_COUNT: ${LAB_CACHE_SEED_PRODUCT_COUNT:-1000}
   LAB_CACHE_SEED_START_ID: ${LAB_CACHE_SEED_START_ID:-90000}
@@ -576,6 +592,18 @@ services:
       # B3-04 business reconciliation: read-only JDBC snapshot of `seckill`
       # plus the RabbitMQ management API for the queue-drain check.
       LAB_RECONCILE_ENABLED: ${LAB_RECONCILE_ENABLED:-true}
+      # B4-01 per-instance JVM/GC/pool configuration schema.
+      LAB_INSTANCE_NAMES: ${LAB_INSTANCE_NAMES:-app-1,app-2,app-3}
+      LAB_INSTANCE_CONTAINER_PREFIX: ${LAB_INSTANCE_CONTAINER_PREFIX:-jl-}
+      LAB_INSTANCE_MEMORY_LIMIT_MB: ${LAB_INSTANCE_MEMORY_LIMIT_MB:-768}
+      LAB_INSTANCE_THREAD_STACK_MB: ${LAB_INSTANCE_THREAD_STACK_MB:-1}
+      LAB_INSTANCE_NATIVE_RESERVE_MB: ${LAB_INSTANCE_NATIVE_RESERVE_MB:-128}
+      LAB_INSTANCE_DEFAULT_METASPACE_MB: ${LAB_INSTANCE_DEFAULT_METASPACE_MB:-128}
+      LAB_INSTANCE_DEFAULT_DIRECT_MEMORY_MB: ${LAB_INSTANCE_DEFAULT_DIRECT_MEMORY_MB:-64}
+      LAB_INSTANCE_MAX_EXTRA_ARGS: ${LAB_INSTANCE_MAX_EXTRA_ARGS:-16}
+      LAB_INSTANCE_MAX_EXTRA_ARGS_LENGTH: ${LAB_INSTANCE_MAX_EXTRA_ARGS_LENGTH:-1024}
+      LAB_INSTANCE_IMAGE_TAGS: ${LAB_INSTANCE_IMAGE_TAGS:-jdk21,jdk8}
+      LAB_INSTANCE_GC_LOG_ROOT: ${LAB_INSTANCE_GC_LOG_ROOT:-/app/logs}
       LAB_RECONCILE_MYSQL_MODE: ${LAB_RECONCILE_MYSQL_MODE:-${MYSQL_MODE:-standalone}}
       LAB_RECONCILE_BUSINESS_URL: ${LAB_RECONCILE_BUSINESS_URL:-}
       LAB_RECONCILE_STANDALONE_URL: ${LAB_RECONCILE_STANDALONE_URL:-jdbc:mysql://${MYSQL_HOST:-mysql}:3306/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}

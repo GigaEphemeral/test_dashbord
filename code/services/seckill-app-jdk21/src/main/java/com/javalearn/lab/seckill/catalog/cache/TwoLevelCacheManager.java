@@ -53,7 +53,8 @@ public final class TwoLevelCacheManager implements CacheManager {
                                 MeterRegistry meterRegistry,
                                 LabToggleService toggles,
                                 TwoLevelCacheSettings settings) {
-        this(redisTemplate, objectMapper, meterRegistry, toggles, settings, new L1Switch());
+        this(redisTemplate, objectMapper, meterRegistry, toggles, settings,
+                new L1Switch(settings.l1Enabled()));
     }
 
     public TwoLevelCacheManager(StringRedisTemplate redisTemplate,

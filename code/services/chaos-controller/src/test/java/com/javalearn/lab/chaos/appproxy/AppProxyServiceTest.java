@@ -131,6 +131,25 @@ class AppProxyServiceTest {
         assertThat(gateway.body).isNull();
     }
 
+    @Test
+    void businessPoolReadbackIsForwardedAsAGet() {
+        ProxyResponse response = service.forward("app-2", "GET", "/lab/pool", null, new byte[0]);
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(gateway.instance).isEqualTo("app-2");
+        assertThat(gateway.method).isEqualTo("GET");
+        assertThat(gateway.path).isEqualTo("/lab/pool");
+        assertThat(gateway.body).isNull();
+    }
+
+    @Test
+    void businessPoolRejectsPostBecauseThePoolIsStartupConfigured() {
+        assertThatThrownBy(() -> service.forward("app-1", "POST", "/lab/pool", null, new byte[0]))
+                .isInstanceOf(AppPathNotAllowedException.class)
+                .hasMessageContaining("allow-list");
+        assertThat(gateway.path).isNull();
+    }
+
     @ParameterizedTest
     @CsvSource({
             "GET,/lab/cache/mode",

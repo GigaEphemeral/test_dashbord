@@ -46,6 +46,12 @@ public enum LabErrorCode implements ErrorCode {
      * UNKNOWN operations can be closed.
      */
     OPERATION_NOT_CLOSEABLE("40905", "Operation is not UNKNOWN and cannot be closed"),
+    /**
+     * Stage2 B4-01: startup parameters (JVM/GC/log) may only change outside a
+     * run. Distinct from 40901 so the console can name the RUNNING run and its
+     * stop action instead of showing a generic conflict.
+     */
+    INSTANCE_CONFIG_LOCKED("40906", "Instance startup configuration is locked by a running run"),
     BAD_GATEWAY("50201", "Bad gateway"),
     RESPONSE_TOO_LARGE("50202", "Upstream response too large"),
     /**

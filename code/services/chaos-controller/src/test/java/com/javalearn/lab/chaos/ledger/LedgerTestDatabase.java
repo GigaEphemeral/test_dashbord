@@ -124,6 +124,7 @@ final class LedgerTestDatabase {
         jdbc.update("DELETE FROM lab_run");
         jdbc.update("DELETE FROM lab_ledger_stash");
         jdbc.update("DELETE FROM lab_env_lock");
+        jdbc.update("DELETE FROM lab_instance_config");
     }
 
     static RunRecord run(String runId, RunStatus status, Instant createdAt) {

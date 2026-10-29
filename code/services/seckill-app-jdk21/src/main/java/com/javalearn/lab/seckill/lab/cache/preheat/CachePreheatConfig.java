@@ -47,7 +47,11 @@ public class CachePreheatConfig {
                 l1.isMicrometerStatsEnabled(),
                 Duration.ofSeconds(l2Properties.getTtlSeconds()),
                 l2Properties.getKeyPrefix(),
-                l2Properties.getClearScanCount());
+                l2Properties.getClearScanCount(),
+                // B4-01: 0 = idle expiry disabled (design §16.6), and the
+                // startup state of the per-JVM L1 switch (env LAB_CACHE_L1_ENABLED).
+                Duration.ofSeconds(l1.getExpireAfterAccessSeconds()),
+                l1.isEnabled());
     }
 
     @Bean

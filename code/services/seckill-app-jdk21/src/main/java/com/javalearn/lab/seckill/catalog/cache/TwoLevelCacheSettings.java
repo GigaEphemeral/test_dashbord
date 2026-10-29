@@ -38,6 +38,14 @@ import java.util.Objects;
  * @param l2ClearScanCount  SCAN COUNT hint used by {@code clear()} when it
  *                          collects the cache's L2 keys
  *                          ({@code app.lab.cache.l2.clear-scan-count})
+ * @param expireAfterAccess idle lifetime of an L1 entry ({@code 0} = disabled,
+ *                          design §16.6 "按秒配置，0 表示不启用"; the lab default
+ *                          is 0 so the historical write-expiry-only behaviour
+ *                          is unchanged)
+ * @param l1Enabled         startup state of the per-JVM Caffeine switch
+ *                          ({@code app.lab.cache.preheat.l1.enabled}, env
+ *                          {@code LAB_CACHE_L1_ENABLED}); the runtime
+ *                          {@code POST /lab/cache/l1} still overrides it
  */
 public record TwoLevelCacheSettings(long maximumSize,
                                     Duration refreshAfterWrite,
@@ -45,7 +53,9 @@ public record TwoLevelCacheSettings(long maximumSize,
                                     boolean micrometerStatsEnabled,
                                     Duration l2Ttl,
                                     String l2KeyPrefix,
-                                    long l2ClearScanCount) {
+                                    long l2ClearScanCount,
+                                    Duration expireAfterAccess,
+                                    boolean l1Enabled) {
 
     /**
      * Direct-construction (test/tool) fallback for the L2 numbers, kept as the
@@ -66,7 +76,8 @@ public record TwoLevelCacheSettings(long maximumSize,
                                  Duration refreshAfterWrite,
                                  Duration expireAfterWrite) {
         this(maximumSize, refreshAfterWrite, expireAfterWrite, true,
-                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT);
+                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT,
+                Duration.ZERO, true);
     }
 
     /**
@@ -78,7 +89,23 @@ public record TwoLevelCacheSettings(long maximumSize,
                                  Duration expireAfterWrite,
                                  boolean micrometerStatsEnabled) {
         this(maximumSize, refreshAfterWrite, expireAfterWrite, micrometerStatsEnabled,
-                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT);
+                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT,
+                Duration.ZERO, true);
+    }
+
+    /**
+     * B0-04 shape: the seven fields bound from {@code app.lab.cache.*} before
+     * B4 added the optional access expiry and the L1 startup switch.
+     */
+    public TwoLevelCacheSettings(long maximumSize,
+                                 Duration refreshAfterWrite,
+                                 Duration expireAfterWrite,
+                                 boolean micrometerStatsEnabled,
+                                 Duration l2Ttl,
+                                 String l2KeyPrefix,
+                                 long l2ClearScanCount) {
+        this(maximumSize, refreshAfterWrite, expireAfterWrite, micrometerStatsEnabled,
+                l2Ttl, l2KeyPrefix, l2ClearScanCount, Duration.ZERO, true);
     }
 
     public TwoLevelCacheSettings {
@@ -112,6 +139,11 @@ public record TwoLevelCacheSettings(long maximumSize,
             throw new IllegalArgumentException(
                     "l2ClearScanCount must be positive: " + l2ClearScanCount);
         }
+        Objects.requireNonNull(expireAfterAccess, "expireAfterAccess");
+        if (expireAfterAccess.isNegative()) {
+            throw new IllegalArgumentException(
+                    "expireAfterAccess must not be negative (0 disables it): " + expireAfterAccess);
+        }
     }
 
     /**
@@ -122,7 +154,8 @@ public record TwoLevelCacheSettings(long maximumSize,
     public static TwoLevelCacheSettings defaults() {
         return new TwoLevelCacheSettings(
                 10_000L, Duration.ofSeconds(10), Duration.ofSeconds(60), true,
-                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT);
+                DEFAULT_L2_TTL, DEFAULT_L2_KEY_PREFIX, DEFAULT_L2_CLEAR_SCAN_COUNT,
+                Duration.ZERO, true);
     }
 
     /**

@@ -232,6 +232,16 @@ public class LabCachePreheatProperties {
         private long expireAfterWriteSeconds;
         /** B0-03: register the Caffeine-native L1 stats series with Micrometer. */
         private boolean micrometerStatsEnabled;
+        /**
+         * B4-01: idle expiry of an L1 entry; 0 keeps the historical
+         * write-expiry-only behaviour (design §16.6 "按秒配置，0=不启用").
+         */
+        private long expireAfterAccessSeconds;
+        /**
+         * B4-01: startup state of the per-JVM Caffeine switch. The runtime
+         * {@code POST /lab/cache/l1} still overrides it without a restart.
+         */
+        private boolean enabled = true;
 
         public long getMaximumSize() {
             return maximumSize;
@@ -263,6 +273,22 @@ public class LabCachePreheatProperties {
 
         public void setMicrometerStatsEnabled(boolean micrometerStatsEnabled) {
             this.micrometerStatsEnabled = micrometerStatsEnabled;
+        }
+
+        public long getExpireAfterAccessSeconds() {
+            return expireAfterAccessSeconds;
+        }
+
+        public void setExpireAfterAccessSeconds(long expireAfterAccessSeconds) {
+            this.expireAfterAccessSeconds = expireAfterAccessSeconds;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

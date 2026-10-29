@@ -150,6 +150,39 @@ public class DockerContainerGateway implements ContainerGateway {
     }
 
     @Override
+    public java.util.Optional<ContainerFacts> inspectLabContainerFacts(String containerName) {
+        requireLabContainer(containerName);
+        try {
+            var inspected = dockerClient.inspectContainerCmd(containerName).exec();
+            var config = inspected.getConfig();
+            String image = config == null ? null : config.getImage();
+            java.util.Map<String, String> env = new java.util.LinkedHashMap<>();
+            if (config != null && config.getEnv() != null) {
+                for (String entry : config.getEnv()) {
+                    if (entry == null) {
+                        continue;
+                    }
+                    int separator = entry.indexOf('=');
+                    if (separator > 0) {
+                        env.put(entry.substring(0, separator), entry.substring(separator + 1));
+                    }
+                }
+            }
+            return java.util.Optional.of(new ContainerFacts(
+                    canonicalName(inspected.getName(), containerName), image,
+                    inspected.getImageId(), java.util.Map.copyOf(env)));
+        } catch (NotFoundException e) {
+            throw new ContainerNotFoundException("Container not found: " + containerName);
+        } catch (DockerException e) {
+            throw new DockerUnavailableException(
+                    "Docker daemon unavailable while inspecting " + containerName, e);
+        } catch (RuntimeException e) {
+            throw new DockerUnavailableException(
+                    "Docker daemon unavailable while inspecting " + containerName, e);
+        }
+    }
+
+    @Override
     public void stop(String containerName, int graceSeconds) {
         requireLabContainer(containerName);
         try {
