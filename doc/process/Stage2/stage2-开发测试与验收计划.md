@@ -245,6 +245,10 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 
 ## 4. B3 · 缓存实验、键查询与 A/B 对照
 
+> **收口状态（2026-10-29）：已收口。** B3-00 交互对齐 + B3-01..04 全部合并并真机验证；独立 Qwen 审核
+> **Approved with fixes**（1 Medium 已修，`4e925ae`）；闸门见 §0。收口文档 `step-S2-B3-00-closure.md`，
+> 实现交接 `step-S2-B3-00a-interaction-alignment-implementation.md` / `step-S2-B3-01-cache-experiments.md`。
+
 **收口标准**：A/B 变量受控；目标/实际键数、缓存指标与业务对账可追踪；正常关闭与 Redis 故障不混淆。
 
 ### B3-00 交互对齐（B3 前置，2026-10-29）
