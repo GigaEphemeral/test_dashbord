@@ -67,7 +67,7 @@ public class InstanceConfigProperties {
      * read; a JDK 8 instance stays READBACK_UNAVAILABLE by design. The output
      * is truncated to the byte cap before token parsing.
      */
-    private int jvmFlagsTimeoutSeconds = 5;
+    private int jvmFlagsTimeoutSeconds = 10;
     private int jvmFlagsMaxBytes = 8192;
     /**
      * B5-04b: bounded container-log scan for OOM / heap-dump events. Docker's

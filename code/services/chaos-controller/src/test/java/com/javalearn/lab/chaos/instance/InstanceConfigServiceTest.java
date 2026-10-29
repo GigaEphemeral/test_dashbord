@@ -152,7 +152,7 @@ class InstanceConfigServiceTest {
         when(gateway.inspectLabContainerFacts("jl-app-1")).thenReturn(Optional.of(
                 new ContainerFacts("jl-app-1", "jdk21", "sha256:def", Map.of())));
         when(gateway.execInContainer(eq("jl-app-1"),
-                eq(List.of("jcmd", "1", "VM.flags")), eq(List.of()), isNull(), eq(5)))
+                eq(List.of("jcmd", "1", "VM.flags")), eq(List.of()), isNull(), eq(10)))
                 .thenReturn(new ExecResult(
                         "1:\n-XX:+UseG1GC -Xmx512m -XX:MaxHeapSize=536870912 \n",
                         "Picked up JAVA_TOOL_OPTIONS\n", 0, false));

@@ -53,7 +53,9 @@ lab:
     # Stage2 B5-04b: bounded `jcmd 1 VM.flags` readback (JDK21 only; JDK8 stays
     # READBACK_UNAVAILABLE) and the bounded container-log scan behind
     # GET /lab/instances/{instance}/events (OutOfMemoryError / heap dump).
-    jvm-flags-timeout-seconds: ${LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS:5}
+    # 10s: under a 500-VU load `jcmd` starts a second JVM and a 5s cap produced
+    # spurious "timed out" readbacks while the flags were actually applied.
+    jvm-flags-timeout-seconds: ${LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS:10}
     jvm-flags-max-bytes: ${LAB_INSTANCE_JVM_FLAGS_MAX_BYTES:8192}
     events-log-tail: ${LAB_INSTANCE_EVENTS_LOG_TAIL:200}
     events-max-events: ${LAB_INSTANCE_EVENTS_MAX_EVENTS:50}
