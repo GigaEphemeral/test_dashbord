@@ -41,7 +41,8 @@
 > 真机证据与缺口见 `step-S2-B3-00a-interaction-alignment-implementation.md`。
 > **B3 批次基线（2026-10-29，B3-01..04 实现）**：reactor **1337**（chaos 756、app 495、jdk8 59、core 13、platform 14）、console-smoke **138/0**、
 > k6 node **113**、claims **52**、verify 109/1、smoke 7/7。真机：10,000 商品基线、L1 三实例独立、SCAN 键分页/单键详情/
-> 重置、A/B 一对、对账 7 项 PASS。交接见 `step-S2-B3-01-cache-experiments.md`。
+> 重置、A/B 一对、对账 7 项 PASS。独立 Qwen 审核 **Approved with fixes**（1 Medium 已修，`4e925ae`）。
+> 交接见 `step-S2-B3-01-cache-experiments.md`。
 
 规约要点（每一步都适用）：
 

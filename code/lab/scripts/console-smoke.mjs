@@ -97,6 +97,8 @@ const failures = [];
 // still-running entry and deletes it; the marker-name scan catches a run whose
 // id never reached this set because the console failed mid-flow.
 const ownedRunIds = new Set();
+// Runs this suite deleted; a late 404 for their detail is the expected end state.
+const deletedRunIds = new Set();
 
 function check(label, condition, detail = '') {
   if (condition) {
@@ -287,6 +289,7 @@ async function deleteOwnedRun(runId) {
   }
   try {
     await apiRequest(`/lab/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+    deletedRunIds.add(runId);
     ownedRunIds.delete(runId);
     console.log(`INFO  deleted owned run ${runId}`);
   } catch (err) {
@@ -418,7 +421,17 @@ async function main() {
       // panel renders it as 无数据. It is an empty-state contract, not a failure.
       const reconciliationEmpty = response.status() === 404
         && /\/lab-api\/lab\/runs\/[^/]+\/reconciliation$/.test(url);
-      if (response.status() >= 400 && !reconciliationEmpty) {
+      let deletedDetail404 = false;
+      if (response.status() === 404) {
+        try {
+          const path = new URL(url).pathname;
+          const match = path.match(/^\/lab-api\/lab\/runs\/([^/]+)$/);
+          deletedDetail404 = Boolean(match && deletedRunIds.has(decodeURIComponent(match[1])));
+        } catch {
+          deletedDetail404 = false;
+        }
+      }
+      if (response.status() >= 400 && !reconciliationEmpty && !deletedDetail404) {
         failedRequests.push(`${response.request().method()} ${url} -> HTTP ${response.status()}`);
       }
     });
@@ -426,6 +439,19 @@ async function main() {
   trackPage(page);
 
   try {
+    // A previous aborted smoke may have left a deleted run selected in
+    // localStorage; clear it once (sessionStorage survives reloads, so the
+    // later "reload restores the selected run" check still sees its own id).
+    await page.addInitScript(() => {
+      try {
+        if (!sessionStorage.getItem('smoke-inited')) {
+          localStorage.removeItem('ha-lab-selected-run');
+          sessionStorage.setItem('smoke-inited', '1');
+        }
+      } catch {
+        // Storage unavailable: the app falls back to its empty state.
+      }
+    });
     await page.goto(CONSOLE_URL, { waitUntil: 'load' });
     check('console page loads', /实验操作台/.test(await page.title()), await page.title());
 
@@ -1306,6 +1332,14 @@ async function main() {
         pausedRow.detail,
       );
 
+      // Refresh the experiment keys (avalanche TTL is 60s, hot key 300s) so the
+      // key browser has something real to page through when we get there.
+      await page.getByTestId('monitor-tab-ops').click();
+      await page.getByTestId('cache-seed').click();
+      await waitForCondition(async () => {
+        const result = page.getByTestId('cache-seed-result');
+        return { ok: (await result.count()) > 0, detail: 'seed result' };
+      });
       await page.getByTestId('monitor-tab-tools').click();
       // B3-02: the SCAN key browser lives in 实验工具 and lists the seeded keys.
       await expectCondition('tools: the cache key browser lists SCAN keys', async () => {
@@ -1909,6 +1943,7 @@ async function main() {
 
     await page.getByTestId(`run-delete-${createdRunId}`).click();
     await page.getByTestId('run-delete-confirm').click();
+    deletedRunIds.add(createdRunId);
     await expectCondition('runs: confirming the delete removes the row and clears the detail', async () => {
       const row = await page.getByTestId(`run-row-${createdRunId}`).count();
       const modal = await page.getByTestId('run-delete-modal').count();

@@ -13,7 +13,12 @@
 - B3-01/02/03/04 全部实现并通过真机验证：L1 每实例独立开关与清空、10,000 条确定性商品、SCAN 键分页/单键详情/实验重置、A/B 对照面板、run 级业务对账。
 - 闸门：console-smoke **138/0**（B3-00 132 +6）；claims **52**（+5）；verify **109/1**（与基线一致）；smoke **7/7**；k6 node **113**；reactor 全量见附录。
 - 真机证据：L1 关闭后 app-1 `l1Present=false / l2Present=true` 且 app-2 仍启用；seed 10,000 经代理约 7s；SCAN 首屏 3 条、游标可续；reset 删除 22 个缓存键；A/B 一对完成（9 行差值，清空 21/23/21 条）；对账 0 流量 PASS、smoke 4 单后 `ordersDelta=4 / stockDecrement=4` 仍 PASS。
-- 未完成：独立 Qwen 审核（B3 收口）、B4/B5。
+- 独立 Qwen 审核（隔离 worktree）：**Approved with fixes**，0 Critical / 0 High / 1 Medium（已修）/ 7 Minor；
+  Medium 是 `GET /lab/cache/keys` 在页容量小于 SCAN 批次时返回批后游标会永久跳过超限键，修复提交
+  `ef06b9a`（已 cherry-pick 为 `4e925ae`，SCAN hint 随剩余容量收缩 + 新增序列测试）。
+- 独立 Qwen 审核（隔离 worktree）：**Approved with fixes**，0 Critical / 0 High / 1 Medium（已修）/ 7 Minor；
+  Medium 的修复与证据见文末 Fix Report（原提交 `ef06b9a`，主分支 cherry-pick 为 `4e925ae`）。
+- 未完成：B4/B5。
 
 # 完成功能项
 
@@ -71,12 +76,13 @@
 | 键浏览默认只开放 `cache:product:` | 其他前缀需改 `allowed-prefixes`；防止 keyspace dump 的有意限制 | 设计口径 |
 | 对账 sample 落库截断 | `lab_run_check` 无 sample 列，持久化时按 1024 字符截断；实时响应保留完整有界样本 | 记录 |
 | 对账覆盖 7 项 | 未包含业务金额/用户维度对账（本实验室无支付） | 设计口径 |
-| B3 独立审核 | 本批未做 Qwen 独立审核/提交；按计划批次收口统一审核 | B3 收口 |
+| B3 审核 Minor | 7 条记录：reset 删除全部 `cache:product:*`（可再生成）、Java 默认值与“无默认值”注释不一致、`armed` map 自然完成后不回收（任务自跳过）、跨 JVM seed 竞争、30s 代理预算、via-nginx 与 includeBusiness 为已确认设计、前端 PromQL 直连 /prom | 记录 |
+| console-smoke 收尾 404 | 套件自己删除的 run 仍可能有最后一次详情轮询 404；已在套件内按 deletedRunIds 过滤，并清理上次中断留下的 localStorage 选中项 | 记录 |
 | 控制器代理超时上调 | 10s→30s 是全局单次转发预算，慢调用会占住一个代理线程 | 记录 |
 
 # 待定事项和注意事项
 
-1. **下一步**：B3 收口（独立审核、closure 文档、提交/推送），然后 B4 实例 JVM/GC/线程池配置闭环。
+1. **下一步**：B3 收口文档与提交/推送已完成（独立审核见 Fix Report），然后 B4 实例 JVM/GC/线程池配置闭环。
 2. **重建与重载**：宿主 `mvn -o -pl services/seckill-app-jdk21,services/chaos-controller -am -DskipTests package`，用 `tmp/b3-image/` 的运行时临时 Dockerfile 打同名 tag，`up -d --no-deps --force-recreate` 后**必须 `docker exec jl-nginx nginx -s reload`**（Nginx 在启动时解析 upstream，不重载会 502）。
 3. **数据状态**：baseline 10,000 + 实验 seed 1,000（90000–90999）；A/B 证据 run 003/004、对账证据 run 001 保留；无 RUNNING run、无 k6 容器、traffic 停止。
 4. **Windows 编码**：Git Bash 直接 `-d '{"name":"中文"}'` 会按 GBK 发送导致 400；用 UTF-8 文件 + `--data-binary`。
