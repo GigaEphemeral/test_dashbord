@@ -102,7 +102,6 @@ class AppProxyServiceTest {
 
     @ParameterizedTest
     @CsvSource({
-            "/lab/cache/seed",
             "/lab/cache/preheat"
     })
     void cacheBodylessPostPathsAreForwardedWithoutABody(String path) {
@@ -120,13 +119,15 @@ class AppProxyServiceTest {
         assertThat(gateway.body).isEqualTo(CACHE_MODE_BODY);
     }
 
-    @ParameterizedTest
-    @CsvSource({
-            "/lab/cache/seed",
-            "/lab/cache/preheat"
-    })
-    void cacheBodiesOnSeedAndPreheatAreDropped(String path) {
-        service.forward("app-1", "POST", path, null, CACHE_MODE_BODY);
+    @Test
+    void cacheSeedBodyIsForwardedForTheOptionalCount() {
+        service.forward("app-1", "POST", "/lab/cache/seed", null, CACHE_MODE_BODY);
+        assertThat(gateway.body).isEqualTo(CACHE_MODE_BODY);
+    }
+
+    @Test
+    void cachePreheatBodyIsDropped() {
+        service.forward("app-1", "POST", "/lab/cache/preheat", null, CACHE_MODE_BODY);
         assertThat(gateway.body).isNull();
     }
 
@@ -216,7 +217,7 @@ class AppProxyServiceTest {
         assertThat(gateway.path).isEqualTo("/lab/cache/state");
 
         // ...and an off-list path is still rejected even with an empty query
-        assertThatThrownBy(() -> service.forward("app-1", "GET", "/lab/cache/keys", "", new byte[0]))
+        assertThatThrownBy(() -> service.forward("app-1", "GET", "/lab/cache/unknown", "", new byte[0]))
                 .isInstanceOf(AppPathNotAllowedException.class)
                 .hasMessageContaining("allow-list");
     }

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import CacheABPanel from './CacheABPanel.vue'
 import {
   describeError,
   fetchBenchScenarios,
@@ -218,6 +219,8 @@ function onTailChange(event) {
 
 <template>
   <div class="bench-panel">
+    <CacheABPanel :token="token" :active="active" />
+
     <section class="card" data-testid="bench-scenarios">
       <div class="card-head">
         <h2>

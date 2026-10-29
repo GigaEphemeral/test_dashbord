@@ -207,9 +207,11 @@ public class LedgerConfig {
                                                    RunPrecheckService precheck,
                                                    RunLifecycleHook runLifecycleHook,
                                                    FaultScheduler faultScheduler,
+                                                   RunStartedHook runStartedHook,
                                                    Clock ledgerClock) {
         return new RunLifecycleService(properties, bootstrap, repository, writer, envLockService,
-                operationService, precheck, runLifecycleHook, faultScheduler, ledgerClock);
+                operationService, precheck, runLifecycleHook, faultScheduler, runStartedHook,
+                ledgerClock);
     }
 
     private static HikariDataSource pool(String name, String url, LedgerProperties properties) {

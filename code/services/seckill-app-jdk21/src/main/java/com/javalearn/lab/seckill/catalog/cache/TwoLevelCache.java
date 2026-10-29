@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A true two-level cache behind the Spring Cache abstraction.
@@ -51,6 +52,13 @@ import java.util.concurrent.Callable;
  * {@code cache_l1_caffeine_hit_ratio}, {@code cache_l1_caffeine_evictions}) plus
  * the {@code cache_l1_estimated_size} gauge, gated by
  * {@link TwoLevelCacheSettings#micrometerStatsEnabled()}.</p>
+ *
+ * <p>B3-01 adds an independent per-JVM L1 switch
+ * ({@link #setL1Enabled(boolean)} / {@link #isL1Enabled()}): while off, reads
+ * and writes bypass Caffeine (reads still go L2 -> source, writes still fill
+ * L2), the L1 entries are cleared, and neither {@code cache_l1_requests} nor
+ * Caffeine's own stats move. The {@code cache_l1_enabled{cache}} gauge stays
+ * 1/0 so a dashboard can tell "switched off" from a real 0% hit ratio.</p>
  */
 public final class TwoLevelCache implements org.springframework.cache.Cache {
 
@@ -62,6 +70,12 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
     private final long l2ClearScanCount;
     private final Class<?> valueType;
     private final Cache<Object, Object> l1;
+    /**
+     * B3-01: per-cache L1 bypass switch. Reads and writes consult this flag
+     * before touching Caffeine; disabling clears the local entries and leaves
+     * L2 alone. An {@link AtomicBoolean} keeps the hot read path lock-free.
+     */
+    private final AtomicBoolean l1Enabled = new AtomicBoolean(true);
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
 
@@ -102,12 +116,22 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                 .build(new CacheLoader<Object, Object>() {
                     @Override
                     public Object load(Object key) {
-                        return readL2(key);
+                        // While L1 is off this loader is never reached by the
+                        // application path, but a concurrent disable can still
+                        // race with a refresh; returning null avoids
+                        // repopulating an intentionally emptied L1.
+                        return l1Enabled.get() ? readL2(key) : null;
                     }
 
                     @Override
                     public Object reload(Object key, Object oldValue) {
-                        return reloadFromL2(key);
+                        if (!l1Enabled.get()) {
+                            return null;
+                        }
+                        Object value = reloadFromL2(key);
+                        // A disable that landed while the L2 read was in flight
+                        // must not reinsert the entry it just cleared.
+                        return l1Enabled.get() ? value : null;
                     }
                 });
         this.l1Hits = Counter.builder("cache_l1_requests")
@@ -130,6 +154,14 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
                 .register(meterRegistry);
         Gauge.builder("cache_l1_hit_ratio", this, TwoLevelCache::l1HitRatio)
                 .description("L1 hit ratio derived from cache_l1_requests")
+                .tag("cache", name)
+                .register(meterRegistry);
+        // B3-01: 1 = L1 participates, 0 = L1 bypassed and cleared. This gauge
+        // is what lets a dashboard tell "switched off" apart from "0% hit
+        // ratio"; cache_l1_requests is intentionally not incremented while off.
+        Gauge.builder("cache_l1_enabled", this, cache -> cache.isL1Enabled() ? 1.0D : 0.0D)
+                .description("1 when the Caffeine L1 participates, 0 when it is bypassed "
+                        + "and its entries have been cleared")
                 .tag("cache", name)
                 .register(meterRegistry);
         if (settings.micrometerStatsEnabled()) {
@@ -211,8 +243,60 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
         return l1;
     }
 
+    /** Whether the Caffeine L1 currently participates in reads and writes. */
+    public boolean isL1Enabled() {
+        return l1Enabled.get();
+    }
+
+    /**
+     * B3-01: toggles the local Caffeine layer.
+     *
+     * <p>Any actual state transition clears L1, so disabling drops every local
+     * entry immediately and enabling starts from an empty L1 (no entry that was
+     * written while the switch was off can resurface). Repeating the current
+     * value is a no-op and clears nothing. L2 is never touched here.</p>
+     *
+     * @return the number of L1 entries removed by this transition, 0 when the
+     *         value did not change
+     */
+    public long setL1Enabled(boolean enabled) {
+        boolean previous = l1Enabled.getAndSet(enabled);
+        if (previous == enabled) {
+            return 0L;
+        }
+        return clearL1();
+    }
+
+    /**
+     * Removes every L1 entry without touching Redis, returning the exact
+     * number of entries present before the clear.
+     */
+    public long clearL1() {
+        long size = l1.asMap().size();
+        l1.invalidateAll();
+        l1.cleanUp();
+        return size;
+    }
+
+    /** Exact current number of local Caffeine entries (0 while L1 is off). */
+    public long l1Size() {
+        return l1.asMap().size();
+    }
+
     @Override
     public ValueWrapper get(Object key) {
+        if (!l1Enabled.get()) {
+            // B3-01 off semantics: bypass L1 entirely. The read goes straight to
+            // L2 and then source; neither an L1 hit nor an L1 miss is counted,
+            // and an L2 hit is not copied back into the disabled L1.
+            Object l2Value = readL2(key);
+            if (l2Value != null) {
+                l2Hits.increment();
+                return new SimpleValueWrapper(l2Value);
+            }
+            dbFallbacks.increment();
+            return null;
+        }
         Object l1Value = l1.getIfPresent(key);
         if (l1Value != null) {
             l1Hits.increment();
@@ -227,7 +311,12 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
 
         Object l2Value = readL2(key);
         if (l2Value != null) {
-            l1.put(key, l2Value);
+            if (l1Enabled.get()) {
+                l1.put(key, l2Value);
+                if (!l1Enabled.get()) {
+                    l1.invalidate(key);
+                }
+            }
             l2Hits.increment();
             return new SimpleValueWrapper(l2Value);
         }
@@ -271,7 +360,14 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
         if (value == null) {
             return;
         }
-        l1.put(key, value);
+        if (l1Enabled.get()) {
+            l1.put(key, value);
+            if (!l1Enabled.get()) {
+                // A concurrent disable cleared the cache after this write
+                // started; do not leave the just-inserted entry behind.
+                l1.invalidate(key);
+            }
+        }
         try {
             String json = objectMapper.writeValueAsString(value);
             redisTemplate.opsForValue().set(redisKey(key), json, l2Ttl);
@@ -282,7 +378,9 @@ public final class TwoLevelCache implements org.springframework.cache.Cache {
 
     @Override
     public void evict(Object key) {
-        l1.invalidate(key);
+        if (l1Enabled.get()) {
+            l1.invalidate(key);
+        }
         try {
             redisTemplate.delete(redisKey(key));
         } catch (RuntimeException ex) {

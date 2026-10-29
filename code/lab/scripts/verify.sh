@@ -108,8 +108,11 @@ LAB_TOGGLE_KEYS=(lock idempotency mq ratelimit circuitbreaker cache)
 
 # Task 18: Prometheus metric visibility window (scrape interval is 5s).
 METRIC_WAIT_RETRIES="${METRIC_WAIT_RETRIES:-30}"
-# Demo baseline only: /lab/cache/seed adds experiment products from id 90000.
-VERIFY_CATALOG_BASELINE_MAX_ID="${VERIFY_CATALOG_BASELINE_MAX_ID:-1000}"
+# Built-in catalog baseline: Flyway V4 generates ids 1..10000; /lab/cache/seed
+# adds experiment products from id 90000. Everything below that reserved range
+# is baseline and must be fully inventoried.
+VERIFY_CATALOG_BASELINE_MAX_ID="${VERIFY_CATALOG_BASELINE_MAX_ID:-90000}"
+VERIFY_CATALOG_BASELINE_PRODUCTS="${VERIFY_CATALOG_BASELINE_PRODUCTS:-10000}"
 METRIC_WAIT_INTERVAL_SECONDS="${METRIC_WAIT_INTERVAL_SECONDS:-2}"
 
 compose() {
@@ -442,10 +445,11 @@ fi
 # 2d. Inventory + idempotent order flow through Nginx (Task 13). The three
 # instances share one database, so the retried POST may hit a different app.
 inventory_rows="$(mysql_scalar "SELECT COUNT(*) FROM inventory_stock WHERE product_id < ${VERIFY_CATALOG_BASELINE_MAX_ID};")"
-if [[ "$inventory_rows" == "20" ]]; then
-  pass "mysql inventory_stock has one row per baseline catalog product (20)"
+if [[ "$inventory_rows" == "$VERIFY_CATALOG_BASELINE_PRODUCTS" ]]; then
+  pass "mysql inventory_stock has one row per baseline catalog product (${VERIFY_CATALOG_BASELINE_PRODUCTS})"
 else
-  fail "mysql inventory_stock has one row per baseline catalog product (20)" "count='${inventory_rows}'"
+  fail "mysql inventory_stock has one row per baseline catalog product (${VERIFY_CATALOG_BASELINE_PRODUCTS})" \
+    "count='${inventory_rows}'"
 fi
 
 stock_before="$(mysql_scalar 'SELECT available FROM inventory_stock WHERE product_id = 1;')"
@@ -901,20 +905,20 @@ catalog_count="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
   -e "SELECT COUNT(*) FROM catalog_product WHERE id < ${VERIFY_CATALOG_BASELINE_MAX_ID};" \
   2>/dev/null | tr -d '\r\n ')" || true
-if [[ "$catalog_count" == "20" ]]; then
-  pass "mysql catalog_product has exactly 20 baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)"
+if [[ "$catalog_count" == "$VERIFY_CATALOG_BASELINE_PRODUCTS" ]]; then
+  pass "mysql catalog_product has exactly ${VERIFY_CATALOG_BASELINE_PRODUCTS} baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)"
 else
-  fail "mysql catalog_product has exactly 20 baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)" "count='${catalog_count}'"
+  fail "mysql catalog_product has exactly ${VERIFY_CATALOG_BASELINE_PRODUCTS} baseline rows (id < $VERIFY_CATALOG_BASELINE_MAX_ID)" "count='${catalog_count}'"
 fi
 
 flyway_versions="$(compose exec -T -e MYSQL_PWD="$MYSQL_PASSWORD" mysql \
   mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -B \
   -e 'SELECT GROUP_CONCAT(version ORDER BY installed_rank) FROM flyway_schema_history WHERE success = 1;' \
   2>/dev/null | tr -d '\r\n ')" || true
-if [[ "$flyway_versions" == "1,2,3" ]]; then
-  pass "flyway applied migrations 1,2,3 successfully"
+if [[ "$flyway_versions" == "1,2,3,4" ]]; then
+  pass "flyway applied migrations 1,2,3,4 successfully"
 else
-  fail "flyway applied migrations 1,2,3 successfully" "versions='${flyway_versions}'"
+  fail "flyway applied migrations 1,2,3,4 successfully" "versions='${flyway_versions}'"
 fi
 
 # 5. Redis liveness.

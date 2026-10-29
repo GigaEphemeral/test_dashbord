@@ -8,6 +8,11 @@ package com.javalearn.lab.seckill.lab.api;
  * <p>When Redis is unreachable the {@code redisReachable} flag is false and the
  * Redis-derived counts are zero: the endpoint degrades to what it can prove from
  * the database and the local Caffeine cache instead of failing.</p>
+ *
+ * <p>{@code l1Enabled} is the per-JVM Caffeine switch (B3-01), reported in the
+ * same read so the console can show "not applicable" for L1 metrics without a
+ * second request. It is independent of {@code defense.cacheToggleEnabled},
+ * which controls both levels.</p>
  */
 public record CacheStateResponse(Defense defense,
                                  Breakdown breakdown,
@@ -15,7 +20,8 @@ public record CacheStateResponse(Defense defense,
                                  Dataset dataset,
                                  Keys keys,
                                  Bloom bloom,
-                                 NullCache nullCache) {
+                                 NullCache nullCache,
+                                 boolean l1Enabled) {
 
     /** The two runtime switches that decide what a product read actually does. */
     public record Defense(String mode, boolean cacheToggleEnabled) {

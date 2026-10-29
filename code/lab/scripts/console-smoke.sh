@@ -71,7 +71,7 @@ Environment (environment > lab .env > default):
   SMOKE_RUN_SCENARIO_PREFIX   legacy ownership prefix, default console-smoke-
   SMOKE_KPI_COUNT             observe KPI card count, default 13
   SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
-  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 132 (healthy stack)
+  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 138 (healthy stack)
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package
   CONSOLE_SMOKE_SCRIPT        path to the smoke script, default alongside this file
@@ -193,7 +193,7 @@ SMOKE_KPI_COUNT="${SMOKE_KPI_COUNT:-$(dotenv_value SMOKE_KPI_COUNT)}"
 SMOKE_RUN_METRIC_COUNT="${SMOKE_RUN_METRIC_COUNT:-$(dotenv_value SMOKE_RUN_METRIC_COUNT)}"
 SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-$(dotenv_value SMOKE_MIN_PASS_COUNT)}"
 # B3-00 baseline on a healthy stack (PASS/WARN pre-check). Set 0 to disable.
-SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-132}"
+SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-138}"
 
 echo "Console smoke: $CONSOLE_URL"
 echo "  api base   : $LAB_API_BASE"

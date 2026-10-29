@@ -565,17 +565,20 @@ internal/report failure.
 
 ```bash
 bash code/lab/scripts/reset-lab.sh --dry-run   # print the plan and current state
-bash code/lab/scripts/reset-lab.sh --yes       # truncate orders, stock=100, FLUSHDB, purge queue
+bash code/lab/scripts/reset-lab.sh --yes       # truncate orders, formula stock, FLUSHDB, purge queue
 ```
 
 It stops app-1/2/3 first (no consumer can write during the reset), truncates
-`order_order`, sets every `inventory_stock` row to `RESET_BASELINE_STOCK`
-(default 100, `reserved=0`), flushes the lab-only Redis DB, purges
-`RABBITMQ_QUEUE` (default `seckill.order.queue`) through the management API,
-starts the app tier again and waits for health. The startup seeder then
-repopulates `seckill:stock:<id>` from MySQL. Flyway history, catalog seeds and
-all named volumes are untouched. The compose project is pinned to
-`java-learn-lab` and every container is checked against that project label.
+`order_order`, restores every `inventory_stock` row to the deterministic
+baseline `available = MOD(product_id * 37, 501)` (`reserved=0`, product 1 => 37,
+product 20 => 239; Flyway V4 ships the same 10,000-product baseline), flushes
+the lab-only Redis DB, purges `RABBITMQ_QUEUE` (default
+`seckill.order.queue`) through the management API, starts the app tier again
+and waits for health. `RESET_BASELINE_STOCK` keeps the old flat-stock override
+for drills. The startup seeder then repopulates `seckill:stock:<id>` from
+MySQL. Flyway history, catalog seeds and all named volumes are untouched. The
+compose project is pinned to `java-learn-lab` and every container is checked
+against that project label.
 
 Reset-specific overrides: `RESET_BASELINE_STOCK`, `RESET_APP_SERVICES`,
 `RESET_MYSQL_SERVICE`/`RESET_MYSQL_CONTAINER`,
@@ -1039,7 +1042,8 @@ The acceptance run used three ids (smoke, load, spike); see
   k6 is on `jl-net`.
 - Smoke and spike consume finite product stock. Run
   `bash code/lab/scripts/reset-lab.sh --yes` (or let `bench.sh` do it) before a
-  repeat that expects fresh seckill stock; product 20 is restored to 100.
+  repeat that expects fresh seckill stock; product 20 is restored to its
+  deterministic baseline, 239.
 
 ## Related
 

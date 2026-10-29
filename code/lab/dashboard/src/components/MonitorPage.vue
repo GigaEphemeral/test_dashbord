@@ -8,6 +8,7 @@ import K6Progress from './K6Progress.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
 import ObservePanel from './ObservePanel.vue'
 import ThreadLab from './ThreadLab.vue'
+import CacheKeysPanel from './CacheKeysPanel.vue'
 import TopologyView from './TopologyView.vue'
 
 /**
@@ -123,6 +124,7 @@ function instancesOf(containers) {
         :active="active"
         @open-thread="$emit('open-thread', $event)"
       />
+      <CacheKeysPanel :token="token" :active="active" />
     </template>
   </div>
 </template>

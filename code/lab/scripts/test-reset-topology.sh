@@ -100,9 +100,11 @@ if [[ "$cmd" == "exec" ]]; then
       *"@@read_only"*)
         case " ${MOCK_PRIMARY:-} " in *" $container "*) printf '0\n' ;; *) printf '1\n' ;; esac ;;
       *COUNT*catalog_product*)  printf '3\n' ;;
+      *"available <>"*)         printf '0\n' ;;
       *COUNT*inventory_stock*)  printf '3\n' ;;
-      *"MIN(available)"*)       printf '100\n' ;;
-      *"MAX(available)"*)       printf '100\n' ;;
+      *"SELECT id, available"*) printf '1\t37\n2\t74\n3\t111\n' ;;
+      *"MIN(available)"*)       printf '37\n' ;;
+      *"MAX(available)"*)       printf '111\n' ;;
       *"SUM(reserved)"*)        printf '0\n' ;;
       *COUNT*order_order*)      printf '0\n' ;;
       *GROUP_CONCAT*)           printf '1,2,3\n' ;;
@@ -112,12 +114,14 @@ if [[ "$cmd" == "exec" ]]; then
     exit 0
   fi
   if [[ "$prog" == "redis-cli" ]]; then
-    sub=""; keycount=0
+    sub=""; keys=()
     for a in "${args[@]}"; do
       case "$a" in
-        ping|dbsize|flushdb|info|mget|get) sub="$a"; ;;
+        ping|dbsize|flushdb|info|mget|get) sub="$a" ;;
       esac
-      [[ "$a" == "seckill:stock:"* ]] && ((keycount++))
+      if [[ "$a" == "seckill:stock:"* ]]; then
+        keys+=("${a##*seckill:stock:}")
+      fi
     done
     case "$sub" in
       ping)   printf 'PONG\n' ;;
@@ -129,8 +133,10 @@ if [[ "$cmd" == "exec" ]]; then
           *)                printf '# Replication\r\nrole:slave\r\n' ;;
         esac ;;
       mget)
-        n="${MOCK_MGET_VALUE:-100}"
-        for ((i = 0; i < keycount; i++)); do printf '%s\n' "$n"; done ;;
+        # Same deterministic baseline as Flyway V4 / reset-lab.sh.
+        for product_id in "${keys[@]}"; do
+          printf '%s\n' "$(( (product_id * 37) % 501 ))"
+        done ;;
       *) printf '\n' ;;
     esac
     exit 0

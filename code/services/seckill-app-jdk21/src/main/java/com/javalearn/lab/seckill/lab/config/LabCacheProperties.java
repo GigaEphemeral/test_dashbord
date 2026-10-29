@@ -4,6 +4,8 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Externalized configuration for the cache experiment dataset and the
@@ -19,12 +21,18 @@ public class LabCacheProperties {
 
     private final Seed seed = new Seed();
     private final State state = new State();
+    private final Keys keys = new Keys();
     private final Penetration penetration = new Penetration();
     private final Breakdown breakdown = new Breakdown();
 
     @PostConstruct
     void validate() {
         requirePositive(seed.productCount, "app.lab.cache.seed.product-count");
+        requirePositive(seed.maxRequestCount, "app.lab.cache.seed.max-request-count");
+        if (seed.maxRequestCount < seed.productCount) {
+            throw new IllegalStateException("app.lab.cache.seed.max-request-count must be at least"
+                    + " app.lab.cache.seed.product-count");
+        }
         requirePositive(seed.startId, "app.lab.cache.seed.start-id");
         requirePositive(seed.writeBatchSize, "app.lab.cache.seed.write-batch-size");
         requireNonNegative(seed.protectedMaxId, "app.lab.cache.seed.protected-max-id");
@@ -60,6 +68,30 @@ public class LabCacheProperties {
         if (seed.price == null || seed.price.signum() < 0) {
             throw new IllegalStateException("app.lab.cache.seed.price must be a non-negative number");
         }
+
+        requirePositive(keys.scanBatches, "app.lab.cache.keys.scan-batches");
+        requireText(keys.defaultPrefix, "app.lab.cache.keys.default-prefix");
+        if (keys.allowedPrefixes.isEmpty()) {
+            throw new IllegalStateException(
+                    "Missing required configuration: app.lab.cache.keys.allowed-prefixes");
+        }
+        for (String allowed : keys.allowedPrefixes) {
+            requireText(allowed, "app.lab.cache.keys.allowed-prefixes");
+        }
+        if (!keys.allowedPrefixes.contains(keys.defaultPrefix)) {
+            throw new IllegalStateException("app.lab.cache.keys.default-prefix must be part of"
+                    + " app.lab.cache.keys.allowed-prefixes");
+        }
+        requirePositive(keys.defaultLimit, "app.lab.cache.keys.default-limit");
+        requirePositive(keys.maxLimit, "app.lab.cache.keys.max-limit");
+        if (keys.defaultLimit > keys.maxLimit) {
+            throw new IllegalStateException("app.lab.cache.keys.default-limit must not exceed"
+                    + " app.lab.cache.keys.max-limit");
+        }
+        requirePositive(keys.scanCount, "app.lab.cache.keys.scan-count");
+        requirePositive(keys.valueMaxBytes, "app.lab.cache.keys.value-max-bytes");
+        requirePositive(keys.resetScanCount, "app.lab.cache.keys.reset-scan-count");
+        requirePositive(keys.resetMaxKeys, "app.lab.cache.keys.reset-max-keys");
 
         if (penetration.mode == null || penetration.mode.trim().isEmpty()) {
             throw new IllegalStateException("Missing required configuration:"
@@ -154,6 +186,10 @@ public class LabCacheProperties {
         return state;
     }
 
+    public Keys getKeys() {
+        return keys;
+    }
+
     public Penetration getPenetration() {
         return penetration;
     }
@@ -166,6 +202,8 @@ public class LabCacheProperties {
     public static class Seed {
 
         private long productCount;
+        /** Upper bound of one POST /lab/cache/seed {"count":N} request. */
+        private long maxRequestCount = 10000L;
         private long startId;
         private long protectedMaxId;
         private long avalancheKeyCount;
@@ -179,6 +217,14 @@ public class LabCacheProperties {
 
         public long getProductCount() {
             return productCount;
+        }
+
+        public long getMaxRequestCount() {
+            return maxRequestCount;
+        }
+
+        public void setMaxRequestCount(long maxRequestCount) {
+            this.maxRequestCount = maxRequestCount;
         }
 
         public void setProductCount(long productCount) {
@@ -278,6 +324,102 @@ public class LabCacheProperties {
 
         public void setScanCount(long scanCount) {
             this.scanCount = scanCount;
+        }
+    }
+
+    /**
+     * The SCAN-only key browser ({@code GET /lab/cache/keys}) and the
+     * experiment reset ({@code POST /lab/cache/reset}).
+     *
+     * <p>{@code allowed-prefixes} is a closed allow-list: the endpoint must not
+     * become a generic keyspace dump, so any prefix outside this list is a 400.
+     * {@code max-limit} is the hard page cap, {@code scan-count} the Redis
+     * COUNT hint and {@code reset-max-keys} the per-call deletion bound that
+     * keeps reset fast on a 10k-key dataset.</p>
+     */
+    public static class Keys {
+
+        private String defaultPrefix;
+        private List<String> allowedPrefixes = new ArrayList<>();
+        private int defaultLimit;
+        private int maxLimit;
+        private long scanCount;
+        /** Bounded SCAN batches per page, so a sparse prefix still fills the page. */
+        private int scanBatches = 20;
+        private int valueMaxBytes;
+        private long resetScanCount;
+        private long resetMaxKeys;
+
+        public String getDefaultPrefix() {
+            return defaultPrefix;
+        }
+
+        public void setDefaultPrefix(String defaultPrefix) {
+            this.defaultPrefix = defaultPrefix;
+        }
+
+        public List<String> getAllowedPrefixes() {
+            return allowedPrefixes;
+        }
+
+        public void setAllowedPrefixes(List<String> allowedPrefixes) {
+            this.allowedPrefixes = allowedPrefixes;
+        }
+
+        public int getDefaultLimit() {
+            return defaultLimit;
+        }
+
+        public void setDefaultLimit(int defaultLimit) {
+            this.defaultLimit = defaultLimit;
+        }
+
+        public int getMaxLimit() {
+            return maxLimit;
+        }
+
+        public void setMaxLimit(int maxLimit) {
+            this.maxLimit = maxLimit;
+        }
+
+        public long getScanCount() {
+            return scanCount;
+        }
+
+        public void setScanCount(long scanCount) {
+            this.scanCount = scanCount;
+        }
+
+        public int getScanBatches() {
+            return scanBatches;
+        }
+
+        public void setScanBatches(int scanBatches) {
+            this.scanBatches = scanBatches;
+        }
+
+        public int getValueMaxBytes() {
+            return valueMaxBytes;
+        }
+
+        public void setValueMaxBytes(int valueMaxBytes) {
+            this.valueMaxBytes = valueMaxBytes;
+        }
+
+        public long getResetScanCount() {
+            return resetScanCount;
+        }
+
+        public void setResetScanCount(long resetScanCount) {
+            this.resetScanCount = resetScanCount;
+        }
+
+        public long getResetMaxKeys() {
+            return resetMaxKeys;
+        }
+
+        public void setResetMaxKeys(long resetMaxKeys) {
+            this.resetMaxKeys = resetMaxKeys;
         }
     }
 

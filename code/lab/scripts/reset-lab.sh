@@ -6,9 +6,10 @@
 #   RESET_BASELINE_STOCK=200 bash code/lab/scripts/reset-lab.sh --yes
 #
 # Scope (lab data only):
-#   - MySQL: truncate order_order; reset inventory_stock for every catalog
-#     product to RESET_BASELINE_STOCK (reserved=0). Flyway history and catalog
-#     seeds are untouched.
+#   - MySQL: truncate order_order; restore inventory_stock to the deterministic
+#     baseline available = MOD(product_id * 37, 501) (reserved=0) for every
+#     catalog product, or to the flat RESET_BASELINE_STOCK override when that
+#     variable is set. Flyway history and catalog seeds are untouched.
 #   - Redis: FLUSHDB on the lab Redis the stack actually runs (see the
 #     topology-resolution note below).
 #   - RabbitMQ: purge the seckill queue via the management API.
@@ -63,7 +64,15 @@ MYSQL_CONTAINER="${RESET_MYSQL_CONTAINER:-jl-mysql}"
 REDIS_CONTAINER="${RESET_REDIS_CONTAINER:-jl-redis}"
 RABBITMQ_CONTAINER="${RESET_RABBITMQ_CONTAINER:-jl-rabbitmq}"
 
-BASELINE_STOCK="${RESET_BASELINE_STOCK:-100}"
+BASELINE_STOCK="${RESET_BASELINE_STOCK:-}"
+# Default baseline shared with Flyway V4 and POST /lab/cache/reset:
+#   available = MOD(product_id * 37, 501), reserved = 0   (range 0..500)
+# Product 1 => 37, product 20 => 239, product 10000 => 262. An explicit
+# RESET_BASELINE_STOCK keeps the old flat-stock override for drills.
+STOCK_UPDATE_EXPR="${BASELINE_STOCK:-MOD(product_id * 37, 501)}"
+STOCK_INSERT_EXPR="${BASELINE_STOCK:-MOD(c.id * 37, 501)}"
+STOCK_BASELINE_LABEL="${BASELINE_STOCK:+flat ${BASELINE_STOCK}}"
+STOCK_BASELINE_LABEL="${STOCK_BASELINE_LABEL:-MOD(product_id * 37, 501)}"
 RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-seckill.order.queue}"
 RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://127.0.0.1:15672}"
 SECKILL_STOCK_KEY_PREFIX="${RESET_SECKILL_STOCK_KEY_PREFIX:-seckill:stock:}"
@@ -109,7 +118,8 @@ usage() {
 Usage: reset-lab.sh [--yes] [--dry-run]
 
 Reset the java-learn-lab data to a repeatable baseline:
-  truncate order_order, reset inventory_stock to RESET_BASELINE_STOCK,
+  truncate order_order, restore inventory_stock to available=MOD(product_id*37,501)
+  (reserved=0; 0..500, product 1 => 37, product 20 => 239),
   FLUSHDB the lab Redis, purge the seckill RabbitMQ queue, restart the app
   tier (app-1/2/3) and wait for it to become healthy.
 
@@ -118,7 +128,8 @@ Reset the java-learn-lab data to a repeatable baseline:
   -h, --help  Show this help.
 
 Environment (defaults):
-  RESET_BASELINE_STOCK=100          RESET_APP_SERVICES="app-1 app-2 app-3"
+  RESET_BASELINE_STOCK=<unset>      flat stock override (default: the formula above)
+  RESET_APP_SERVICES="app-1 app-2 app-3"
   RESET_MYSQL_SERVICE=mysql         RESET_MYSQL_CONTAINER=jl-mysql
   RESET_REDIS_SERVICE=redis         RESET_REDIS_CONTAINER=jl-redis
   RESET_RABBITMQ_SERVICE=rabbitmq   RESET_RABBITMQ_CONTAINER=jl-rabbitmq
@@ -176,8 +187,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! "$BASELINE_STOCK" =~ ^[1-9][0-9]*$ ]]; then
-  printf 'ERROR: RESET_BASELINE_STOCK must be a positive integer, got "%s".\n' \
+if [[ -n "$BASELINE_STOCK" && ! "$BASELINE_STOCK" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'ERROR: RESET_BASELINE_STOCK must be a positive integer when set, got "%s".\n' \
     "$BASELINE_STOCK" >&2
   exit 2
 fi
@@ -718,12 +729,12 @@ redis_dbsize="$(redis_cli dbsize | tr -d '\n' || true)"
 
 echo "Reset plan (project=$COMPOSE_PROJECT, env=$ENV_FILE)"
 echo "  1. stop app tier      : ${APP_SERVICES[*]}"
-echo "  2. MySQL              : TRUNCATE order_order; inventory_stock -> available=$BASELINE_STOCK, reserved=0"
+echo "  2. MySQL              : TRUNCATE order_order; inventory_stock -> available=${STOCK_BASELINE_LABEL}, reserved=0"
 echo "                          (topology=$MYSQL_TOPOLOGY, exec in $MYSQL_EXEC_CONTAINER, route=[$MYSQL_ROUTE_DESC])"
 echo "  3. Redis              : FLUSHDB on ${REDIS_TARGETS[*]} (verify on $REDIS_VERIFY_CONTAINER)"
 echo "  4. RabbitMQ           : purge queue \"$RABBITMQ_QUEUE\""
 echo "  5. start app tier     : ${APP_SERVICES[*]} (stock seeder repopulates Redis, toggles reset)"
-echo "  6. verify             : inventory min/max=$BASELINE_STOCK, reserved=0, orders=0,"
+echo "  6. verify             : inventory at ${STOCK_BASELINE_LABEL}, reserved=0, orders=0,"
 echo "                          redis ${SECKILL_STOCK_KEY_PREFIX}<id> for every product, queue empty, apps healthy"
 echo
 echo "Current state: catalog=$catalog_count inventory_rows=$inventory_rows" \
@@ -760,12 +771,12 @@ APP_RECOVERY_NEEDED=true
 compose stop --timeout "$COMPOSE_TIMEOUT_SECONDS" "${APP_SERVICES[@]}" >/dev/null
 
 # 2. MySQL: orders and stock only; Flyway history and catalog seeds stay.
-step "truncating order_order and resetting inventory_stock to $BASELINE_STOCK"
+step "truncating order_order and restoring inventory_stock to ${STOCK_BASELINE_LABEL}"
 mysql_reset_sql="
 TRUNCATE TABLE order_order;
-UPDATE inventory_stock SET available = ${BASELINE_STOCK}, reserved = 0;
+UPDATE inventory_stock SET available = ${STOCK_UPDATE_EXPR}, reserved = 0;
 INSERT INTO inventory_stock (product_id, available, reserved)
-SELECT c.id, ${BASELINE_STOCK}, 0
+SELECT c.id, ${STOCK_INSERT_EXPR}, 0
 FROM catalog_product c
 WHERE NOT EXISTS (SELECT 1 FROM inventory_stock s WHERE s.product_id = c.id);
 "
@@ -855,14 +866,27 @@ inventory_min="$(mysql_scalar 'SELECT MIN(available) FROM inventory_stock;')"
 inventory_max="$(mysql_scalar 'SELECT MAX(available) FROM inventory_stock;')"
 reserved_sum="$(mysql_scalar 'SELECT COALESCE(SUM(reserved), 0) FROM inventory_stock;')"
 order_rows="$(mysql_scalar 'SELECT COUNT(*) FROM order_order;')"
-product_ids="$(mysql_scalar 'SELECT GROUP_CONCAT(id ORDER BY id) FROM catalog_product;')"
+inventory_pairs="$(mysql_exec 'SELECT id, available FROM inventory_stock ORDER BY id' \
+  2>/dev/null | tr -d '\r' || true)"
 
 verify_problems=()
 if [[ "$inventory_rows" != "$catalog_count" || "$inventory_rows" == "0" ]]; then
   verify_problems+=("inventory rows=$inventory_rows, expected one per catalog product ($catalog_count)")
 fi
-if [[ "$inventory_min" != "$BASELINE_STOCK" || "$inventory_max" != "$BASELINE_STOCK" ]]; then
-  verify_problems+=("inventory available min=$inventory_min max=$inventory_max, expected $BASELINE_STOCK")
+if [[ -n "$BASELINE_STOCK" ]]; then
+  if [[ "$inventory_min" != "$BASELINE_STOCK" || "$inventory_max" != "$BASELINE_STOCK" ]]; then
+    verify_problems+=("inventory available min=$inventory_min max=$inventory_max, expected flat $BASELINE_STOCK")
+  fi
+else
+  formula_mismatch="$(mysql_scalar \
+    'SELECT COUNT(*) FROM inventory_stock WHERE available <> MOD(product_id * 37, 501);')"
+  if [[ "$formula_mismatch" != "0" ]]; then
+    verify_problems+=("inventory rows=$formula_mismatch do not match available=MOD(product_id*37,501)")
+  fi
+  if [[ ! "$inventory_min" =~ ^[0-9]+$ || ! "$inventory_max" =~ ^[0-9]+$ ]] \
+    || (( inventory_min < 0 || inventory_max > 500 )); then
+    verify_problems+=("inventory available min=$inventory_min max=$inventory_max, expected 0..500")
+  fi
 fi
 if [[ "$reserved_sum" != "0" ]]; then
   verify_problems+=("inventory reserved sum=$reserved_sum, expected 0")
@@ -872,34 +896,57 @@ if [[ "$order_rows" != "0" ]]; then
 fi
 
 seeded_count=0
-redis_values=""
+total_products=0
 product_id_array=()
-if [[ -n "$product_ids" ]]; then
-  IFS=',' read -r -a product_id_array <<<"$product_ids"
-  redis_keys=()
-  for product_id in "${product_id_array[@]}"; do
-    redis_keys+=("${SECKILL_STOCK_KEY_PREFIX}${product_id}")
-  done
+expected_stock_array=()
+if [[ -n "$inventory_pairs" ]]; then
+  while IFS=$'\t' read -r product_id expected_stock; do
+    [[ -z "$product_id" ]] && continue
+    product_id_array+=("$product_id")
+    expected_stock_array+=("$expected_stock")
+  done <<<"$inventory_pairs"
+  total_products=${#product_id_array[@]}
+fi
+
+# The seeder runs after the web server is up, so poll. mget is chunked: 10,000
+# keys would otherwise exceed one argv and any single-command budget.
+if (( total_products > 0 )); then
+  redis_chunk_size=200
   for attempt in $(seq 1 "$VERIFY_RETRIES"); do
-    redis_values="$(redis_cli --raw mget "${redis_keys[@]}" || true)"
     seeded_count=0
-    while IFS= read -r value; do
-      if [[ "$value" == "$BASELINE_STOCK" ]]; then
-        seeded_count=$((seeded_count + 1))
+    for ((from = 0; from < total_products; from += redis_chunk_size)); do
+      to=$((from + redis_chunk_size))
+      if (( to > total_products )); then
+        to=$total_products
       fi
-    done <<<"$redis_values"
-    if (( seeded_count == ${#redis_keys[@]} )); then
+      redis_keys=()
+      redis_expected=()
+      for ((index = from; index < to; index++)); do
+        redis_keys+=("${SECKILL_STOCK_KEY_PREFIX}${product_id_array[index]}")
+        redis_expected+=("${expected_stock_array[index]}")
+      done
+      redis_values="$(redis_cli --raw mget "${redis_keys[@]}" || true)"
+      index=0
+      while IFS= read -r value; do
+        if (( index < ${#redis_expected[@]} )) \
+          && [[ "$value" == "${redis_expected[index]}" ]]; then
+          seeded_count=$((seeded_count + 1))
+        fi
+        index=$((index + 1))
+      done <<<"$redis_values"
+    done
+    if (( seeded_count == total_products )); then
       break
     fi
     if (( attempt < VERIFY_RETRIES )); then
       sleep "$VERIFY_INTERVAL_SECONDS"
     fi
   done
-  if (( seeded_count != ${#redis_keys[@]} )); then
-    verify_problems+=("redis has $seeded_count/${#redis_keys[@]} ${SECKILL_STOCK_KEY_PREFIX}<id> keys at $BASELINE_STOCK")
+  if (( seeded_count != total_products )); then
+    verify_problems+=("redis has $seeded_count/$total_products ${SECKILL_STOCK_KEY_PREFIX}<id> keys at the baseline stock")
   fi
 else
-  verify_problems+=("catalog_product returned no product ids")
+  verify_problems+=("catalog_product/inventory_stock returned no product ids")
 fi
 
 queue_ready="$(queue_field messages_ready)"
@@ -921,11 +968,11 @@ echo "RESET SUMMARY"
 echo "  project        : $COMPOSE_PROJECT"
 echo "  mysql target   : $MYSQL_EXEC_CONTAINER ($MYSQL_TOPOLOGY) via [$MYSQL_ROUTE_DESC]"
 echo "  redis targets  : ${REDIS_TARGETS[*]} (verified on $REDIS_VERIFY_CONTAINER)"
-echo "  baseline stock : $BASELINE_STOCK"
+echo "  baseline stock : $STOCK_BASELINE_LABEL"
 echo "  catalog        : $catalog_count products"
 echo "  inventory      : rows=$inventory_rows min=$inventory_min max=$inventory_max reserved_sum=$reserved_sum"
 echo "  orders         : $order_rows"
-echo "  redis stock    : $seeded_count/${#product_id_array[@]} keys at $BASELINE_STOCK"
+echo "  redis stock    : $seeded_count/${total_products} keys at the baseline stock"
 echo "  queue          : $RABBITMQ_QUEUE ready=$queue_ready unacked=$queue_unacked"
 echo "  app health     : ${health_line% }"
 echo "  nginx health   : $nginx_health"
@@ -941,4 +988,4 @@ if (( ${#verify_problems[@]} > 0 )); then
 fi
 
 echo
-echo "RESET PASSED: baseline restored (stock=$BASELINE_STOCK, orders=0, queue empty, apps healthy)."
+echo "RESET PASSED: baseline restored (stock=$STOCK_BASELINE_LABEL, orders=0, queue empty, apps healthy)."

@@ -61,6 +61,7 @@ public class RunLifecycleService {
     private final RunPrecheckGate precheck;
     private final RunLifecycleHook hook;
     private final FaultScheduler faultSchedule;
+    private final RunStartedHook runStartedHook;
     private final Clock clock;
 
     public RunLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
@@ -82,6 +83,22 @@ public class RunLifecycleService {
                                EnvLockService envLock, OperationService operations,
                                RunPrecheckGate precheck, RunLifecycleHook hook,
                                FaultScheduler faultSchedule, Clock clock) {
+        this(properties, bootstrap, repository, writer, envLock, operations, precheck, hook,
+                faultSchedule, RunStartedHook.NONE, clock);
+    }
+
+    /**
+     * B3-04 canonical constructor: the run-started hook captures the
+     * reconciliation baseline after READY→RUNNING. It is best effort and must
+     * never change the run status; the shorter overloads keep direct
+     * construction cheap for ledger-only tests and tools.
+     */
+    public RunLifecycleService(LedgerProperties properties, LedgerBootstrap bootstrap,
+                               RunLedgerRepository repository, LedgerWriter writer,
+                               EnvLockService envLock, OperationService operations,
+                               RunPrecheckGate precheck, RunLifecycleHook hook,
+                               FaultScheduler faultSchedule, RunStartedHook runStartedHook,
+                               Clock clock) {
         this.properties = properties;
         this.bootstrap = bootstrap;
         this.repository = repository;
@@ -91,6 +108,7 @@ public class RunLifecycleService {
         this.precheck = precheck;
         this.hook = hook == null ? RunLifecycleHook.none() : hook;
         this.faultSchedule = faultSchedule == null ? FaultScheduler.NONE : faultSchedule;
+        this.runStartedHook = runStartedHook == null ? RunStartedHook.NONE : runStartedHook;
         this.clock = clock;
     }
 
@@ -128,6 +146,15 @@ public class RunLifecycleService {
             // path (k6 stopped, run FAILED) instead of silently losing faults.
             int faultScheduleArmed = faultSchedule.arm(runId, clock.instant());
             transition(runId, RunStatus.READY, RunStatus.RUNNING, "start", null);
+            // B3-04: capture the business baseline after the run is RUNNING.
+            // Best effort by contract - a reconciliation failure never fails
+            // the start (it makes the later verdict DEGRADED).
+            try {
+                runStartedHook.onStarted(runId);
+            } catch (RuntimeException e) {
+                log.warn("Run-started hook for {} failed: {}", runId,
+                        AuditSanitizer.describe(e));
+            }
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("runStatus", RunStatus.RUNNING.name());
             after.put("faultScheduleArmed", faultScheduleArmed);

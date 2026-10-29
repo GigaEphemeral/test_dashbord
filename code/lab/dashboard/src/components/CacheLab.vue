@@ -29,6 +29,36 @@ const GRAFANA_URL = (import.meta.env.VITE_LAB_GRAFANA_URL || 'http://127.0.0.1:3
 // D10 is opened in a new tab; the console never embeds an iframe.
 const GRAFANA_D10 = `${GRAFANA_URL}/d/ha-d10`
 
+// The L1 switch is B3-01's own per-instance contract (GET/POST /lab/cache/l1).
+// It stays local to this component instead of widening the shared api.js.
+const CACHE_BASE = '/lab-api/chaos/app'
+
+function l1Url(instanceName) {
+  return `${CACHE_BASE}/${encodeURIComponent(instanceName)}/lab/cache/l1`
+}
+
+async function readL1Response(response) {
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(payload?.message || `HTTP ${response.status}`)
+  }
+  return payload?.data ?? null
+}
+
+async function fetchCacheL1(token, instanceName) {
+  return readL1Response(await fetch(l1Url(instanceName), {
+    headers: { 'X-Lab-Token': token }
+  }))
+}
+
+async function updateCacheL1(token, instanceName, enabled) {
+  return readL1Response(await fetch(l1Url(instanceName), {
+    method: 'POST',
+    headers: { 'X-Lab-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  }))
+}
+
 /** Keys are the public contract of CacheDefenseMode; labels are console-only. */
 const MODES = [
   { key: 'off', label: 'off · 无防护' },
@@ -44,6 +74,7 @@ const MODE_KEYS = MODES.map((mode) => mode.key)
 
 const instance = ref(INSTANCES[0] || 'app-1')
 const state = ref(null)
+const l1State = ref(null)
 const preheat = ref(null)
 const selectedMode = ref('')
 const seedResult = ref(null)
@@ -54,6 +85,16 @@ const error = ref('')
 const currentMode = computed(() => state.value?.defense?.mode || '')
 const cacheToggle = computed(() => Boolean(state.value?.defense?.cacheToggleEnabled))
 const productCount = computed(() => Number(state.value?.dataset?.productCount) || 1000)
+// /lab/cache/state carries l1Enabled so the page can render "不适用" without a
+// second request; the dedicated L1 reply is only needed for the per-cache sizes.
+const l1Enabled = computed(() => {
+  if (typeof state.value?.l1Enabled === 'boolean') return state.value.l1Enabled
+  if (typeof l1State.value?.enabled === 'boolean') return l1State.value.enabled
+  return true
+})
+const l1Caches = computed(() => (Array.isArray(l1State.value?.caches) ? l1State.value.caches : []))
+const l1EntryCount = computed(() => l1Caches.value
+  .reduce((total, cache) => total + (Number(cache.size) || 0), 0))
 
 const defense = computed(() => state.value?.defense || {})
 const breakdown = computed(() => state.value?.breakdown || {})
@@ -177,15 +218,21 @@ async function refresh({ quiet = false } = {}) {
   const target = instance.value
   error.value = ''
   try {
-    const [nextState, nextPreheat] = await Promise.all([
+    const [nextState, nextPreheat, nextL1] = await Promise.all([
       fetchCacheState(props.token, target),
-      fetchCachePreheat(props.token, target)
+      fetchCachePreheat(props.token, target),
+      // The old app image may not have B3-01 yet; a missing L1 endpoint must
+      // not break the state/preheat page the operator is already using.
+      fetchCacheL1(props.token, target).catch(() => null)
     ])
     // A slow reply for a previously selected instance must not overwrite the
     // state of the instance the operator is looking at now.
     if (target !== instance.value) return
     state.value = nextState
     preheat.value = nextPreheat
+    if (nextL1) {
+      l1State.value = nextL1
+    }
     if (!selectedMode.value && nextState?.defense?.mode) {
       selectedMode.value = nextState.defense.mode
     }
@@ -216,6 +263,29 @@ async function applyMode() {
         ...state.value,
         defense: { ...state.value.defense, mode: reply?.mode || selectedMode.value }
       }
+    }
+    await refresh({ quiet: true })
+  } catch (err) {
+    error.value = describeError(err)
+  } finally {
+    busy.value = ''
+  }
+}
+
+/** B3-01: disable clears this instance's L1; enable starts from an empty one. */
+async function toggleL1() {
+  if (!props.token) {
+    error.value = '请先在上方填写访问令牌。'
+    return
+  }
+  error.value = ''
+  busy.value = 'l1'
+  const target = !l1Enabled.value
+  try {
+    const reply = await updateCacheL1(props.token, instance.value, target)
+    l1State.value = reply
+    if (state.value) {
+      state.value = { ...state.value, l1Enabled: reply?.enabled ?? target }
     }
     await refresh({ quiet: true })
   } catch (err) {
@@ -288,6 +358,7 @@ watch([() => props.token, instance], () => {
   selectedMode.value = ''
   seedResult.value = null
   preheat.value = null
+  l1State.value = null
   state.value = null
   if (props.active) {
     refresh()
@@ -316,6 +387,21 @@ onBeforeUnmount(stopPolling)
         <span class="status-label">缓存开关</span>
         <span class="pill" :class="cacheToggle ? 'ok' : 'muted'" data-testid="cache-toggle">
           {{ cacheToggle ? 'on' : 'off' }}
+        </span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">L1 开关</span>
+        <button
+          type="button"
+          class="btn ghost"
+          data-testid="cache-l1-toggle"
+          :disabled="Boolean(busy) || seeding || !token"
+          @click="toggleL1"
+        >
+          {{ busy === 'l1' ? '切换中…' : (l1Enabled ? '关闭 L1' : '开启 L1') }}
+        </button>
+        <span class="pill" :class="l1Enabled ? 'ok' : 'muted'" data-testid="cache-l1-state">
+          {{ l1Enabled ? '启用' : '已关闭' }}
         </span>
       </div>
       <div class="status-item">
@@ -383,6 +469,46 @@ onBeforeUnmount(stopPolling)
           <span>选择 <code>{{ selectedMode || '—' }}</code></span>
           <span v-if="selectedMode === currentMode" class="badge ok">无需切换</span>
         </div>
+      </section>
+
+      <section class="card" data-testid="cache-l1-card">
+        <div class="card-head">
+          <h2>L1 本地缓存（Caffeine）</h2>
+          <span class="hint">GET/POST /lab/cache/l1 · 5s 轮询</span>
+        </div>
+        <p class="hint">
+          关闭=绕过 L1 并清空本地条目，命中率显示“不适用”；每实例独立。
+          L2/Redis 不受影响，写请求仍会填充 L2。
+        </p>
+        <dl class="cache-facts">
+          <div class="cache-fact">
+            <dt>enabled</dt>
+            <dd>
+              <span data-testid="cache-l1-enabled">{{ l1Enabled ? 'true · 启用' : 'false · 已关闭' }}</span>
+              <span> · 实例 <code>{{ l1State?.instance || instance }}</code></span>
+            </dd>
+          </div>
+          <div class="cache-fact">
+            <dt>cacheCount / L1 条目</dt>
+            <dd>{{ num(l1State?.cacheCount ?? l1Caches.length) }} / {{ num(l1EntryCount) }}</dd>
+          </div>
+          <div class="cache-fact">
+            <dt>命中率</dt>
+            <dd data-testid="cache-l1-hit-ratio">
+              {{ l1Enabled ? '见 Grafana D10（cache_l1_hit_ratio）' : '不适用' }}
+            </dd>
+          </div>
+          <div class="cache-fact">
+            <dt>每实例说明</dt>
+            <dd>开关只写当前选中的实例，另外两个实例保持各自状态。</dd>
+          </div>
+        </dl>
+        <div v-if="l1Caches.length" class="cache-seed-result" data-testid="cache-l1-caches">
+          <span v-for="cache in l1Caches" :key="cache.name" class="badge">
+            {{ cache.name }} · {{ num(cache.size) }}
+          </span>
+        </div>
+        <p v-else class="hint">尚未读取到缓存实例列表。</p>
       </section>
     </div>
 

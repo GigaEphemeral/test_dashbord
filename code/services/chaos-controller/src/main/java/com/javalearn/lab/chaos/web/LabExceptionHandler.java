@@ -31,6 +31,7 @@ import com.javalearn.lab.chaos.error.OperationCloseConflictException;
 import com.javalearn.lab.chaos.error.OperationNotFoundException;
 import com.javalearn.lab.chaos.error.PrecheckBlockedException;
 import com.javalearn.lab.chaos.error.ProbeTargetProtectedException;
+import com.javalearn.lab.chaos.error.ReconciliationNotFoundException;
 import com.javalearn.lab.chaos.error.ScenarioNotFoundException;
 import com.javalearn.lab.chaos.error.ToxiproxyConflictException;
 import com.javalearn.lab.chaos.error.ToxiproxyNotFoundException;
@@ -284,6 +285,18 @@ public class LabExceptionHandler {
 
     @ExceptionHandler(LedgerRunNotFoundException.class)
     public ResponseEntity<Result<Void>> handleLedgerRunNotFound(LedgerRunNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
+    }
+
+    /**
+     * B3-04: the run exists but was never reconciled. 404 with a
+     * {@code NO_DATA:} message so the console can say "尚未对账" instead of
+     * "run 不存在" (which is the LedgerRunNotFoundException path above).
+     */
+    @ExceptionHandler(ReconciliationNotFoundException.class)
+    public ResponseEntity<Result<Void>> handleReconciliationNotFound(
+            ReconciliationNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Result.failure(CommonErrorCode.NOT_FOUND, ex.getMessage()));
     }

@@ -628,3 +628,68 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b3-l1-switch
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B3-01-cache-experiments.md
+  statement: "B3-01：Caffeine L1 有独立开关，关闭即清空本地条目并绕过 L1；L2 不变；GET/POST /lab/cache/l1"
+  verify:
+    kind: shell
+    command: "grep -q setL1Enabled code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/catalog/cache/TwoLevelCache.java && grep -q '/lab/cache/l1' code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/lab/api/LabCacheL1Controller.java && grep -q cache-l1-toggle code/lab/dashboard/src/components/CacheLab.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-catalog-10000
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B3-01-cache-experiments.md
+  statement: "B3-02：Flyway V4 生成 10,000 条确定性商品，库存公式 MOD(id*37,501)，reset-lab 与 app 重置共用同一公式"
+  verify:
+    kind: shell
+    command: "test -f code/services/seckill-app-jdk21/src/main/resources/db/migration/V4__catalog_baseline_10000.sql && grep -q VERIFY_CATALOG_BASELINE_PRODUCTS code/lab/scripts/verify.sh && grep -q 'MOD(product_id \* 37, 501)' code/lab/scripts/reset-lab.sh"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-key-browser
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B3-01-cache-experiments.md
+  statement: "B3-02：GET /lab/cache/keys 用 SCAN 游标分页并有前缀白名单；POST /lab/cache/key 返回 L1/L2/TTL；POST /lab/cache/reset 支持只清缓存键或含业务基线"
+  verify:
+    kind: shell
+    command: "grep -q '/keys' code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/lab/api/LabCacheKeysController.java && grep -q scanKeys code/services/seckill-app-jdk21/src/main/java/com/javalearn/lab/seckill/lab/cache/CacheExperimentDataService.java && grep -q cache-keys-load code/lab/dashboard/src/components/CacheKeysPanel.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-ab-template
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B3-01-cache-experiments.md
+  statement: "B3-03：A/B 对照模板固定 A=L1 开+预热、B=L1 关并清空，同一流量与商品参数，差值来自 B1 聚合层"
+  verify:
+    kind: shell
+    command: "test -f code/lab/dashboard/src/components/CacheABPanel.vue && grep -q runCachePreheat code/lab/dashboard/src/components/CacheABPanel.vue && grep -q 'ab-diff' code/lab/dashboard/src/components/CacheABPanel.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
+
+- id: b3-reconciliation
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B3-01-cache-experiments.md
+  statement: "B3-04：run 级业务对账 7 项（订单增量/库存扣减/非负/重复订单/重复幂等键/超卖/MQ 排空），未接线为 DEGRADED"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/reconcile/ReconciliationService.java && grep -q 'reconcile' code/lab/dashboard/src/api.js && grep -q reconcile-run code/lab/dashboard/src/components/RunReconciliation.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

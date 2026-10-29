@@ -39,7 +39,7 @@ class LabCachePropertiesTest {
         assertThat(stringOf(seed, "product-count")).isEqualTo("${LAB_CACHE_SEED_PRODUCT_COUNT:1000}");
         assertThat(stringOf(seed, "start-id")).isEqualTo("${LAB_CACHE_SEED_START_ID:90000}");
         assertThat(stringOf(seed, "protected-max-id"))
-                .isEqualTo("${LAB_CACHE_SEED_PROTECTED_MAX_ID:1000}");
+                .isEqualTo("${LAB_CACHE_SEED_PROTECTED_MAX_ID:10000}");
         assertThat(stringOf(seed, "avalanche-key-count"))
                 .isEqualTo("${LAB_CACHE_SEED_AVALANCHE_KEY_COUNT:200}");
         assertThat(stringOf(seed, "avalanche-ttl-seconds"))
@@ -56,6 +56,22 @@ class LabCachePropertiesTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> state = (Map<String, Object>) cache.get("state");
         assertThat(stringOf(state, "scan-count")).isEqualTo("${LAB_CACHE_STATE_SCAN_COUNT:500}");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> keys = (Map<String, Object>) cache.get("keys");
+        assertThat(stringOf(keys, "default-prefix"))
+                .isEqualTo("${LAB_CACHE_KEYS_DEFAULT_PREFIX:cache:product:}");
+        assertThat(stringOf(keys, "allowed-prefixes"))
+                .isEqualTo("${LAB_CACHE_KEYS_ALLOWED_PREFIXES:cache:product:}");
+        assertThat(stringOf(keys, "default-limit")).isEqualTo("${LAB_CACHE_KEYS_DEFAULT_LIMIT:100}");
+        assertThat(stringOf(keys, "max-limit")).isEqualTo("${LAB_CACHE_KEYS_MAX_LIMIT:1000}");
+        assertThat(stringOf(keys, "scan-count")).isEqualTo("${LAB_CACHE_KEYS_SCAN_COUNT:500}");
+        assertThat(stringOf(keys, "value-max-bytes"))
+                .isEqualTo("${LAB_CACHE_KEYS_VALUE_MAX_BYTES:2048}");
+        assertThat(stringOf(keys, "reset-scan-count"))
+                .isEqualTo("${LAB_CACHE_KEYS_RESET_SCAN_COUNT:1000}");
+        assertThat(stringOf(keys, "reset-max-keys"))
+                .isEqualTo("${LAB_CACHE_KEYS_RESET_MAX_KEYS:50000}");
 
         @SuppressWarnings("unchecked")
         Map<String, Object> penetration = (Map<String, Object>) cache.get("penetration");

@@ -132,9 +132,12 @@ app:
       seed:
         # 1000 experiment products, ids 90000..90999 by default.
         product-count: ${LAB_CACHE_SEED_PRODUCT_COUNT:1000}
+        # Upper bound of one POST /lab/cache/seed {"count":N} request (B3-02).
+        max-request-count: ${LAB_CACHE_SEED_MAX_REQUEST_COUNT:10000}
         start-id: ${LAB_CACHE_SEED_START_ID:90000}
-        # Highest id that belongs to the demo baseline; seeding must start above it.
-        protected-max-id: ${LAB_CACHE_SEED_PROTECTED_MAX_ID:1000}
+        # Highest id that belongs to the built-in demo baseline (V4 generates
+        # ids 21..10000); seeding must start above it.
+        protected-max-id: ${LAB_CACHE_SEED_PROTECTED_MAX_ID:10000}
         # M4-2/M4-3 avalanche set: this many keys are warmed with ONE identical
         # TTL so they expire in the same second.
         avalanche-key-count: ${LAB_CACHE_SEED_AVALANCHE_KEY_COUNT:200}
@@ -152,6 +155,21 @@ app:
       state:
         # Redis SCAN COUNT hint used by GET /lab/cache/state to count live keys.
         scan-count: ${LAB_CACHE_STATE_SCAN_COUNT:500}
+      # SCAN-only key browser (GET /lab/cache/keys) and experiment reset
+      # (POST /lab/cache/reset). The prefix allow-list is closed so the endpoint
+      # can never dump the whole keyspace; max-limit is the hard page cap and
+      # reset-max-keys bounds one destructive call on the 10k dataset.
+      keys:
+        default-prefix: ${LAB_CACHE_KEYS_DEFAULT_PREFIX:cache:product:}
+        allowed-prefixes: ${LAB_CACHE_KEYS_ALLOWED_PREFIXES:cache:product:}
+        default-limit: ${LAB_CACHE_KEYS_DEFAULT_LIMIT:100}
+        max-limit: ${LAB_CACHE_KEYS_MAX_LIMIT:1000}
+        scan-count: ${LAB_CACHE_KEYS_SCAN_COUNT:500}
+        # Bounded batches per page so a sparse prefix still fills the page.
+        scan-batches: ${LAB_CACHE_KEYS_SCAN_BATCHES:20}
+        value-max-bytes: ${LAB_CACHE_KEYS_VALUE_MAX_BYTES:2048}
+        reset-scan-count: ${LAB_CACHE_KEYS_RESET_SCAN_COUNT:1000}
+        reset-max-keys: ${LAB_CACHE_KEYS_RESET_MAX_KEYS:50000}
       # TwoLevelCache's own Redis L2 write side (Stage2 B0-04). These three were
       # compile-time constants of TwoLevelCache (L2_TTL = 5 minutes,
       # KEY_PREFIX = "cache:", clear() SCAN count 500); they are configuration

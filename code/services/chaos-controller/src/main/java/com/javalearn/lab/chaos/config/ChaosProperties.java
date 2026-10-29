@@ -186,7 +186,7 @@ public class ChaosProperties {
         private int connectTimeoutSeconds = 2;
 
         /** Whole-request timeout for one forwarded call. */
-        private int requestTimeoutSeconds = 10;
+        private int requestTimeoutSeconds = 30;
 
         /** Upper bound for the forwarded request body (the fault JSON is tiny). */
         private int maxRequestBytes = 8192;

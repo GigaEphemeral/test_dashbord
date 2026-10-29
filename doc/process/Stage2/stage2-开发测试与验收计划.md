@@ -39,6 +39,9 @@
 > **B3-00 现行基线（2026-10-29，交互对齐实现）**：reactor **1280**（chaos 725、app 469、jdk8 59、core 13、
 > platform 14）、console-smoke **132/0**、k6 node **113**、claims **47**、verify 109/1（smoke 7/7 为 B2 基线，本步未重跑）。
 > 真机证据与缺口见 `step-S2-B3-00a-interaction-alignment-implementation.md`。
+> **B3 批次基线（2026-10-29，B3-01..04 实现）**：reactor **1337**（chaos 756、app 495、jdk8 59、core 13、platform 14）、console-smoke **138/0**、
+> k6 node **113**、claims **52**、verify 109/1、smoke 7/7。真机：10,000 商品基线、L1 三实例独立、SCAN 键分页/单键详情/
+> 重置、A/B 一对、对账 7 项 PASS。交接见 `step-S2-B3-01-cache-experiments.md`。
 
 规约要点（每一步都适用）：
 
@@ -261,6 +264,10 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 > 闸门见 §0；交接 `step-S2-B3-00a-interaction-alignment-implementation.md`；独立审核随 B3 收口执行。
 
 ### B3-01 独立 Caffeine L1 开关（含关闭语义）
+> **实现状态（2026-10-29）：已完成。** `TwoLevelCache` 增加每实例 `AtomicBoolean` 开关、关闭即清空本地条目并绕过
+> L1 读写（L2/Redis 不变），新增 `GET/POST /lab/cache/l1` 与 `cache_l1_enabled` gauge；CacheLab 页有开关与“不适用”提示。
+> 真机：app-1 关闭后 app-2 仍启用，键详情 `l1Present=false / l2Present=true`。测试见批次交接。
+
 
 - 开发：`off` = 绕过 L1 读写并清空本地条目；每实例独立；纳入六开关体系或独立配置 API（按现有风格）；
   状态回读。
@@ -268,6 +275,12 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 - 验收：A04 前半；UI 显示"已关闭/不适用"。
 
 ### B3-02 数据播种目标规模 + SCAN 键查询 + 单键详情
+> **实现状态（2026-10-29）：已完成。** Flyway V4 生成 10,000 条确定性商品（库存 `MOD(id*37,501)`，0–500；
+> 商品 1=37、20=239、10000=262），`reset-lab.sh` 与 `POST /lab/cache/reset` 共用同一公式；`POST /lab/cache/seed`
+> 支持 `{"count":N}`（上限外置 10000，多行 INSERT，约 7s）；`GET /lab/cache/keys` 为 SCAN 游标分页（前缀白名单、
+> 有界批量补齐、limit 上限 1000）；`POST /lab/cache/key` 返回 L1/L2/TTL/截断值；`POST /lab/cache/reset` 支持只清缓存键
+> 或同时恢复业务基线。verify 断言 10000 条基线与 Flyway 1–4 已同步。CacheKeysPanel 挂在“实验工具”标签。
+
 
 - 开发：DB 内置基础商品数据（已确认 #3）：Flyway/初始化脚本按**固定 seed 确定性生成 10,000 条**，
   库存随 seed 随机、每次重置相同；数量与 seed 外置配置（默认 10000/固定种子）。已确认（2026-10-28）：
@@ -279,6 +292,10 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 - 验收：计数口径按方案 §5.2（业务前缀、估算值标注、每实例分开）。
 
 ### B3-03 A/B 公平对照流程
+> **实现状态（2026-10-29）：已完成。** Benchmark 页新增 `CacheABPanel`：A=L1 开+逐实例预热，B=L1 关（显示清空条目数），
+> 同一 load 参数/商品范围/实例集合/JVM 参数；自动创建、预检查、启动、收盘并用 B1 聚合层生成 9 项差值表；结束自动恢复 L1。
+> 真机跑通一对 A/B（run-20261029-003/004，L1 清空 21/23/21 条）。
+
 
 - 开发：对照模板固化（A：L1 开 + L2 开，B：L1 关 + L2 开；同数据集/热点比例/VU/时长/实例数/JVM 参数；
   A 预热、B 清空确认）；差值报告接 B1 聚合层。C/D（Redis 故障/两级不可用）与"正常关闭 L2"用不同实验标签；
@@ -288,6 +305,11 @@ B2 收口交接：`step-S2-B2-00-closure.md`。
 - 验收：A04 完整口径。
 
 ### B3-04 业务对账器
+> **实现状态（2026-10-29）：已完成。** 控制器新增只读业务库快照与 `POST /lab/runs/{id}/reconcile` /
+> `GET /lab/runs/{id}/reconciliation`：7 项检查（订单增量/库存扣减/非负/重复订单/重复幂等键/超卖计数/MQ 排空），
+> PASS 仅当全部 PASS，未接线/不可达为 DEGRADED；run 启动时抓基线（best effort），结果写 `lab_run_check`。
+> 真机：0 流量 run PASS；smoke 新增 4 单后 ordersDelta=4、stockDecrement=4 仍 PASS。RunLedger 详情挂 RunReconciliation。
+
 
 - 开发：按方案 §10.9 八步实现只读 SQL/API 对账（订单新增量、库存扣减、超卖、重复订单、幂等、MQ 排空限时判定）；
   性能阈值与业务对账分别判定，任一未接线 → `DEGRADED`；失败附证据（实际/预期/差值/样本/时间）。
@@ -462,5 +484,6 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v1.6：B3-01..04 实现——独立 L1 开关、10,000 商品基线 + SCAN 键浏览/单键/重置、A/B 对照面板、业务对账；§0 记录 B3 批次基线 |
 | 2026-10-29 | v1.5：B3-00 交互对齐实现完成——V3 台账字段与归档/删除、节点门禁、故障时间线（manual=-1 手动保持）、load 商品采样、6 分区控制台/7 步向导/监控时间轴/实验记录清理；§0 记录 B3-00 基线，B4 应用重启仍禁用 |
 | 2026-10-28 | v1.3：B0 收口——§0 闸门表加「B0 收口基线（现行）」列（reactor 851 / app 469 / chaos 296；console-smoke 42 未重跑并标注原因）；§1 顶部登记收口状态与真机台账指针；顺延项（cursor E2E、db-ha 真 `--yes`、failure-container-check 细节）在 `b0-live-verification.md` 登记 |

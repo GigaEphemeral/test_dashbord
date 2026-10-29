@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import MetricCards from './MetricCards.vue'
+import RunReconciliation from './RunReconciliation.vue'
 import {
   archiveRun,
   closeOperation,
@@ -1482,6 +1483,14 @@ onBeforeUnmount(() => {
         <pre class="ledger-json k6-log-view" data-testid="k6-log-view">{{ k6LogText }}</pre>
         <p v-if="k6ReportError" class="hint" data-testid="k6-report-error">{{ k6ReportError }}</p>
       </section>
+
+      <RunReconciliation
+        v-if="detail?.run"
+        :token="token"
+        :run-id="detail.run.runId"
+        :active="active"
+        :sync-tick="syncTick"
+      />
 
       <section class="card" data-testid="run-precheck">
         <div class="card-head">

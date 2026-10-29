@@ -101,6 +101,38 @@ lab:
     thread-name: ${LAB_FAULT_SCHEDULE_THREAD_NAME:fault-schedule}
     pool-size: ${LAB_FAULT_SCHEDULE_POOL_SIZE:2}
 
+  # Stage2 B3-04 run-scoped business reconciliation: read-only aggregate SQL
+  # against the business `seckill` schema (standalone mysql:3306; db-ha through
+  # mysql-router:6446) plus a RabbitMQ management probe. A baseline snapshot is
+  # captured after READY→RUNNING; POST /lab/runs/{runId}/reconcile compares
+  # against it. Unwired/unreachable probes are DEGRADED, never 0. Passwords
+  # never appear in a URL and are never logged.
+  reconcile:
+    enabled: ${LAB_RECONCILE_ENABLED:true}
+    mysql-mode: ${LAB_RECONCILE_MYSQL_MODE:${MYSQL_MODE:standalone}}
+    # Blank uses the mode-based URL below; set this to pin one business URL.
+    business-url: "${LAB_RECONCILE_BUSINESS_URL:}"
+    standalone-url: "${LAB_RECONCILE_STANDALONE_URL:jdbc:mysql://${MYSQL_HOST:mysql}:3306/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+    router-url: "${LAB_RECONCILE_ROUTER_URL:jdbc:mysql://${MYSQL_ROUTER_HOST:mysql-router}:6446/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+    schema: ${LAB_RECONCILE_SCHEMA:seckill}
+    # Business account created by the stack's MySQL init; read-only queries only.
+    user: ${LAB_RECONCILE_BUSINESS_USER:${MYSQL_USER:seckill}}
+    password: "${LAB_RECONCILE_BUSINESS_PASSWORD:${MYSQL_PASSWORD:seckill}}"
+    # Per-statement JDBC timeout and bounded sample size.
+    query-timeout-seconds: ${LAB_RECONCILE_QUERY_TIMEOUT_SECONDS:5}
+    max-sample-rows: ${LAB_RECONCILE_MAX_SAMPLE_ROWS:20}
+    # Queue drain: total budget, per-request timeout and poll interval.
+    mq-drain-timeout-seconds: ${LAB_RECONCILE_MQ_DRAIN_TIMEOUT_SECONDS:10}
+    mq-request-timeout-seconds: ${LAB_RECONCILE_MQ_REQUEST_TIMEOUT_SECONDS:2}
+    mq-poll-interval-millis: ${LAB_RECONCILE_MQ_POLL_INTERVAL_MILLIS:500}
+    # RabbitMQ management API (compose-network address; port 15672 is also
+    # published on 127.0.0.1 for operators). Credentials are lab-only.
+    mq-management-url: ${LAB_RECONCILE_MQ_MANAGEMENT_URL:http://rabbitmq:15672}
+    mq-vhost: "${LAB_RECONCILE_MQ_VHOST:/}"
+    mq-queue: ${LAB_RECONCILE_MQ_QUEUE:seckill.order.queue}
+    mq-user: ${LAB_RECONCILE_MQ_USER:${RABBITMQ_DEFAULT_USER:lab}}
+    mq-password: "${LAB_RECONCILE_MQ_PASSWORD:${RABBITMQ_DEFAULT_PASS:lab}}"
+
   # Stage2 B1-03 metrics aggregation: chaos-controller queries Prometheus
   # /api/v1/query_range only through the versioned catalog (no arbitrary PromQL
   # from the frontend). The run window is [runStart - scrape-grace,
@@ -307,7 +339,7 @@ chaos:
     connect-timeout-seconds: ${CHAOS_APP_PROXY_CONNECT_TIMEOUT_SECONDS:2}
     # Seed runs synchronously in the app; keep this above the worst-case 1000-row
     # seed. Override in .env if the lab host seeds slower.
-    request-timeout-seconds: ${CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS:10}
+    request-timeout-seconds: ${CHAOS_APP_PROXY_REQUEST_TIMEOUT_SECONDS:30}
     # Request body cap: oversized console bodies are refused 413/41301 before
     # reaching the app (the fault/mode JSON envelopes are tiny by design).
     max-request-bytes: ${CHAOS_APP_PROXY_MAX_REQUEST_BYTES:8192}

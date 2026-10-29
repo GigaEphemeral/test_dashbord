@@ -1,6 +1,7 @@
 package com.javalearn.lab.seckill.lab.config;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * A fully populated {@link LabCacheProperties} for tests. The YAML supplies these
@@ -25,6 +26,7 @@ public final class TestLabCacheProperties {
         LabCacheProperties properties = new LabCacheProperties();
         LabCacheProperties.Seed seed = properties.getSeed();
         seed.setProductCount(PRODUCT_COUNT);
+        seed.setMaxRequestCount(10_000L);
         seed.setStartId(START_ID);
         seed.setProtectedMaxId(1_000L);
         seed.setAvalancheKeyCount(AVALANCHE_KEY_COUNT);
@@ -37,6 +39,17 @@ public final class TestLabCacheProperties {
         seed.setPrice(new BigDecimal("99.00"));
 
         properties.getState().setScanCount(500L);
+
+        LabCacheProperties.Keys keys = properties.getKeys();
+        keys.setDefaultPrefix("cache:product:");
+        keys.setAllowedPrefixes(List.of("cache:product:"));
+        keys.setDefaultLimit(100);
+        keys.setMaxLimit(1_000);
+        keys.setScanCount(500L);
+        keys.setScanBatches(1);
+        keys.setValueMaxBytes(2_048);
+        keys.setResetScanCount(1_000L);
+        keys.setResetMaxKeys(50_000L);
 
         LabCacheProperties.Penetration penetration = properties.getPenetration();
         penetration.setMode("off");

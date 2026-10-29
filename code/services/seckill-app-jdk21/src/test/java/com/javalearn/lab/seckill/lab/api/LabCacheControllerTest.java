@@ -18,6 +18,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasKey;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -56,7 +58,8 @@ class LabCacheControllerTest {
         LabProperties labProperties = new LabProperties();
         labProperties.setToken(TOKEN);
         LabCacheController controller = new LabCacheController(modeService, experimentData);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                        controller, new LabCacheKeysController(experimentData))
                 .addFilters(new LabTokenFilter(labProperties, new ObjectMapper()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -72,9 +75,18 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.code").value("40101"));
         mockMvc.perform(get("/lab/cache/state").header(LabTokenFilter.TOKEN_HEADER, "wrong"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/lab/cache/keys"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/lab/cache/key"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/lab/cache/reset"))
+                .andExpect(status().isUnauthorized());
 
-        verify(experimentData, never()).seed();
+        verify(experimentData, never()).seed(any());
         verify(experimentData, never()).state();
+        verify(experimentData, never()).scanKeys(any(), any(), any());
+        verify(experimentData, never()).keyDetail(any(), any());
+        verify(experimentData, never()).reset(anyBoolean());
     }
 
     @Test
@@ -132,7 +144,7 @@ class LabCacheControllerTest {
 
     @Test
     void seedReturnsTheDatasetItJustGenerated() throws Exception {
-        when(experimentData.seed()).thenReturn(new CacheSeedResponse(
+        when(experimentData.seed(any())).thenReturn(new CacheSeedResponse(
                 90_000L, 90_999L, 1_000L, 0L, 1_000L, 1_000L,
                 200L, 60L, 90_999L, true, 1_020L, true, "null-cache"));
 
@@ -141,6 +153,7 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.startId").value(90_000))
                 .andExpect(jsonPath("$.data.endId").value(90_999))
+                .andExpect(jsonPath("$.data.requestedProducts").value(1_000))
                 .andExpect(jsonPath("$.data.inserted").value(0))
                 .andExpect(jsonPath("$.data.alreadyPresent").value(1_000))
                 .andExpect(jsonPath("$.data.avalancheKeysWritten").value(200))
@@ -149,7 +162,68 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.data.bloomIdsAdded").value(1_020))
                 .andExpect(jsonPath("$.data.mode").value("null-cache"));
 
-        verify(experimentData).seed();
+        verify(experimentData).seed((Long) null);
+    }
+
+    @Test
+    void seedForwardsAnExplicitTargetCount() throws Exception {
+        when(experimentData.seed(250L)).thenReturn(new CacheSeedResponse(
+                90_000L, 90_249L, 250L, 250L, 0L, 250L,
+                200L, 60L, 90_999L, false, 260L, true, "off"));
+
+        mockMvc.perform(post("/lab/cache/seed")
+                        .header(LabTokenFilter.TOKEN_HEADER, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"count\":250}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requestedProducts").value(250))
+                .andExpect(jsonPath("$.data.inserted").value(250));
+
+        verify(experimentData).seed(250L);
+    }
+
+    @Test
+    void keysForwardsPrefixCursorAndLimit() throws Exception {
+        when(experimentData.scanKeys("cache:product:", "42", 5))
+                .thenReturn(new CacheKeysPageResponse("0",
+                        List.of(new CacheKeysPageResponse.Item("cache:product:1", 120L)), 1, 5));
+
+        mockMvc.perform(get("/lab/cache/keys")
+                        .param("prefix", "cache:product:")
+                        .param("cursor", "42")
+                        .param("limit", "5")
+                        .header(LabTokenFilter.TOKEN_HEADER, TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cursor").value("0"))
+                .andExpect(jsonPath("$.data.limit").value(5))
+                .andExpect(jsonPath("$.data.scanned").value(1))
+                .andExpect(jsonPath("$.data.items[0].key").value("cache:product:1"))
+                .andExpect(jsonPath("$.data.items[0].ttlSeconds").value(120));
+    }
+
+    @Test
+    void keyDetailAcceptsEitherShapeAndResetEchoesTheFlag() throws Exception {
+        when(experimentData.keyDetail("cache:product:1", null))
+                .thenReturn(new CacheKeyDetailResponse("cache:product:1", 1L, true, true,
+                        true, 300L, "{\"id\":1}", false, 8, 2_048));
+        when(experimentData.reset(true))
+                .thenReturn(new CacheExperimentResetResponse(3L, true));
+
+        mockMvc.perform(post("/lab/cache/key")
+                        .header(LabTokenFilter.TOKEN_HEADER, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"key\":\"cache:product:1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.productId").value(1))
+                .andExpect(jsonPath("$.data.truncated").value(false));
+
+        mockMvc.perform(post("/lab/cache/reset")
+                        .header(LabTokenFilter.TOKEN_HEADER, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"includeBusiness\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deletedKeys").value(3))
+                .andExpect(jsonPath("$.data.includeBusiness").value(true));
     }
 
     @Test
@@ -163,7 +237,7 @@ class LabCacheControllerTest {
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 1_000L, 0L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(true, 12L, 201L, 200L, true),
                 new CacheStateResponse.Bloom("bloom:product-ids", true, 1_020L, 10_000L, 0.01D),
-                new CacheStateResponse.NullCache("null:product:", 10L, 5L, 3L)));
+                new CacheStateResponse.NullCache("null:product:", 10L, 5L, 3L), true));
 
         String body = mockMvc.perform(get("/lab/cache/state").header(LabTokenFilter.TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())
@@ -193,6 +267,7 @@ class LabCacheControllerTest {
                 .andExpect(jsonPath("$.data.keys.l2AvalancheKeysAlive").value(200))
                 .andExpect(jsonPath("$.data.bloom.size").value(1_020))
                 .andExpect(jsonPath("$.data.nullCache.liveMarkerKeys").value(3))
+                .andExpect(jsonPath("$.data.l1Enabled").value(true))
                 .andReturn().getResponse().getContentAsString();
 
         assertThat(body).doesNotContain(TOKEN);
@@ -210,7 +285,7 @@ class LabCacheControllerTest {
                 new CacheStateResponse.Dataset(90_000L, 90_999L, 1_000L, 0L, 1_000L, 200L, 60L, 90_999L),
                 new CacheStateResponse.Keys(false, 0L, 0L, 0L, false),
                 new CacheStateResponse.Bloom("bloom:product-ids", false, 0L, 10_000L, 0.01D),
-                new CacheStateResponse.NullCache("null:product:", 10L, 5L, 0L)));
+                new CacheStateResponse.NullCache("null:product:", 10L, 5L, 0L), false));
 
         mockMvc.perform(get("/lab/cache/state").header(LabTokenFilter.TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())

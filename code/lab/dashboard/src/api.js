@@ -252,6 +252,16 @@ export function fetchRunPrecheck(token, runId) {
   return getJson(`/lab/runs/${encodeURIComponent(runId)}/precheck`, token)
 }
 
+/** B3-04: last persisted business reconciliation (404/NO_DATA before the first run). */
+export function fetchRunReconciliation(token, runId) {
+  return getJson(`/lab/runs/${encodeURIComponent(runId)}/reconciliation`, token)
+}
+
+/** B3-04: compare the business schema against the run-start baseline now. */
+export function reconcileRun(token, runId) {
+  return postJson(`/lab/runs/${encodeURIComponent(runId)}/reconcile`, token)
+}
+
 /** Window defaults to [run start - grace, run end + grace] on the controller. */
 export function fetchRunMetrics(token, runId, { keys, phase } = {}) {
   return getJson(
@@ -466,6 +476,31 @@ export function fetchCachePreheat(token, instance) {
 }
 
 /** Runs one manual preheat synchronously and returns the post-run snapshot. */
+/** B3-01: independent Caffeine L1 switch of one instance. */
+export function fetchCacheL1(token, instance) {
+  return getJson(`${cacheBase(instance)}/l1`, token)
+}
+
+export function setCacheL1(token, instance, enabled) {
+  return postJson(`${cacheBase(instance)}/l1`, token, { enabled })
+}
+
+/** B3-02: SCAN-paged cache keys of one instance. */
+export function fetchCacheKeys(token, instance, { prefix, cursor, limit } = {}) {
+  return getJson(
+    withQuery(`${cacheBase(instance)}/keys`, { prefix, cursor, limit }),
+    token
+  )
+}
+
+export function fetchCacheKeyDetail(token, instance, body) {
+  return postJson(`${cacheBase(instance)}/key`, token, body)
+}
+
+export function resetCacheExperiment(token, instance, { includeBusiness = false } = {}) {
+  return postJson(`${cacheBase(instance)}/reset`, token, { includeBusiness })
+}
+
 export function runCachePreheat(token, instance) {
   return postJson(`${cacheBase(instance)}/preheat`, token)
 }

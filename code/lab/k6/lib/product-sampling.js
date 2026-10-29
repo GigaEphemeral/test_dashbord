@@ -4,7 +4,8 @@
  * Pure functions only (no k6 imports) so the same module runs under `k6` and
  * under plain `node --test`. The defaults (min = max = 1) preserve the
  * historical behaviour exactly: every load iteration reads product 1. A wider
- * range is opt-in until the 10k seed lands in B3-02.
+ * range is opt-in; Flyway V4 (Stage2 B3-02) now ships 10,000 built-in products
+ * (ids 1..10000), so PRODUCT_ID_MAX=10000 is a valid spread.
  *
  * Env names:
  *   PRODUCT_ID_MIN           integer >= 1, default 1

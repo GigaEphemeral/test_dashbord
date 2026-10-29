@@ -54,7 +54,9 @@ class InventoryRepositoryIT extends MySqlRabbitIntegrationTestSupport {
 
     @BeforeEach
     void resetState() {
-        jdbcTemplate.update("UPDATE inventory_stock SET available = 100, reserved = 0");
+        // V4 deterministic baseline: available = MOD(product_id * 37, 501).
+        jdbcTemplate.update(
+                "UPDATE inventory_stock SET available = MOD(product_id * 37, 501), reserved = 0");
         jdbcTemplate.update("DELETE FROM order_order");
     }
 
@@ -63,8 +65,8 @@ class InventoryRepositoryIT extends MySqlRabbitIntegrationTestSupport {
         Integer inventoryRows = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM inventory_stock", Integer.class);
 
-        assertThat(inventoryRows).isEqualTo(20);
-        assertThat(available(PRODUCT_ID)).isEqualTo(100);
+        assertThat(inventoryRows).isEqualTo(10_000);
+        assertThat(available(PRODUCT_ID)).isEqualTo(37);
     }
 
     @Test

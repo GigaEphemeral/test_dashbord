@@ -66,18 +66,29 @@ public class AppProxyService {
      */
     private static final Set<String> CACHE_GET_PATHS = Set.of(
             CACHE + "/state",
-            CACHE + "/preheat");
+            CACHE + "/preheat",
+            // B3-01/B3-02: independent L1 switch and SCAN-paged key browser.
+            CACHE + "/l1",
+            CACHE + "/keys");
 
     /** Cache-lab writes; only {@code /mode} carries the {@code {"mode": ...}} body. */
     private static final Set<String> CACHE_POST_PATHS = Set.of(
             CACHE + "/mode",
             CACHE + "/seed",
-            CACHE + "/preheat");
+            CACHE + "/preheat",
+            // B3-01/B3-02: L1 toggle, single-key detail and experiment reset.
+            CACHE + "/l1",
+            CACHE + "/key",
+            CACHE + "/reset");
 
     /** The complete set of POST paths whose body is relayed verbatim. */
     private static final Set<String> BODY_PATHS = Set.of(
             THREAD + "/fault",
-            CACHE + "/mode");
+            CACHE + "/mode",
+            CACHE + "/l1",
+            CACHE + "/key",
+            // B3-02: seed accepts an optional {"count":N} body.
+            CACHE + "/seed");
 
     /** Only the seven documented fault modes may appear in the path. */
     private static final Pattern FAULT_ACTION = Pattern.compile(

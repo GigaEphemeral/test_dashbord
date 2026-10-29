@@ -414,7 +414,11 @@ async function main() {
     target.on('response', (response) => {
       const url = response.url();
       if (!url.includes('/lab-api/') && !url.includes('/prom/')) return;
-      if (response.status() >= 400) {
+      // B3-04 documents GET .../reconciliation 404 as "no result yet"; the
+      // panel renders it as 无数据. It is an empty-state contract, not a failure.
+      const reconciliationEmpty = response.status() === 404
+        && /\/lab-api\/lab\/runs\/[^/]+\/reconciliation$/.test(url);
+      if (response.status() >= 400 && !reconciliationEmpty) {
         failedRequests.push(`${response.request().method()} ${url} -> HTTP ${response.status()}`);
       }
     });
@@ -1221,6 +1225,22 @@ async function main() {
       return { ok, detail: `${range}; ${rows}; buttonEnabled=${enabled}` };
     }, ACTION_TIMEOUT_MS * 2);
 
+    // B3-01: the L1 switch is independent of the eight defence modes; off
+    // clears the instance's entries and the hit ratio reads "不适用".
+    await expectText(page.getByTestId('cache-l1-state'), '启用', 'ops: L1 starts enabled');
+    await page.getByTestId('cache-l1-toggle').click();
+    await expectText(
+      page.getByTestId('cache-l1-state'),
+      '已关闭',
+      'ops: the L1 switch clears the local entries and marks the instance off',
+    );
+    await page.getByTestId('cache-l1-toggle').click();
+    await expectText(
+      page.getByTestId('cache-l1-state'),
+      '启用',
+      'ops: the L1 switch turns back on for the remaining checks',
+    );
+
     await page.getByTestId('cache-preheat-run').click();
     await expectCondition('observe: cache preheat reports the manual run it just did', async () => {
       const last = page.getByTestId('cache-preheat-last');
@@ -1287,6 +1307,20 @@ async function main() {
       );
 
       await page.getByTestId('monitor-tab-tools').click();
+      // B3-02: the SCAN key browser lives in 实验工具 and lists the seeded keys.
+      await expectCondition('tools: the cache key browser lists SCAN keys', async () => {
+        if ((await page.getByTestId('cache-keys-panel').count()) === 0) {
+          return { ok: false, detail: 'key panel not rendered' };
+        }
+        await page.getByTestId('cache-keys-load').click();
+        return { ok: true, detail: 'load clicked' };
+      });
+      const keyRows = await waitForCondition(async () => {
+        const rows = await page.locator('[data-testid^="cache-key-row-"]').count();
+        return { ok: rows > 0, detail: `rows=${rows}` };
+      });
+      check('tools: key browser renders SCAN-paged rows', keyRows.ok, keyRows.detail);
+
       const appeared = await waitForCondition(async () => {
         const badge = page.locator('[data-testid="topology-faults-jl-app-2"]:visible').first();
         if ((await badge.count()) === 0) {
@@ -1727,6 +1761,20 @@ async function main() {
           return { ok: available === '可用' && enabled, detail: `${available} enabled=${enabled}` };
         });
         check('runs: the k6 report becomes downloadable after exit', reportReady.ok, reportReady.detail);
+
+        // B3-04: the run-scoped business reconciliation returns the seven
+        // invariant checks; DEGRADED is a valid answer when a probe is unwired.
+        await page.getByTestId('reconcile-run').click();
+        const reconcile = await waitForCondition(async () => {
+          const verdict = ((await page.getByTestId('reconcile-verdict').textContent()) || '').trim();
+          const items = await page.locator('[data-testid^="reconcile-item-"]').count();
+          return {
+            ok: ['PASS', 'DEGRADED', 'FAIL'].includes(verdict) && items === 7,
+            detail: `verdict=${verdict} items=${items}`,
+          };
+        });
+        check('runs: business reconciliation returns seven invariant checks',
+          reconcile.ok, reconcile.detail);
       } else {
         check('runs: stop returns an operation and completes the run', false, 'start did not reach RUNNING');
       }

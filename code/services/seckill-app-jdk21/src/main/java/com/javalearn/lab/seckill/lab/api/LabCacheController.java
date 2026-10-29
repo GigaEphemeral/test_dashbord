@@ -47,8 +47,9 @@ public class LabCacheController {
     }
 
     @PostMapping("/seed")
-    public Result<CacheSeedResponse> seed() {
-        return Result.success(experimentData.seed());
+    public Result<CacheSeedResponse> seed(
+            @RequestBody(required = false) CacheSeedRequest request) {
+        return Result.success(experimentData.seed(request == null ? null : request.count()));
     }
 
     @GetMapping("/state")
