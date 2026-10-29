@@ -318,6 +318,40 @@ class InstanceRebuildServiceTest {
         assertThat(ok.status()).isEqualTo(InstanceRebuildService.STATUS_APPLIED);
     }
 
+    @Test
+    void ledgerOutcomeWriteFailureKeepsTheHealthyRebuildAndReportsTheError() throws Exception {
+        store(TARGET_JSON, null, 1);
+        repository.failMarkApplied = true;
+
+        InstanceViews.InstanceApplyView view = service.apply("app-1");
+
+        // A healthy rebuild is never rolled back because the ledger hiccuped:
+        // no restore, the parked container is removed and the outcome is APPLIED
+        // with the ledger problem surfaced in the evidence, not hidden.
+        assertThat(view.status()).isEqualTo(InstanceRebuildService.STATUS_APPLIED);
+        assertThat(view.rollback()).isEqualTo(InstanceRebuildService.ROLLBACK_NOT_NEEDED);
+        assertThat(view.error()).contains("ledger outcome write failed");
+        assertThat(gateway.calls).doesNotContain("restore");
+        assertThat(gateway.calls).anyMatch(call -> call.startsWith("remove:jl-app-1-pre-"));
+        // The durable row keeps the APPLYING marker (the outcome write failed);
+        // the console reads the truth from the response evidence.
+        assertThat(repository.row.status()).isEqualTo(InstanceConfigStatus.APPLYING);
+    }
+
+    @Test
+    void failedRebuildStillReportsFailedWhenTheLedgerWriteFails() throws Exception {
+        store(TARGET_JSON, null, 1);
+        probe.failUrl = "http://app-1:8080/api/hello";
+        repository.failMarkFailed = true;
+
+        InstanceViews.InstanceApplyView view = service.apply("app-1");
+
+        assertThat(view.status()).isEqualTo(InstanceRebuildService.STATUS_FAILED);
+        assertThat(view.error()).contains("app probe failed")
+                .contains("ledger outcome write failed");
+        assertThat(gateway.calls).contains("restore");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private void store(String configJson, String previousJson, int revision) {
@@ -495,6 +529,8 @@ class InstanceRebuildServiceTest {
     private static final class InMemoryConfigRepository extends InstanceConfigRepository {
 
         private StoredInstanceConfig row;
+        private boolean failMarkApplied;
+        private boolean failMarkFailed;
 
         private InMemoryConfigRepository() {
             super(null);
@@ -532,6 +568,10 @@ class InstanceRebuildServiceTest {
         public int markApplied(String instance, String appliedImageTag, String appliedImageId,
                                String previousImageTag, String previousImageId, Instant appliedAt,
                                Instant stableUntil) {
+            if (failMarkApplied) {
+                throw new org.springframework.dao.DataRetrievalFailureException(
+                        "simulated ledger outage");
+            }
             row = new StoredInstanceConfig(row.instance(), row.configJson(),
                     row.previousConfigJson(), InstanceConfigStatus.APPLIED, row.revision(),
                     appliedAt, appliedAt, null, stableUntil, appliedImageTag, appliedImageId,
@@ -547,6 +587,10 @@ class InstanceRebuildServiceTest {
         @Override
         public int markFailed(String instance, String error, Instant now, Instant stableUntil,
                               String restoredImageTag, String restoredImageId) {
+            if (failMarkFailed) {
+                throw new org.springframework.dao.DataRetrievalFailureException(
+                        "simulated ledger outage");
+            }
             row = new StoredInstanceConfig(row.instance(), row.configJson(),
                     row.previousConfigJson(), InstanceConfigStatus.FAILED, row.revision(), now,
                     null, error, stableUntil, restoredImageTag, restoredImageId, now,

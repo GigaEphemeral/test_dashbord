@@ -80,7 +80,11 @@ public class InstanceLogsService {
         }
         String normalized = path.trim();
         String root = properties.getGcLogRoot();
-        if (!normalized.startsWith(root + "/") || normalized.contains("..")) {
+        // Same allow-list logic as the validator: a "/" root means "any absolute
+        // path", otherwise the path must live strictly under the root.
+        String prefix = "/".equals(root) ? "/" : root + "/";
+        if (!normalized.startsWith(prefix) || normalized.contains("..")
+                || normalized.equals(prefix) || normalized.isBlank()) {
             throw new InvalidInstanceConfigException("gcLogPath '" + normalized
                     + "' is outside lab.instance.gc-log-root " + root);
         }
@@ -94,10 +98,11 @@ public class InstanceLogsService {
             throw new DockerUnavailableException("Docker container gateway is not available");
         }
         String container = properties.containerName(instance);
+        int tailTimeoutSeconds = properties.getGcLogTailTimeoutSeconds();
         ExecResult result;
         String readPath = normalized;
         try {
-            result = tail(gateway, container, normalized, lines);
+            result = tail(gateway, container, normalized, lines, tailTimeoutSeconds);
             if (!result.succeeded()) {
                 // JDK 8 -XX:+UseGCLogFileRotation writes <path>.0.current (and
                 // .1.current, ...) instead of the plain file; try the bounded
@@ -105,7 +110,8 @@ public class InstanceLogsService {
                 int count = Math.max(1, Math.min(20, config.path("gcLogFileCount").asInt(10)));
                 for (int i = 0; i < count && !result.succeeded(); i++) {
                     String candidate = normalized + "." + i + ".current";
-                    ExecResult next = tail(gateway, container, candidate, lines);
+                    ExecResult next = tail(gateway, container, candidate, lines,
+                            tailTimeoutSeconds);
                     if (next.succeeded()) {
                         result = next;
                         readPath = candidate;
@@ -127,20 +133,26 @@ public class InstanceLogsService {
                     "log file exists but is empty (GC may not have run yet)");
         }
         int max = properties.getGcLogMaxBytes();
-        boolean truncated = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > max;
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        boolean truncated = bytes.length > max;
         if (truncated) {
-            // Keep the tail end, which holds the most recent GC events.
-            int keep = Math.min(text.length(), max);
-            text = text.substring(text.length() - keep);
+            // Keep the tail end, which holds the most recent GC events, and stay
+            // inside the byte budget: start after any split UTF-8 lead byte.
+            int start = Math.max(0, bytes.length - max);
+            while (start < bytes.length && (bytes[start] & 0xC0) == 0x80) {
+                start++;
+            }
+            text = new String(bytes, start, bytes.length - start,
+                    java.nio.charset.StandardCharsets.UTF_8);
         }
         return new InstanceLogsView(instance, OK, readPath, lines, truncated, text, null);
     }
 
     private static ExecResult tail(ContainerGateway gateway, String container, String path,
-                                   int lines) {
+                                   int lines, int timeoutSeconds) {
         return gateway.execInContainer(container,
                 List.of("tail", "-n", String.valueOf(lines), path),
-                List.of(), null, 5);
+                List.of(), null, timeoutSeconds);
     }
 
     private static String truncate(String value, int max) {

@@ -20,8 +20,11 @@ import java.util.Set;
  * <p>Memory budget (design §4.6/§10.7):
  * {@code xmx + metaspace + direct + maxPoolSize * threadStack + nativeReserve}
  * must fit in {@code lab.instance.memory-limit-mb}. Unset fields use the
- * documented defaults (metaspace 128, direct 64, pool 64, 1 MB stack, 128 MB
- * native reserve) and the arithmetic is included in the rejection message.</p>
+ * configured estimates (defaults: metaspace
+ * {@code lab.instance.default-metaspace-mb} 96, direct
+ * {@code lab.instance.default-direct-memory-mb} 64, thread stack 1 MB,
+ * native reserve {@code lab.instance.native-reserve-mb} 64) and the arithmetic
+ * is included in the rejection message.</p>
  */
 public class InstanceConfigValidator {
 

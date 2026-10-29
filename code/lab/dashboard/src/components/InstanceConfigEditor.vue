@@ -173,11 +173,11 @@ const canSave = computed(() => (
   !busy.value && !jdk8Rejected.value && Boolean(String(form.value.jdkVersion || '').trim())
 ))
 const canApply = computed(() => (
-  !busy.value && !rules.value.jdk8Shell && !jdk8Rejected.value && Boolean(view.value?.config)
+  !busy.value && !jdk8Rejected.value && Boolean(view.value?.config)
   && status.value !== 'APPLYING'
 ))
 const canRollback = computed(() => (
-  !busy.value && !rules.value.jdk8Shell && !jdk8Rejected.value && Boolean(view.value?.config)
+  !busy.value && !jdk8Rejected.value && Boolean(view.value?.config)
   && status.value !== 'APPLYING'
 ))
 
@@ -906,7 +906,7 @@ watch(() => props.active, (active) => {
         type="button"
         class="btn"
         :disabled="!canApply"
-        :title="rules.jdk8Shell ? 'JDK8 外壳实例不支持应用/回滚' : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
+        :title="rules.jdk8Shell ? 'JDK8 外壳走同一受控重建：池回读 SKIPPED、指标用 seckill-app-jdk8 job、GC 日志按轮转命名' : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
         :data-testid="`instance-config-apply-${instance}`"
         @click="ask('apply')"
       >应用并重启</button>
@@ -914,11 +914,11 @@ watch(() => props.active, (active) => {
         type="button"
         class="btn ghost"
         :disabled="!canRollback"
-        :title="rules.jdk8Shell ? 'JDK8 外壳实例不支持应用/回滚' : '使用上一版配置重建容器'"
+        :title="rules.jdk8Shell ? 'JDK8 外壳走同一受控重建（使用上一版配置）' : '使用上一版配置重建容器'"
         :data-testid="`instance-config-rollback-${instance}`"
         @click="ask('rollback')"
       >回滚</button>
-      <span v-if="rules.jdk8Shell" class="hint">JDK8 外壳实例：只读观测，不支持应用/回滚。</span>
+      <span v-if="rules.jdk8Shell" class="hint">JDK8 外壳实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
       <span v-else-if="!view?.config" class="hint">先「仅保存」为 DRAFT，才能应用。</span>
     </div>
 

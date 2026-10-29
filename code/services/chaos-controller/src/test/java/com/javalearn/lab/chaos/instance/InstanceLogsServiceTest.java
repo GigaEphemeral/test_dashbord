@@ -113,4 +113,74 @@ class InstanceLogsServiceTest {
                 .isInstanceOf(InvalidInstanceConfigException.class)
                 .hasMessageContaining("lines");
     }
+
+    @Test
+    void fallsBackToTheJdk8RotationCurrentFile() {
+        store("{\"jdkVersion\":8,\"gcLogEnabled\":true,\"gcLogFileCount\":3,"
+                + "\"gcLogPath\":\"/app/lab-snapshots/gc-app-jdk8.log\"}");
+        when(gateway.execInContainer(anyString(), anyList(), anyList(), any(), anyInt()))
+                .thenAnswer(invocation -> {
+                    java.util.List<?> command = invocation.getArgument(1);
+                    String target = String.valueOf(command.get(command.size() - 1));
+                    if (target.equals("/app/lab-snapshots/gc-app-jdk8.log.0.current")) {
+                        return new ExecResult("GC pause (G1 Evacuation Pause)", "", 0, false);
+                    }
+                    return new ExecResult("", "tail: cannot open '" + target + "'", 1, false);
+                });
+
+        InstanceLogsView view = service.gcLog("app-1", 20);
+
+        assertThat(view.status()).isEqualTo(InstanceLogsService.OK);
+        assertThat(view.path()).isEqualTo("/app/lab-snapshots/gc-app-jdk8.log.0.current");
+        assertThat(view.content()).contains("GC pause");
+    }
+
+    @Test
+    void missingRotationFilesStayNoDataAndNeverFakeContent() {
+        store("{\"jdkVersion\":8,\"gcLogEnabled\":true,\"gcLogFileCount\":2,"
+                + "\"gcLogPath\":\"/app/lab-snapshots/gc-app-jdk8.log\"}");
+        when(gateway.execInContainer(anyString(), anyList(), anyList(), any(), anyInt()))
+                .thenReturn(new ExecResult("", "tail: cannot open", 1, false));
+
+        InstanceLogsView view = service.gcLog("app-1", 20);
+
+        assertThat(view.status()).isEqualTo(InstanceLogsService.NO_DATA);
+        assertThat(view.content()).isNull();
+    }
+
+    @Test
+    void usesTheConfiguredTailTimeout() {
+        store("{\"jdkVersion\":21,\"gcLogEnabled\":true,"
+                + "\"gcLogPath\":\"/app/lab-snapshots/gc-app-1.log\"}");
+        properties.setGcLogTailTimeoutSeconds(7);
+        when(gateway.execInContainer(anyString(), anyList(), anyList(), any(), anyInt()))
+                .thenReturn(new ExecResult("one line\n", "", 0, false));
+
+        service.gcLog("app-1", 10);
+
+        org.mockito.ArgumentCaptor<Integer> timeout =
+                org.mockito.ArgumentCaptor.forClass(Integer.class);
+        org.mockito.Mockito.verify(gateway).execInContainer(anyString(), anyList(), anyList(),
+                any(), timeout.capture());
+        assertThat(timeout.getValue()).isEqualTo(7);
+    }
+
+    @Test
+    void byteCapKeepsATailWithinTheBudgetForMultibyteContent() {
+        store("{\"jdkVersion\":21,\"gcLogEnabled\":true,"
+                + "\"gcLogPath\":\"/app/lab-snapshots/gc-app-1.log\"}");
+        properties.setGcLogMaxBytes(32);
+        String text = "字".repeat(40); // 120 UTF-8 bytes
+        when(gateway.execInContainer(anyString(), anyList(), anyList(), any(), anyInt()))
+                .thenReturn(new ExecResult(text, "", 0, false));
+
+        InstanceLogsView view = service.gcLog("app-1", 50);
+
+        assertThat(view.status()).isEqualTo(InstanceLogsService.OK);
+        assertThat(view.truncated()).isTrue();
+        assertThat(view.content().getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(32);
+        // A split multi-byte lead must not leak a replacement character.
+        assertThat(view.content()).doesNotContain("\uFFFD");
+    }
 }

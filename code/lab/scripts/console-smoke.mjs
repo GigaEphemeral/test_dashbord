@@ -1188,8 +1188,10 @@ async function main() {
       };
     } else if ((await jdk8Editor.count()) > 0) {
       const badge = ((await page.getByTestId('instance-config-observability-seckill-app-jdk8').textContent()) || '').trim();
-      const applyDisabled = await page.getByTestId('instance-config-apply-seckill-app-jdk8').isDisabled();
-      jdk8 = { ok: badge.includes('LIMITED-OBSERVABILITY') && applyDisabled, detail: `editor; badge=${badge}` };
+      // The jdk8 shell shares the controlled-rebuild flow (B4-04 contract), so
+      // its apply button must exist; this smoke is read-only and never clicks.
+      const applyExists = (await page.getByTestId('instance-config-apply-seckill-app-jdk8').count()) === 1;
+      jdk8 = { ok: badge.includes('LIMITED-OBSERVABILITY') && applyExists, detail: `editor; badge=${badge}; applyExists=${applyExists}` };
     }
     check('instances: jdk8 shell is LIMITED-OBSERVABILITY or an explicit not-running row', jdk8.ok, jdk8.detail);
 
