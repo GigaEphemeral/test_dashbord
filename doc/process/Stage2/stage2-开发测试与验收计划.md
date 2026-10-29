@@ -56,7 +56,7 @@
 > `LAB_INSTANCE_NAMES` 增加 `seckill-app-jdk8`。交接 `step-S2-B4-03-gc-logs.md`。
 
 > **B4 批次基线（2026-10-29，B4-01..04 收口）**：reactor **1414**（chaos 819、app 509、jdk8 59、core 13、platform 14）；console-smoke **126/0**（探针 0 的 BLOCKED 分支；
-> 探针恢复应为 145）；verify **109/1**、smoke 7/7、claims **58**。真机：apply/rollback（app-1 384/512 与池切换、
+> 探针恢复应为 145）；verify **109/1**、smoke 7/7、claims **58**（审核后不变）。真机：apply/rollback（app-1 384/512 与池切换、
 > 失败自动恢复 2 次）、JDK8 APPLIED + GC 轮转回读、UI apply/rollback。收口 `step-S2-B4-00-closure.md`。
 
 规约要点（每一步都适用）：
@@ -343,8 +343,8 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 ## 5. B4 · 实例 JVM/GC/线程池配置闭环
 
 > **收口状态（2026-10-29）：已收口。** B4-01..04 全部实现并真机验证（schema/预算/草稿 → 受控重建/回滚/稳定期 →
-> GC 日志 → 实例页/JDK8）；真机 apply/rollback 全 PASS、JDK8 LIMITED 通过。收口文档 `step-S2-B4-00-closure.md`，
-> 交接 `step-S2-B4-01..04`。遗留：mysql-3 掉组导致探针 0、稳定期未硬门禁、jdk-matrix 未自动化（B5/记录）。
+> GC 日志 → 实例页/JDK8）；独立 Qwen 审核 **Approved with fixes**（1 High/3 Medium 已修，`54f1f2c`）。
+> 收口文档 `step-S2-B4-00-closure.md`。遗留：mysql-3 掉组导致探针 0、稳定期未硬门禁、jdk-matrix 未自动化（B5/记录）。
 
 **收口标准**：配置应用后证明实际运行镜像与有效参数正确；失败自动回滚；重建后流量恢复并经过稳定期。
 

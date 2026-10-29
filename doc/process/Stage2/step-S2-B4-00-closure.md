@@ -6,7 +6,9 @@
 > B4-04 实例页与 JDK8 LIMITED（待提交）
 > 闸门：reactor **1414 tests / 0 fail**（chaos 819、app 509、jdk8 59、core 13、platform 14）；console-smoke **126/0**（探针 0 的 BLOCKED 分支；探针正常应为 145）；verify **109/1/0**；
 > smoke **7/7**；claims **58/58**；chaos 全量 **812/0**（B4-02）
-> 审核：待独立 Qwen 审核
+> 审核：独立 Qwen（隔离 worktree）**Approved with fixes**：0 Critical / 1 High / 3 Medium（全部已修）/ Minor 记录；
+> 修复提交 `09a998d`（主分支 cherry-pick `54f1f2c`）——JDK8 应用按钮不再被禁用、GC 日志 tail 超时外置、字节级截断、
+> 补轮转/NO_DATA/账本写失败测试
 
 # 当前进展
 
