@@ -75,6 +75,8 @@ public class RunPrecheckService implements RunPrecheckGate {
     public static final String KEY_MONITORING = "monitoring.ready";
     public static final String KEY_RESOURCES = "resources.budget";
     public static final String KEY_IMAGES = "images.consistent";
+    /** B5-00b: a controlled rebuild's stable period blocks formal runs. */
+    public static final String KEY_STABLE = "instances.stable";
 
     /**
      * Job names are topology identifiers from {@code code/lab/docker/prometheus
@@ -99,6 +101,7 @@ public class RunPrecheckService implements RunPrecheckGate {
     private final ToxiproxyService toxiproxy;
     private final ChaosProperties chaosProperties;
     private final PrometheusGateway prometheus;
+    private final com.javalearn.lab.chaos.instance.InstanceConfigRepository instanceConfigs;
     private final Clock clock;
 
     public RunPrecheckService(PrecheckProperties properties, LedgerProperties ledgerProperties,
@@ -106,6 +109,7 @@ public class RunPrecheckService implements RunPrecheckGate {
                               PrecheckDockerFacts dockerFacts, TrafficService trafficService,
                               ChaosActionService chaosActions, ToxiproxyService toxiproxy,
                               ChaosProperties chaosProperties, PrometheusGateway prometheus,
+                              com.javalearn.lab.chaos.instance.InstanceConfigRepository instanceConfigs,
                               Clock clock) {
         this.properties = properties;
         this.ledgerProperties = ledgerProperties;
@@ -117,6 +121,7 @@ public class RunPrecheckService implements RunPrecheckGate {
         this.toxiproxy = toxiproxy;
         this.chaosProperties = chaosProperties;
         this.prometheus = prometheus;
+        this.instanceConfigs = instanceConfigs;
         this.clock = clock;
     }
 
@@ -163,6 +168,7 @@ public class RunPrecheckService implements RunPrecheckGate {
         items.add(chaosCheck(deadline));
         items.add(toxiproxyCheck(deadline));
         items.add(operationsCheck(runId, ignoreOwnStartOperation, ignoreOperationId, deadline));
+        items.add(stableCheck(deadline));
         items.add(monitoringCheck(deadline, nodes));
         items.add(resourcesCheck(deadline));
         items.add(imagesCheck(deadline, nodes));
@@ -354,6 +360,37 @@ public class RunPrecheckService implements RunPrecheckGate {
                         + first.action() + " " + first.targetName() + " " + first.status().name()
                         + "); confirm or close them first",
                 detail);
+    }
+
+    /** B5-00b: any instance still inside its post-rebuild stable period blocks. */
+    private PrecheckItem stableCheck(Instant deadline) {
+        if (budgetExhausted(deadline)) {
+            return skipped(KEY_STABLE, deadline);
+        }
+        try {
+            var active = instanceConfigs.findStableAfter(clock.instant());
+            if (active.isEmpty()) {
+                return PrecheckItem.pass(KEY_STABLE, "no instance is inside a stable period", Map.of());
+            }
+            List<Map<String, Object>> detailList = new ArrayList<>();
+            for (var row : active) {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("instance", row.instance());
+                entry.put("status", row.status().name());
+                entry.put("stableUntil", row.stableUntil() == null ? null
+                        : row.stableUntil().toString());
+                detailList.add(entry);
+            }
+            return PrecheckItem.block(KEY_STABLE,
+                    "post-rebuild stable period is still active for "
+                            + active.stream().map(row -> row.instance()).toList()
+                            + "; wait until stable_until before starting a formal comparison",
+                    Map.of("instances", detailList));
+        } catch (org.springframework.dao.DataAccessException e) {
+            return PrecheckItem.block(KEY_STABLE,
+                    "cannot verify instance stable periods (ledger query failed): " + describe(e),
+                    Map.of("query", "lab_instance_config.stable_until"));
+        }
     }
 
     private PrecheckItem monitoringCheck(Instant deadline, List<String> nodes) {

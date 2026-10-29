@@ -68,11 +68,12 @@ public class PrecheckConfig {
                                                  ChaosProperties chaosProperties,
                                                  @Qualifier("precheckPrometheusGateway")
                                                  PrometheusGateway prometheus,
+                                                 com.javalearn.lab.chaos.instance.InstanceConfigRepository instanceConfigs,
                                                  Clock ledgerClock) {
         properties.validate();
         return new RunPrecheckService(properties, ledgerProperties, bootstrap, repository,
                 dockerFacts, trafficService, chaosActions, toxiproxy, chaosProperties,
-                prometheus, ledgerClock);
+                prometheus, instanceConfigs, ledgerClock);
     }
 
     /** A daemon-less facts source: every query fails like an unreachable Docker. */

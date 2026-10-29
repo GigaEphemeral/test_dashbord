@@ -67,6 +67,13 @@ public class InstanceConfigRepository {
                 MAPPER);
     }
 
+    /** B5-00b: instances whose post-rebuild stable period has not elapsed yet. */
+    public List<StoredInstanceConfig> findStableAfter(java.time.Instant now) {
+        return jdbc.query("SELECT " + COLUMNS + " FROM lab_instance_config "
+                        + "WHERE stable_until IS NOT NULL AND stable_until > ? ORDER BY instance",
+                MAPPER, timestamp(now));
+    }
+
     /**
      * Insert-or-update the draft. Returns the row after the write (revision
      * already incremented). The update branch keeps the previous config and

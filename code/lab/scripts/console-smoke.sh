@@ -71,7 +71,7 @@ Environment (environment > lab .env > default):
   SMOKE_RUN_SCENARIO_PREFIX   legacy ownership prefix, default console-smoke-
   SMOKE_KPI_COUNT             observe KPI card count, default 13
   SMOKE_RUN_METRIC_COUNT      ledger metric card count, default 13
-  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 126 (119 existing + 7 B4-04; see note below)
+  SMOKE_MIN_PASS_COUNT        expected PASS baseline, default 145 (119 existing + 7 B4-04; see note below)
   SMOKE_HEADED                set to 1 for a visible browser
   PLAYWRIGHT_MODULE           directory of an installed playwright package
   CONSOLE_SMOKE_SCRIPT        path to the smoke script, default alongside this file
@@ -198,7 +198,7 @@ SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-$(dotenv_value SMOKE_MIN_PASS_COUN
 # checks are not reached: 119 existing passes + 7 = 126. With the probe back at
 # 1 the full suite reaches 145 and this value should be raised again.
 # Set 0 to disable.
-SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-126}"
+SMOKE_MIN_PASS_COUNT="${SMOKE_MIN_PASS_COUNT:-145}"
 
 echo "Console smoke: $CONSOLE_URL"
 echo "  api base   : $LAB_API_BASE"

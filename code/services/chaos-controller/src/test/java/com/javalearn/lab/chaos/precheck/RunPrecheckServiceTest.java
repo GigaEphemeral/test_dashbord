@@ -71,6 +71,7 @@ class RunPrecheckServiceTest {
     private ToxiproxyService toxiproxy;
     private ChaosProperties chaosProperties;
     private FakePrometheus prometheus;
+    private com.javalearn.lab.chaos.instance.InstanceConfigRepository instanceConfigs;
     private RunPrecheckService service;
 
     @BeforeEach
@@ -98,6 +99,8 @@ class RunPrecheckServiceTest {
         when(toxiproxy.state()).thenReturn(cleanToxiproxy());
 
         chaosProperties = new ChaosProperties();
+        instanceConfigs = mock(com.javalearn.lab.chaos.instance.InstanceConfigRepository.class);
+        when(instanceConfigs.findStableAfter(any())).thenReturn(List.of());
         prometheus = new FakePrometheus();
         prometheus.values.put(RunPrecheckService.PROMQL_APP_UP, 3.0);
         prometheus.values.put(RunPrecheckService.PROMQL_REDIS_EXPORTER_UP, 1.0);
@@ -118,6 +121,7 @@ class RunPrecheckServiceTest {
                 RunPrecheckService.KEY_CHAOS,
                 RunPrecheckService.KEY_TOXIPROXY,
                 RunPrecheckService.KEY_OPERATIONS,
+                RunPrecheckService.KEY_STABLE,
                 RunPrecheckService.KEY_MONITORING,
                 RunPrecheckService.KEY_RESOURCES,
                 RunPrecheckService.KEY_IMAGES);
@@ -454,11 +458,36 @@ class RunPrecheckServiceTest {
         assertThat(item.detail()).containsEntry("missingContainers", 1);
     }
 
+    @Test
+    void anActiveStablePeriodBlocksTheRun() {
+        when(instanceConfigs.findStableAfter(any())).thenReturn(List.of(
+                new com.javalearn.lab.chaos.instance.StoredInstanceConfig(
+                        "app-1", "{}", null,
+                        com.javalearn.lab.chaos.instance.InstanceConfigStatus.APPLIED,
+                        2, NOW, NOW, null, NOW.plusSeconds(30),
+                        null, null, null, null, null)));
+
+        PrecheckItem item = item(service.inspectReport(RUN), RunPrecheckService.KEY_STABLE);
+
+        assertThat(item.status()).isEqualTo(PrecheckStatus.BLOCK);
+        assertThat(item.message()).contains("app-1");
+        assertThatThrownBy(() -> service.enforce(RUN))
+                .isInstanceOf(com.javalearn.lab.chaos.error.PrecheckBlockedException.class);
+    }
+
+    @Test
+    void anElapsedStablePeriodDoesNotBlock() {
+        when(instanceConfigs.findStableAfter(any())).thenReturn(List.of());
+
+        assertThat(item(service.inspectReport(RUN), RunPrecheckService.KEY_STABLE).status())
+                .isEqualTo(PrecheckStatus.PASS);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private RunPrecheckService newService() {
         return new RunPrecheckService(properties, ledgerProperties, bootstrap, repository, docker,
-                traffic, chaos, toxiproxy, chaosProperties, prometheus,
+                traffic, chaos, toxiproxy, chaosProperties, prometheus, instanceConfigs,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

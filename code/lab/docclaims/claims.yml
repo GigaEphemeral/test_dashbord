@@ -771,3 +771,16 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b5-stable-period-gate
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B5-00-preconditions.md
+  statement: "B5-00：预检查在 lab_instance_config.stable_until 未到期时 BLOCK 正式 run（instances.stable）"
+  verify:
+    kind: shell
+    command: "grep -q KEY_STABLE code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/precheck/RunPrecheckService.java && grep -q findStableAfter code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigRepository.java && grep -q instances.stable code/lab/scripts/console-smoke.mjs || grep -q KEY_STABLE code/services/chaos-controller/src/test/java/com/javalearn/lab/chaos/precheck/RunPrecheckServiceTest.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29
