@@ -225,10 +225,6 @@ const paramsForSend = computed(() => {
   return effective
 })
 
-const configForSend = computed(() =>
-  Object.fromEntries(Object.entries(config.value || {}).filter(([node]) => selectedNodes.value.includes(node)))
-)
-
 const faultSchedule = computed(() =>
   faultRows.value.map((row) => ({
     atSeconds: Number.isFinite(Number(row.atSeconds)) ? Math.max(0, Number(row.atSeconds)) : 0,
@@ -283,7 +279,8 @@ async function createDraft() {
       params: paramsForSend.value,
       name: name.value.trim() || undefined,
       nodes: selectedNodes.value,
-      config: configForSend.value,
+      // JVM config is instance-level; the controller snapshots the selected
+      // nodes' stored configs when the run is created (no browser race).
       faultSchedule: faultSchedule.value
     })
     draftRun.value = run

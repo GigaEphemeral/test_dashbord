@@ -154,9 +154,13 @@ public class LedgerConfig {
                                              LedgerBootstrap bootstrap, RunLedgerRepository repository,
                                              LedgerWriter writer, LedgerStash stash,
                                              FaultScheduleValidator faultScheduleValidator,
-                                             ObjectMapper objectMapper, Clock ledgerClock) {
+                                             ObjectMapper objectMapper,
+                                             org.springframework.beans.factory.ObjectProvider<
+                                                     com.javalearn.lab.chaos.instance.InstanceConfigRepository>
+                                                     instanceConfigs,
+                                             Clock ledgerClock) {
         return new RunLedgerService(properties, resolver, bootstrap, repository, writer, stash,
-                faultScheduleValidator, objectMapper, ledgerClock);
+                faultScheduleValidator, objectMapper, instanceConfigs, ledgerClock);
     }
 
     /** B2-04a: fault actions join the run timeline; writes are best-effort. */

@@ -971,3 +971,27 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+
+- id: config-concurrent-merge
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "向导与监控参数卡先 await 再合并实例配置，避免对象展开在 await 前求值导致并发写丢失"
+  verify:
+    kind: shell
+    command: "grep -q 'const view = await fetchInstanceConfig' code/lab/dashboard/src/components/JvmParamsPanel.vue && grep -q 'const view = await fetchInstanceConfig' code/lab/dashboard/src/components/ConfigGroupEditor.vue && ! grep -q '\.\.\..*await fetchInstanceConfig' code/lab/dashboard/src/components/JvmParamsPanel.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: config-snapshot-server
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04c-config-unification.md
+  statement: "创建 run 时若请求未带 config，控制器按 nodes 从实例台账服务端快照 config 组；向导不再发送浏览器侧配置快照"
+  verify:
+    kind: shell
+    command: "grep -q 'instanceConfigSnapshot' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/ledger/RunLedgerService.java && ! grep -q 'configForSend' code/lab/dashboard/src/components/ExperimentWizard.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

@@ -84,12 +84,16 @@ async function load(force = false) {
   try {
     await Promise.all(nodes.value.map(async (node) => {
       try {
-        views.value = { ...views.value, [node]: await fetchInstanceConfig(props.token, node) }
+        // Await first, then merge: spreading views inside the literal would
+        // snapshot the object BEFORE the await and lose concurrent writes.
+        const view = await fetchInstanceConfig(props.token, node)
+        views.value = { ...views.value, [node]: view }
       } catch (err) {
         error.value = `读取 ${node} 配置失败：${describeError(err)}`
       }
       try {
-        effective.value = { ...effective.value, [node]: await fetchInstanceEffective(props.token, node) }
+        const live = await fetchInstanceEffective(props.token, node)
+        effective.value = { ...effective.value, [node]: live }
       } catch {
         effective.value = { ...effective.value, [node]: null }
       }

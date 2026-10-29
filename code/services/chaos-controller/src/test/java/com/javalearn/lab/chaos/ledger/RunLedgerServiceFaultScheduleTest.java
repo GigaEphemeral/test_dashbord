@@ -96,4 +96,45 @@ class RunLedgerServiceFaultScheduleTest {
         verify(writer, never()).persistCreate(any(RunRecord.class),
                 org.mockito.ArgumentMatchers.<Map<String, String>>any());
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void snapshotsTheSelectedInstanceConfigsWhenTheRequestCarriesNone() throws Exception {
+        LedgerProperties properties = new LedgerProperties();
+        LedgerBootstrap bootstrap = mock(LedgerBootstrap.class);
+        when(bootstrap.status()).thenReturn(new LedgerBootstrap.BootstrapStatus(
+                LedgerBootstrap.State.OK, "3", null, NOW));
+        RunLedgerRepository repository = mock(RunLedgerRepository.class);
+        when(repository.maxRunSequence(anyString())).thenReturn(0);
+        LedgerWriter snapshotWriter = mock(LedgerWriter.class);
+        com.javalearn.lab.chaos.instance.InstanceConfigRepository configs =
+                mock(com.javalearn.lab.chaos.instance.InstanceConfigRepository.class);
+        when(configs.find("app-1")).thenReturn(java.util.Optional.of(
+                new com.javalearn.lab.chaos.instance.StoredInstanceConfig("app-1",
+                        "{\"jdkVersion\":21,\"gcCollector\":\"G1\"}", null,
+                        com.javalearn.lab.chaos.instance.InstanceConfigStatus.APPLIED, 1,
+                        NOW, NOW, null)));
+        when(configs.find("app-2")).thenReturn(java.util.Optional.empty());
+        org.springframework.beans.factory.ObjectProvider<
+                com.javalearn.lab.chaos.instance.InstanceConfigRepository> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(configs);
+        RunLedgerService withSnapshot = new RunLedgerService(properties,
+                mock(LedgerTargetResolver.class), bootstrap, repository, snapshotWriter,
+                mock(LedgerStash.class),
+                new FaultScheduleValidator(properties, new ChaosProperties(),
+                        new FaultScheduleProperties()),
+                new ObjectMapper(), provider, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        withSnapshot.create(new RunCreateRequest("load", Map.of(), "snap", List.of("app-1", "app-2"),
+                null, null));
+
+        ArgumentCaptor<Map<String, String>> groups = ArgumentCaptor.forClass(Map.class);
+        verify(snapshotWriter).persistCreate(any(RunRecord.class), groups.capture());
+        JsonNode persisted = new ObjectMapper().readTree(groups.getValue().get("config"));
+        assertThat(persisted.has("app-1")).isTrue();
+        assertThat(persisted.get("app-1").path("gcCollector").asText()).isEqualTo("G1");
+        // An unconfigured node is simply absent - the snapshot never invents one.
+        assertThat(persisted.has("app-2")).isFalse();
+    }
 }

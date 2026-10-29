@@ -65,6 +65,8 @@ public class RunLedgerService {
     private final LedgerStash stash;
     private final FaultScheduleValidator faultScheduleValidator;
     private final ObjectMapper objectMapper;
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.javalearn.lab.chaos.instance.InstanceConfigRepository> instanceConfigs;
     private final Clock clock;
 
     public RunLedgerService(LedgerProperties properties, LedgerTargetResolver resolver,
@@ -72,6 +74,18 @@ public class RunLedgerService {
                             LedgerWriter writer, LedgerStash stash,
                             FaultScheduleValidator faultScheduleValidator,
                             ObjectMapper objectMapper, Clock clock) {
+        this(properties, resolver, bootstrap, repository, writer, stash, faultScheduleValidator,
+                objectMapper, null, clock);
+    }
+
+    public RunLedgerService(LedgerProperties properties, LedgerTargetResolver resolver,
+                            LedgerBootstrap bootstrap, RunLedgerRepository repository,
+                            LedgerWriter writer, LedgerStash stash,
+                            FaultScheduleValidator faultScheduleValidator,
+                            ObjectMapper objectMapper,
+                            org.springframework.beans.factory.ObjectProvider<
+                                    com.javalearn.lab.chaos.instance.InstanceConfigRepository> instanceConfigs,
+                            Clock clock) {
         this.properties = properties;
         this.resolver = resolver;
         this.bootstrap = bootstrap;
@@ -80,6 +94,7 @@ public class RunLedgerService {
         this.stash = stash;
         this.faultScheduleValidator = faultScheduleValidator;
         this.objectMapper = objectMapper;
+        this.instanceConfigs = instanceConfigs;
         this.clock = clock;
     }
 
@@ -98,6 +113,14 @@ public class RunLedgerService {
             JsonNode config = objectMapper.valueToTree(request.config());
             rejectSensitiveKeys(config, "config");
             groups.put("config", serializeWithinCap(config, "config"));
+        } else if (nodes != null) {
+            // B5: JVM config lives in lab_instance_config. Snapshot the selected
+            // nodes' stored configs on the server so the run draft records what
+            // was actually applied - a browser-side snapshot could race/fail.
+            String snapshot = instanceConfigSnapshot(nodes);
+            if (snapshot != null) {
+                groups.put("config", snapshot);
+            }
         }
         if (request != null && request.faultSchedule() != null) {
             // B3-00b: persist the NORMALISED entries (manual holds written as
@@ -187,6 +210,35 @@ public class RunLedgerService {
             throw new InvalidLedgerRequestException("stored fault timeline is not valid JSON: "
                     + e.getMessage());
         }
+    }
+
+    /** {@code {node: stored config}} for the run draft; null when nothing is configured. */
+    private String instanceConfigSnapshot(String nodesCsv) {
+        if (instanceConfigs == null) {
+            return null;
+        }
+        var repo = instanceConfigs.getIfAvailable();
+        if (repo == null) {
+            return null;
+        }
+        java.util.LinkedHashMap<String, JsonNode> snapshot = new java.util.LinkedHashMap<>();
+        for (String part : nodesCsv.split(",")) {
+            String node = part.trim();
+            if (node.isEmpty()) {
+                continue;
+            }
+            repo.find(node).ifPresent(row -> {
+                try {
+                    snapshot.put(node, objectMapper.readTree(row.configJson()));
+                } catch (JsonProcessingException ignored) {
+                    // An unreadable row is skipped: the run must still be creatable.
+                }
+            });
+        }
+        if (snapshot.isEmpty()) {
+            return null;
+        }
+        return serializeWithinCap(objectMapper.valueToTree(snapshot), "config");
     }
 
     public RunPageView list(String scenario, String status, Integer limit, Integer offset) {

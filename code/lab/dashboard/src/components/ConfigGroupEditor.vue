@@ -85,6 +85,8 @@ async function loadAll() {
   try {
     await Promise.all(props.nodes.map(async (node) => {
       try {
+        // Await first, then merge: spreading views inside the literal would
+        // snapshot the object BEFORE the await and lose concurrent writes.
         const view = await fetchInstanceConfig(props.token, node)
         views.value = { ...views.value, [node]: view }
         if (view?.config) snapshot[node] = view.config

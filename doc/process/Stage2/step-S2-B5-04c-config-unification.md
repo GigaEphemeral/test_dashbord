@@ -4,7 +4,7 @@
 > 日期：2026-10-30
 > 分支 / HEAD：`feature/stage2-workbench` / `922f05e`（本步改动本地待提交）
 > 测试：`InstanceRebuildServiceTest` 16/0、`InstanceRebuildControllerTest` 9/0、`InstanceConfigServiceTest` 9/0；
-> console-smoke **155/0**（新增重启按钮 / JVM 参数对照断言）；claims 74/0；真机 app-1 手动重启 10 项检查全 PASS
+> console-smoke **155/0**（新增重启按钮 / JVM 参数对照断言）；claims 76/0；真机 app-1 手动重启 10 项检查全 PASS
 
 # 当前进展
 
@@ -13,6 +13,10 @@
 - **直接原因（已修）**：`InstanceConfigEditor.toForm()` 漏拷 `gcCollector`（它既不在 TEXT/NUMBER/BOOLEAN 列表里，
   `buildPayload` 又单独处理），页面加载后 GC 选择器显示“未设置”，**任何一次页面保存都会把 G1 丢掉**——这正是
   “配置下发生效不了 / 两个页面参数不一致”的根因。修复后页面显示 G1，校验 argv 含 `-XX:+UseG1GC`。
+- **并发写丢失（已修）**：向导与监控参数卡原来写的是
+  `views.value = { ...views.value, [node]: await fetchInstanceConfig(...) }`——对象展开在 `await` **之前**求值，
+  三个实例并发时后完成的赋值会用旧快照覆盖，随机丢掉 app-1 的配置（表现为“实例状态时好时坏”、向导参数偶发缺 app-1）。
+  改为先 `await` 再合并；监控参数卡现在稳定显示 app-1/app-2 `APPLIED · G1 · 与目标一致`，app-3 `NOT_CONFIGURED`。
 - **真正的缺口在 UI**：
   1. 场景向导第 3 步的「变量与配置组」是第二套草稿模型（字段名/默认值不同），其“应用/回滚”按钮是占位；
   2. 「实例与 JVM」页可以应用，但没有显式“重启 JVM”，且操作栏随页面滚动；
@@ -27,6 +31,7 @@
 | 重启按钮 | `InstanceConfigEditor.vue` | 「重启 JVM」+ 确认弹窗；仅在 APPLIED 时可用；与 apply/rollback 共用进度与结果面板 |
 | 操作栏悬浮 | `InstanceConfigEditor.vue` | 校验/仅保存/应用/回滚/重启固定在卡片底部，长表单滚动时仍可操作 |
 | 单一事实源 | `ConfigGroupEditor.vue` 重写 | 向导第 3 步不再维护第二套字段模型：表格显示每节点台账状态/revision/目标参数/回读，编辑区直接复用 `InstanceConfigEditor`（保存/应用/重启/回滚全在台账上） |
+| run 配置快照 | `RunLedgerService.create` | 创建 run 时若未显式带 config，则按 `nodes` 从 `lab_instance_config` **服务端快照**写入 config 组；向导不再发送浏览器侧快照，消除整页竞态 |
 | 向导快照 | `ExperimentWizard.vue` | `update:config` 改为发射 **服务端实例配置快照**，run 草稿仍记录“创建时实际配置”，但不再有第二套默认值 |
 | 监控参数对照 | `JvmParamsPanel.vue` | 实时监控新增「JVM 参数对照」：实例/状态/rev/Xms-Xmx/GC/目标停顿/Young 区间/IHOP/Region/额外参数/镜像/目标-回读一致性；每 15s 最多刷新一次 |
 | 回读稳定性 | `application.yml`、compose、`.env.example` | `jvm-flags-timeout-seconds` 5→10；补转发 `LAB_INSTANCE_JVM_FLAGS_*`、`LAB_INSTANCE_EVENTS_*` |
