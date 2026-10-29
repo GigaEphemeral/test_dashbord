@@ -59,6 +59,9 @@
 > 探针恢复应为 145）；verify **109/1**、smoke 7/7、claims **58**（审核后不变）。真机：apply/rollback（app-1 384/512 与池切换、
 > 失败自动恢复 2 次）、JDK8 APPLIED + GC 轮转回读、UI apply/rollback。收口 `step-S2-B4-00-closure.md`。
 
+> **B5-00 基线（2026-10-29）**：mysql 集群 3/3 ONLINE、probe_up=1；console-smoke **145/0**（恢复完整分支）；
+> `instances.stable` BLOCK 真机验证通过。B5 决策：mysql-3 允许重建、稳定期 BLOCK、jdk-matrix 方案 A、B5-04 按提议范围。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -413,6 +416,13 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 
 ## 6. B5 · 拓扑、分流、重复实验与全量验收
 
+### B5-00 前置门禁（2026-10-29 用户确认后新增）
+
+> **完成状态（2026-10-29）：已完成。** `jl-mysql-3` errant GTID 修复：完整停机恢复 + 移除 mysql-3 + clone 重新加入
+> （localAddress 用 3306），3/3 ONLINE、`mysql_cluster_probe_up=1`、Router ok；预检查新增 `instances.stable`：
+> `stable_until > now` 的实例 **BLOCK** 正式 run（真机 apply 后 BLOCKED，65s 后 WARN）；console-smoke 恢复 **145/0**。
+> 交接 `step-S2-B5-00-preconditions.md`。
+
 ### B5-01 实时拓扑负载热度（`/observe`）
 
 - 开发：节点/连线由当前拓扑数据生成（非静态图）；热度维度可切（综合/CPU/内存/线程池/网络 I/O），
@@ -505,6 +515,10 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 13 | 配置应用/重启语义（2026-10-29） | 预检查前完成；run 中禁止改启动参数；失败自动回滚并进入稳定期；UI 显示待重启/应用中/已生效/已回滚 | B4-02/B4-04 |
 | 14 | Caffeine 语义（2026-10-29） | 过期/刷新按秒，`0` 不启用；关闭 L1 清空并显示“不适用”，页面有提示 | B3-01/B3-00 |
 | 15 | 未启用节点（2026-10-29） | 配置行置灰 + 下拉框排除；拓扑/实例表/实例卡显示“未启用” | B3-00/B4-04 |
+| 16 | mysql-3 修复（2026-10-29） | 允许重建 mysql-3 数据以恢复 InnoDB Cluster（只影响该节点，clone 自 mysql-1） | B5-00 |
+| 17 | 稳定期门禁（2026-10-29） | 稳定期内正式 run **BLOCK**；探索/草稿不影响；预检查展示 `instances.stable` | B5-00 |
+| 18 | jdk-matrix（2026-10-29） | 方案 A：B5-03 增加 d7 模板，JDK21/JDK8 各 1 次，仅模板内可选，不放开通用 UI | B5-03 |
+| 19 | B5-04 范围（2026-10-29） | 优先补 Tomcat/容器网络/k6 summary/heap dump/JVM 参数回读；其余明确 UNWIRED/DEGRADED | B5-04 |
 
 三项遗留待确认已全部在 2026-10-28 确认，无遗留项。
 
@@ -527,6 +541,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v2.1：新增并完成 **B5-00 前置门禁**（mysql-3 clone 复组、稳定期 BLOCK、冒烟 145）；§9 追加 4 项 B5 确认 |
 | 2026-10-29 | v2.0：B4-04 实现并收口——实例配置页/JDK8 LIMITED/GC 日志查看；§5 置收口状态，§0 记录 B4 批次基线 |
 | 2026-10-29 | v1.9：B4-03 实现——GC 日志版本适配/可写路径/回读端点；§0 记录 B4-03 基线 |
 | 2026-10-29 | v1.8：B4-02 实现——受控重建/健康门禁/自动回滚/稳定期/ROLLED_BACK；Nginx 超时放宽；§0 记录 B4-02 基线 |
