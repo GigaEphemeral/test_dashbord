@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javalearn.lab.chaos.instance.InstanceConfigRepository;
 import com.javalearn.lab.chaos.metrics.MetricsService;
 import com.javalearn.lab.chaos.metrics.PrometheusGateway;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,6 +16,9 @@ public class TrafficSplitConfig {
 
     @Bean
     public InstanceStatsService instanceStatsService(MetricsService metricsService,
+                                                     // Two gateways exist (metrics + precheck);
+                                                     // the split reads the metrics one.
+                                                     @Qualifier("prometheusGateway")
                                                      PrometheusGateway gateway,
                                                      TrafficSplitProperties properties,
                                                      InstanceConfigRepository configRepository,
