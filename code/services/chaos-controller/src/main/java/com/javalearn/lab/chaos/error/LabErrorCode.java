@@ -52,6 +52,11 @@ public enum LabErrorCode implements ErrorCode {
      * stop action instead of showing a generic conflict.
      */
     INSTANCE_CONFIG_LOCKED("40906", "Instance startup configuration is locked by a running run"),
+    /**
+     * Stage2 B4-02: apply/rollback refused before any Docker mutation (no stored
+     * config, no previous config, or another rebuild already in flight).
+     */
+    INSTANCE_REBUILD_CONFLICT("40907", "Instance rebuild refused"),
     BAD_GATEWAY("50201", "Bad gateway"),
     RESPONSE_TOO_LARGE("50202", "Upstream response too large"),
     /**

@@ -38,4 +38,34 @@ public final class InstanceViews {
                                         String instanceId, String readback,
                                         String observability, List<String> notes) {
     }
+
+    /**
+     * One B4-02 health gate. {@code status} is {@code PASS}/{@code FAIL}/
+     * {@code SKIPPED}; {@code detail} carries the observed value (pool numbers,
+     * upstream status, image identity) or the failing reason.
+     */
+    public record ApplyCheckView(String name, String status, long durationMs, String detail) {
+    }
+
+    /**
+     * B4-02 apply/rollback evidence. A failed rebuild is still HTTP 200: the
+     * caller gets {@code status=FAILED} (or {@code DEGRADED} when the automatic
+     * restore itself failed) plus the failing check, the rollback outcome and
+     * the stable period start - never an opaque 500.
+     *
+     * @param action       {@code APPLY} or {@code ROLLBACK}
+     * @param status       final ledger status: {@code APPLIED}/{@code FAILED}/{@code DEGRADED}
+     * @param rolledBack   the previous container was restored and started
+     * @param rollback     {@code NOT_NEEDED}/{@code RESTORED}/{@code FAILED}
+     * @param image        running image tag after the rebuild (null when failed)
+     * @param imageId      running image id after the rebuild (null when failed)
+     */
+    public record InstanceApplyView(String instance, String action, String status,
+                                    boolean rolledBack, String rollback, String containerName,
+                                    String containerId, String image, String imageId,
+                                    String previousImage, String previousImageId,
+                                    String javaToolOptions, List<ApplyCheckView> checks,
+                                    long durationMs, String stableUntil, String failedCheck,
+                                    String error, int revision) {
+    }
 }

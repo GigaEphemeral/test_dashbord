@@ -37,8 +37,8 @@ lab:
     container-prefix: ${LAB_INSTANCE_CONTAINER_PREFIX:jl-}
     memory-limit-mb: ${LAB_INSTANCE_MEMORY_LIMIT_MB:768}
     thread-stack-mb: ${LAB_INSTANCE_THREAD_STACK_MB:1}
-    native-reserve-mb: ${LAB_INSTANCE_NATIVE_RESERVE_MB:128}
-    default-metaspace-mb: ${LAB_INSTANCE_DEFAULT_METASPACE_MB:128}
+    native-reserve-mb: ${LAB_INSTANCE_NATIVE_RESERVE_MB:64}
+    default-metaspace-mb: ${LAB_INSTANCE_DEFAULT_METASPACE_MB:96}
     default-direct-memory-mb: ${LAB_INSTANCE_DEFAULT_DIRECT_MEMORY_MB:64}
     max-extra-args: ${LAB_INSTANCE_MAX_EXTRA_ARGS:16}
     max-extra-args-length: ${LAB_INSTANCE_MAX_EXTRA_ARGS_LENGTH:1024}
@@ -46,6 +46,21 @@ lab:
     image-tags: ${LAB_INSTANCE_IMAGE_TAGS:jdk21,jdk8}
     # GC-log/heap-dump paths must resolve inside this root; arbitrary paths are rejected.
     gc-log-root: ${LAB_INSTANCE_GC_LOG_ROOT:/app/logs}
+    # Stage2 B4-02 controlled rebuild: stable period, health gates and the
+    # fixed image repository. The applied image ref is always
+    # <image-repository>:<stored imageTag>; a request never supplies a repo/tag
+    # and the controller never pulls. Every default matches the compose /
+    # .env.example forward (LAB_INSTANCE_*), no rebuild needed to tune.
+    stable-seconds: ${LAB_INSTANCE_STABLE_SECONDS:60}
+    apply-timeout-seconds: ${LAB_INSTANCE_APPLY_TIMEOUT_SECONDS:240}
+    health-timeout-seconds: ${LAB_INSTANCE_HEALTH_TIMEOUT_SECONDS:150}
+    nginx-probe-url: ${LAB_INSTANCE_NGINX_PROBE_URL:http://nginx/api/hello}
+    app-probe-url-template: ${LAB_INSTANCE_APP_PROBE_URL_TEMPLATE:http://%s:8080/api/hello}
+    pool-probe-url-template: ${LAB_INSTANCE_POOL_PROBE_URL_TEMPLATE:http://%s:8080/lab/pool}
+    probe-timeout-seconds: ${LAB_INSTANCE_PROBE_TIMEOUT_SECONDS:5}
+    prometheus-up-wait-seconds: ${LAB_INSTANCE_PROMETHEUS_UP_WAIT_SECONDS:30}
+    image-repository: ${LAB_INSTANCE_IMAGE_REPOSITORY:java-learn-lab/seckill-app}
+    nginx-container: ${LAB_INSTANCE_NGINX_CONTAINER:jl-nginx}
   # Stage2 B1-01 ledger: run/operation/snapshot/fault/audit rows live in the
   # stack MySQL's dedicated `lab_ledger` database (standalone mysql:3306; db-ha
   # through mysql-router:6446, the same topology switch as the app tier and

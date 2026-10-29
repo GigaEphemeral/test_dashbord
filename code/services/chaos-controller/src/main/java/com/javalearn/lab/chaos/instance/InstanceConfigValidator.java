@@ -246,6 +246,12 @@ public class InstanceConfigValidator {
         } else if ("Serial".equals(collector)) {
             args.add("-XX:+UseSerialGC");
         }
+        // G1NewSizePercent/G1MaxNewSizePercent and
+        // InitiatingHeapOccupancyPercent are experimental in JDK 8/21; the
+        // unlock flag must precede them or the JVM refuses to start.
+        if (g1New != null || g1MaxNew != null || ihop != null) {
+            args.add("-XX:+UnlockExperimentalVMOptions");
+        }
         if (pause != null) {
             args.add("-XX:MaxGCPauseMillis=" + pause);
         }

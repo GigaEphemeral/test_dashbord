@@ -48,6 +48,10 @@
 > verify 109/1、console-smoke 138/0（B4-01 未改 UI）、claims 54。真机：`/lab/pool`、草稿 708/768、effective 回读、
 > JDK8 argv 与三类拒绝。交接 `step-S2-B4-01-instance-config-schema.md`。
 
+> **B4-02 基线（2026-10-29）**：chaos 模块 **812 / 0 fail**、smoke 7/7、verify 109/1、console-smoke **138/0**。真机：app-1
+> apply（384m/池 2-4-10）与 rollback（512m/池 4-8-50）9 项检查全 PASS，app-2/3 未变；失败自动恢复 2 次。
+> Nginx `/lab-api` 超时 300s、apply 240s、health 150s。交接 `step-S2-B4-02-controlled-rebuild.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -359,6 +363,11 @@ B3 收口交接：`step-S2-B3-00-closure.md`。
 - UI 语义（v4）：应用配置必须在预检查前完成；run 中禁止修改启动参数；提供“应用并重启/仅保存/回滚”，
   状态 `待重启/应用中/已生效/已回滚`；失败自动回滚并进入稳定期。
 - 验收：`待重启/应用中/已生效/应用失败` 状态全程可见；有效参数经 `jcmd`/启动信息回读。
+> **实现状态（2026-10-29）：已完成代码与真机验证。** `POST /lab/instances/{id}/apply|rollback`：snapshot → park 旧容器 →
+> 复制创建（仅替换 `JAVA_TOOL_OPTIONS`）→ Docker health → 应用探针 → `/lab/pool` 回读 → `nginx -s reload` + 入口探针 →
+> Prometheus `up` → 镜像 tag/id；成功写 APPLIED/ROLLED_BACK + `stable_until`，失败自动恢复旧容器并写 FAILED（恢复失败
+> DEGRADED）。真机 apply/rollback 均 9 项 PASS；G1 实验参数解锁、Metaspace 128m OOM、冷启动瞬时 unhealthy 三个真机坑
+> 已修。交接 `step-S2-B4-02-controlled-rebuild.md`；UI 与 `stableUntil` 展示归 B4-04。
 
 ### B4-03 GC 日志与诊断采集
 
@@ -498,6 +507,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |
 | 2026-10-29 | v1.4：新增 **B3-00 交互对齐**；按交互稿 v4 补充节点门禁、k6 结构化表单、商品 ID 分布、故障时间线、时间轴/k6 进度、测试名称/清理；B4 补 JVM/GC、业务池/Tomcat、Caffeine、GC 日志与重启字段；§9 追加 4 项确认 |
+| 2026-10-29 | v1.8：B4-02 实现——受控重建/健康门禁/自动回滚/稳定期/ROLLED_BACK；Nginx 超时放宽；§0 记录 B4-02 基线 |
 | 2026-10-29 | v1.7：B4-01 实现——app 业务池/Caffeine 启动参数、控制器实例配置 schema/预算/草稿存储/回读；§0 记录 B4-01 基线 |
 | 2026-10-29 | v1.6：B3-01..04 实现——独立 L1 开关、10,000 商品基线 + SCAN 键浏览/单键/重置、A/B 对照面板、业务对账；§0 记录 B3 批次基线 |
 | 2026-10-29 | v1.5：B3-00 交互对齐实现完成——V3 台账字段与归档/删除、节点门禁、故障时间线（manual=-1 手动保持）、load 商品采样、6 分区控制台/7 步向导/监控时间轴/实验记录清理；§0 记录 B3-00 基线，B4 应用重启仍禁用 |

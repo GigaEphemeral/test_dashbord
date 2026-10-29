@@ -219,7 +219,22 @@ class LedgerSchemaIT {
         assertThat(unique).isEqualTo(4); // one row per indexed column
         assertThat(jdbc.queryForObject("SELECT version FROM lab_ledger.flyway_schema_history "
                 + "WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1", String.class))
-                .isEqualTo("4");
+                .isEqualTo("5");
+    }
+
+    @Test
+    void v5AddsTheInstanceApplyOutcomeColumns() {
+        JdbcTemplate jdbc = LedgerTestDatabase.jdbc();
+        List<String> columns = jdbc.queryForList(
+                "SELECT column_name FROM information_schema.columns "
+                        + "WHERE table_schema = 'lab_ledger' AND table_name = 'lab_instance_config' "
+                        + "AND column_name IN ('stable_until', 'applied_image_tag', "
+                        + "'applied_image_id', 'last_apply_at', 'previous_image_tag', "
+                        + "'previous_image_id') ORDER BY column_name",
+                String.class);
+
+        assertThat(columns).containsExactly("applied_image_id", "applied_image_tag",
+                "last_apply_at", "previous_image_id", "previous_image_tag", "stable_until");
     }
 
     @Test

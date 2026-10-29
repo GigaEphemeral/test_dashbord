@@ -38,10 +38,10 @@ public class InstanceConfigProperties {
     private int threadStackMb = 1;
 
     /** Native/other overhead reserved inside the container limit. */
-    private int nativeReserveMb = 128;
+    private int nativeReserveMb = 64;
 
     /** Metaspace budget when the request leaves it unset. */
-    private int defaultMetaspaceMb = 128;
+    private int defaultMetaspaceMb = 96;
 
     /** Direct-memory budget when the request leaves it unset. */
     private int defaultDirectMemoryMb = 64;
@@ -57,6 +57,42 @@ public class InstanceConfigProperties {
 
     /** Allow-listed root for GC-log and heap-dump paths (POSIX container path). */
     private String gcLogRoot = "/app/logs";
+
+    // ------------------------------------------------------- B4-02 rebuild
+
+    /** Stable period after an apply/rollback (success and failure), design §10.7. */
+    private int stableSeconds = 60;
+
+    /** Wall-clock budget of one rebuild including every health gate. */
+    private int applyTimeoutSeconds = 240;
+
+    /** Budget for the Docker health gate (container health or the app probe fallback). */
+    private int healthTimeoutSeconds = 150;
+
+    /** Nginx entry probe after the reload (through the upstream name, not an IP). */
+    private String nginxProbeUrl = "http://nginx/api/hello";
+
+    /** App probe template; {@code %s} is the instance service name (e.g. app-1). */
+    private String appProbeUrlTemplate = "http://%s:8080/api/hello";
+
+    /** Pool readback template; {@code %s} is the instance service name. */
+    private String poolProbeUrlTemplate = "http://%s:8080/lab/pool";
+
+    /** Per-probe HTTP timeout. */
+    private int probeTimeoutSeconds = 5;
+
+    /** How long the Prometheus {@code up} gate waits for a first 1 sample. */
+    private int prometheusUpWaitSeconds = 30;
+
+    /** Image repository; the ref is always {@code <repository>:<imageTag>}. */
+    private String imageRepository = "java-learn-lab/seckill-app";
+
+    /** Container whose {@code nginx -s reload} re-resolves the upstreams. */
+    private String nginxContainer = "jl-nginx";
+
+    private static final String IMAGE_REPOSITORY = "[A-Za-z0-9][A-Za-z0-9._/-]{0,200}";
+
+    private static final String CONTAINER_NAME = "[A-Za-z0-9][A-Za-z0-9_.-]{0,62}";
 
     @PostConstruct
     public void validate() {
@@ -99,6 +135,51 @@ public class InstanceConfigProperties {
                 || gcLogRoot.contains("..") || gcLogRoot.endsWith("/") && gcLogRoot.length() > 1) {
             throw new IllegalStateException("lab.instance.gc-log-root must be a POSIX path without "
                     + "'..' or a trailing slash (was '" + gcLogRoot + "'); env LAB_INSTANCE_GC_LOG_ROOT");
+        }
+        range(stableSeconds, 0, 3600, "lab.instance.stable-seconds",
+                "LAB_INSTANCE_STABLE_SECONDS");
+        range(applyTimeoutSeconds, 5, 900, "lab.instance.apply-timeout-seconds",
+                "LAB_INSTANCE_APPLY_TIMEOUT_SECONDS");
+        range(healthTimeoutSeconds, 5, 900, "lab.instance.health-timeout-seconds",
+                "LAB_INSTANCE_HEALTH_TIMEOUT_SECONDS");
+        range(probeTimeoutSeconds, 1, 120, "lab.instance.probe-timeout-seconds",
+                "LAB_INSTANCE_PROBE_TIMEOUT_SECONDS");
+        range(prometheusUpWaitSeconds, 0, 600, "lab.instance.prometheus-up-wait-seconds",
+                "LAB_INSTANCE_PROMETHEUS_UP_WAIT_SECONDS");
+        requireUrl(nginxProbeUrl, "lab.instance.nginx-probe-url", "LAB_INSTANCE_NGINX_PROBE_URL");
+        requireTemplate(appProbeUrlTemplate, "lab.instance.app-probe-url-template",
+                "LAB_INSTANCE_APP_PROBE_URL_TEMPLATE");
+        requireTemplate(poolProbeUrlTemplate, "lab.instance.pool-probe-url-template",
+                "LAB_INSTANCE_POOL_PROBE_URL_TEMPLATE");
+        if (imageRepository == null || !imageRepository.matches(IMAGE_REPOSITORY)
+                || imageRepository.contains("..") || imageRepository.contains(":")) {
+            throw new IllegalStateException("lab.instance.image-repository must be a bare repository "
+                    + "name without a tag, '..' or a colon (was '" + imageRepository
+                    + "'); env LAB_INSTANCE_IMAGE_REPOSITORY");
+        }
+        if (nginxContainer == null || !nginxContainer.matches(CONTAINER_NAME)) {
+            throw new IllegalStateException("lab.instance.nginx-container must be a container name "
+                    + "(was '" + nginxContainer + "'); env LAB_INSTANCE_NGINX_CONTAINER");
+        }
+    }
+
+    /** The image ref is always built here - a request never supplies a repository. */
+    public String imageRef(String imageTag) {
+        return imageRepository + ":" + imageTag;
+    }
+
+    private static void requireUrl(String value, String property, String env) {
+        if (value == null || !value.matches("https?://[^\\s/]+(/[^\\s]*)?")) {
+            throw new IllegalStateException(property + " must be an http(s) URL without spaces (was '"
+                    + value + "'); env " + env);
+        }
+    }
+
+    private static void requireTemplate(String value, String property, String env) {
+        if (value == null || value.indexOf("%s") < 0
+                || !value.replace("%s", "app-1").matches("https?://[^\\s/]+(/[^\\s]*)?")) {
+            throw new IllegalStateException(property + " must be an http(s) URL containing one %s "
+                    + "placeholder (was '" + value + "'); env " + env);
         }
     }
 
@@ -203,5 +284,85 @@ public class InstanceConfigProperties {
 
     public void setGcLogRoot(String gcLogRoot) {
         this.gcLogRoot = gcLogRoot;
+    }
+
+    public int getStableSeconds() {
+        return stableSeconds;
+    }
+
+    public void setStableSeconds(int stableSeconds) {
+        this.stableSeconds = stableSeconds;
+    }
+
+    public int getApplyTimeoutSeconds() {
+        return applyTimeoutSeconds;
+    }
+
+    public void setApplyTimeoutSeconds(int applyTimeoutSeconds) {
+        this.applyTimeoutSeconds = applyTimeoutSeconds;
+    }
+
+    public int getHealthTimeoutSeconds() {
+        return healthTimeoutSeconds;
+    }
+
+    public void setHealthTimeoutSeconds(int healthTimeoutSeconds) {
+        this.healthTimeoutSeconds = healthTimeoutSeconds;
+    }
+
+    public String getNginxProbeUrl() {
+        return nginxProbeUrl;
+    }
+
+    public void setNginxProbeUrl(String nginxProbeUrl) {
+        this.nginxProbeUrl = nginxProbeUrl;
+    }
+
+    public String getAppProbeUrlTemplate() {
+        return appProbeUrlTemplate;
+    }
+
+    public void setAppProbeUrlTemplate(String appProbeUrlTemplate) {
+        this.appProbeUrlTemplate = appProbeUrlTemplate;
+    }
+
+    public String getPoolProbeUrlTemplate() {
+        return poolProbeUrlTemplate;
+    }
+
+    public void setPoolProbeUrlTemplate(String poolProbeUrlTemplate) {
+        this.poolProbeUrlTemplate = poolProbeUrlTemplate;
+    }
+
+    public int getProbeTimeoutSeconds() {
+        return probeTimeoutSeconds;
+    }
+
+    public void setProbeTimeoutSeconds(int probeTimeoutSeconds) {
+        this.probeTimeoutSeconds = probeTimeoutSeconds;
+    }
+
+    public int getPrometheusUpWaitSeconds() {
+        return prometheusUpWaitSeconds;
+    }
+
+    public void setPrometheusUpWaitSeconds(int prometheusUpWaitSeconds) {
+        this.prometheusUpWaitSeconds = prometheusUpWaitSeconds;
+    }
+
+    public String getImageRepository() {
+        return imageRepository;
+    }
+
+    public void setImageRepository(String imageRepository) {
+        this.imageRepository = imageRepository;
+    }
+
+    public String getNginxContainer() {
+        return nginxContainer;
+    }
+
+    public void setNginxContainer(String nginxContainer) {
+        this.nginxContainer = nginxContainer;
     }
 }

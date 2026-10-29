@@ -18,6 +18,7 @@ import com.javalearn.lab.chaos.error.DockerUnavailableException;
 import com.javalearn.lab.chaos.error.EnvLockConflictException;
 import com.javalearn.lab.chaos.error.InstanceConfigConflictException;
 import com.javalearn.lab.chaos.error.InstanceNotFoundException;
+import com.javalearn.lab.chaos.error.InstanceRebuildConflictException;
 import com.javalearn.lab.chaos.error.InvalidAppProxyRequestException;
 import com.javalearn.lab.chaos.error.InvalidChaosActionException;
 import com.javalearn.lab.chaos.error.InvalidInstanceConfigException;
@@ -333,6 +334,18 @@ public class LabExceptionHandler {
         log.warn("Instance config refused: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Result.failure(LabErrorCode.INSTANCE_CONFIG_LOCKED, ex.getMessage()));
+    }
+
+    /**
+     * B4-02: apply/rollback refused before touching Docker (no stored config, no
+     * previous config, another rebuild in flight). 409 with its own code (40907).
+     */
+    @ExceptionHandler(InstanceRebuildConflictException.class)
+    public ResponseEntity<Result<Void>> handleInstanceRebuildConflict(
+            InstanceRebuildConflictException ex) {
+        log.warn("Instance rebuild refused: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.failure(LabErrorCode.INSTANCE_REBUILD_CONFLICT, ex.getMessage()));
     }
 
     @ExceptionHandler(LedgerConflictException.class)

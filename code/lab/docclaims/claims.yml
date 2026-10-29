@@ -719,3 +719,16 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
+
+- id: b4-controlled-rebuild
+  polarity: positive
+  doc:
+    - doc/process/Stage2/stage2-开发测试与验收计划.md
+    - doc/process/Stage2/step-S2-B4-02-controlled-rebuild.md
+  statement: "B4-02：单实例受控重建经 Docker 复制创建/健康/应用探针/池回读/Nginx reload/Prometheus up/镜像核对，失败自动恢复旧容器并写稳定期"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildService.java && grep -q '/lab/instances/{instance}/apply' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildController.java && grep -q stable_until code/services/chaos-controller/src/main/resources/db/ledger/V5__instance_config_apply.sql && grep -q 'proxy_read_timeout 300s' code/lab/docker/nginx/conf.d/default.conf"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-29

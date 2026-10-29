@@ -1146,9 +1146,11 @@ async function main() {
 
     const rejectedQuality = ((await page.getByTestId('metric-quality-executor.rejected').textContent()) || '').trim();
     const rejectedValue = ((await page.getByTestId('metric-value-executor.rejected').textContent()) || '').trim();
+    // B4-01 wires executor_rejected_total, so OK + 0 is a real measurement
+    // now; the old "unwired" assertion would be stale.
     check(
-      'observe: unwired executor.rejected shows no data, never 0',
-      rejectedQuality !== 'OK' && rejectedValue !== '0' && rejectedValue !== '0.00',
+      'observe: wired executor.rejected renders a real value',
+      rejectedQuality === 'OK' && rejectedValue !== '无数据' && rejectedValue !== '',
       `quality=${rejectedQuality} value=${rejectedValue}`,
     );
 
@@ -1858,8 +1860,8 @@ async function main() {
     const runRejectedQuality = ((await page.getByTestId('metric-quality-executor.rejected').textContent()) || '').trim();
     const runRejectedValue = ((await page.getByTestId('metric-value-executor.rejected').textContent()) || '').trim();
     check(
-      'runs: unwired executor.rejected in run metrics is not rendered as 0',
-      runRejectedQuality !== 'OK' && runRejectedValue !== '0' && runRejectedValue !== '0.00',
+      'runs: executor.rejected in run metrics is wired (OK, real value)',
+      runRejectedQuality === 'OK' && runRejectedValue !== '无数据' && runRejectedValue !== '',
       `quality=${runRejectedQuality} value=${runRejectedValue}`,
     );
 

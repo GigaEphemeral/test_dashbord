@@ -56,10 +56,11 @@ class InstanceConfigValidatorTest {
         assertThat(result.config().gcLogPath()).isEqualTo("/app/logs/gc-app-1.log");
         assertThat(result.config().heapDumpPath()).isEqualTo("/app/logs/heap-app-1.hprof");
         assertThat(result.limitedObservability()).isFalse();
-        assertThat(result.requiredMemoryMb()).isEqualTo(256 + 128 + 64 + 64 + 128);
+        assertThat(result.requiredMemoryMb()).isEqualTo(256 + 128 + 64 + 64 + 64);
         assertThat(result.jvmArgs()).containsExactly(
                 "-Xms128m", "-Xmx256m", "-XX:MaxMetaspaceSize=128m",
-                "-XX:MaxDirectMemorySize=64m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=200",
+                "-XX:MaxDirectMemorySize=64m", "-XX:+UseG1GC",
+                "-XX:+UnlockExperimentalVMOptions", "-XX:MaxGCPauseMillis=200",
                 "-XX:G1NewSizePercent=5", "-XX:G1MaxNewSizePercent=60",
                 "-XX:G1HeapRegionSize=4m", "-XX:InitiatingHeapOccupancyPercent=45",
                 "-XX:NewRatio=2", "-XX:SurvivorRatio=8",
@@ -132,7 +133,7 @@ class InstanceConfigValidatorTest {
                 .hasMessageContaining("memory budget exceeded")
                 .hasMessageContaining("xmx=512")
                 .hasMessageContaining("threads=64x1=64")
-                .hasMessageContaining("= 896 MB > memLimit 768 MB");
+                .hasMessageContaining("= 832 MB > memLimit 768 MB");
     }
 
     @Test
