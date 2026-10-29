@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -344,6 +345,33 @@ class MetricsServiceTest {
 
         assertThat(view.quality()).isEqualTo("OK");
         assertThat(view.warnings()).anyMatch(warning -> warning.contains("ledger write failed"));
+    }
+
+    /**
+     * B5-03 invariant the report/export path depends on: the read-only run KPI
+     * window answers with the same grace-extended window as queryRun but NEVER
+     * touches lab_metric_window - an export must not mutate the ledger.
+     */
+    @Test
+    void theReadOnlyReportWindowNeverWritesTheLedger() {
+        Instant started = NOW.minusSeconds(120);
+        Instant ended = NOW.minusSeconds(60);
+        when(repository.findRun("run-1")).thenReturn(Optional.of(run(started, ended)));
+        properties.setReportKeys("http.rps");
+
+        MetricsViews.MetricsQueryView view = service(gatewayReturning(matrix(series("app-1", 2.5))), RPS)
+                .queryRunReadOnly("run-1");
+
+        assertThat(view.source()).isEqualTo("run");
+        assertThat(view.runId()).isNull();
+        assertThat(view.quality()).isEqualTo("OK");
+        assertThat(view.metrics()).hasSize(1);
+        assertThat(view.window().fromEpochSeconds())
+                .isEqualTo(started.getEpochSecond() - properties.getScrapeGraceSeconds());
+        assertThat(view.window().toEpochSeconds())
+                .isEqualTo(ended.getEpochSecond() + properties.getDrainGraceSeconds());
+        verify(repository, never()).insertMetricWindow(anyString(), anyString(), anyString(),
+                anyString(), any(), any(), anyString(), anyString());
     }
 
     @Test
