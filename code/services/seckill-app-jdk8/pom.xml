@@ -28,6 +28,9 @@
          coordinates, not the legacy mysql:mysql-connector-java this shell uses.
          Same driver version the BOM selects (8.0.33, still Java 8 compatible). -->
     <mysql-connector-java.version>8.0.33</mysql-connector-java.version>
+    <!-- Same Testcontainers line as the JDK 21 shell (1.21.4 is still Java 8
+         bytecode), so the real-Redis IT runs against the same client/runtime. -->
+    <testcontainers.version>1.21.4</testcontainers.version>
   </properties>
 
   <dependencyManagement>
@@ -156,6 +159,14 @@
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Real-Redis integration test for TwoLevelCache (the quick unit test keeps
+         using the in-memory FakeRedis). Test scope only. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
+      <version>${testcontainers.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -168,6 +179,12 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
+          <!-- *IT (the real-Redis cache test) runs in the normal test phase, the
+               same convention the JDK 21 shell uses for its Testcontainers ITs. -->
+          <includes>
+            <include>**/*Test.java</include>
+            <include>**/*IT.java</include>
+          </includes>
           <systemPropertyVariables>
             <net.bytebuddy.experimental>true</net.bytebuddy.experimental>
           </systemPropertyVariables>

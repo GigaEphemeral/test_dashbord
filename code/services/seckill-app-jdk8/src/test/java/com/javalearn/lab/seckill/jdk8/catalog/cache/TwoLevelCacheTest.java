@@ -24,11 +24,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * L1/L2 behaviour of {@link TwoLevelCache} against a real Redis 7.4.2.
+ * L1/L2 behaviour of {@link TwoLevelCache} against an in-memory Redis stand-in.
  *
  * <p>The Caffeine L1 is invalidated directly through its native cache to prove
- * the Redis L2 path, and a mocked {@link StringRedisTemplate} proves that a
- * Redis outage degrades to a miss instead of an exception.</p>
+ * the L2 path without starting a container, and a mocked
+ * {@link StringRedisTemplate} proves that a Redis outage degrades to a miss
+ * instead of an exception. Real Redis 7.4.2 behaviour (actual key/TTL layout,
+ * server-side SCAN clear, JSON round-trip) is covered by
+ * {@code TwoLevelCacheRedisIT}.</p>
  */
 class TwoLevelCacheTest {
 

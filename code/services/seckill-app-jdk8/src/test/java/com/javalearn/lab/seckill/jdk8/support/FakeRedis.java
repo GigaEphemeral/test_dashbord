@@ -20,9 +20,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * In-memory stand-in for {@link StringRedisTemplate}, used by tests whose subject
- * is the cache/L1 logic rather than Redis itself (the JDK 21 shell drove these
- * cases through a Testcontainers Redis; this shell must stay container-free).
+ * In-memory stand-in for {@link StringRedisTemplate}, used by the quick unit
+ * tests whose subject is the cache/L1 logic rather than Redis itself. The real
+ * Redis 7.4.2 semantics (key layout, TTL, SCAN-based clear, JSON round-trip) are
+ * covered separately by {@code TwoLevelCacheRedisIT}.
  *
  * <p>Only the operations the production code actually performs are modelled:
  * value get/set with TTL, delete (single key and batch), {@code getExpire} and a
