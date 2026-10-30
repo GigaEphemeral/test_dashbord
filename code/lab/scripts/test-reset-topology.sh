@@ -258,11 +258,11 @@ run_reset "$(make_env standalone)" --dry-run
 check 'both-up standalone declaration keeps jl-mysql' 'MySQL topology   : standalone'
 
 # --- 6. sentinel redis -------------------------------------------------------------------
-export MOCK_RUNNING="$DEV_CONTAINERS jl-mysql jl-redis-1 jl-redis-2 jl-redis-3"
+export MOCK_RUNNING="$DEV_CONTAINERS jl-mysql jl-redis-1 jl-redis-2"
 export MOCK_REDIS_MASTER="jl-redis-2"
 run_reset "$(make_env standalone sentinel)" --dry-run
 if (( RC == 0 )); then pass 'sentinel dry-run exits 0'; else fail 'sentinel dry-run exits 0'; fi
-check 'sentinel: every node is flushed' 'Redis targets    : jl-redis-1 jl-redis-2 jl-redis-3'
+check 'sentinel: every node is flushed' 'Redis targets    : jl-redis-1 jl-redis-2'
 check 'sentinel: verification follows the master' 'verify on jl-redis-2'
 
 # --- 7. --dry-run must not execute anything destructive ------------------------------------

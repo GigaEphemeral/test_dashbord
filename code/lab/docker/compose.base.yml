@@ -648,13 +648,16 @@ services:
       LAB_INSTANCE_JDK8_PROMETHEUS_JOB: ${LAB_INSTANCE_JDK8_PROMETHEUS_JOB:-seckill-app-jdk8}
       # B5-01 topology contract (job/label names and the 2s read cache).
       LAB_TOPOLOGY_RATE_WINDOW: ${LAB_TOPOLOGY_RATE_WINDOW:-1m}
+      LAB_TOPOLOGY_CLUSTER_NODES: ${LAB_TOPOLOGY_CLUSTER_NODES:-3}
+      LAB_TOPOLOGY_REDIS_NODES: ${LAB_TOPOLOGY_REDIS_NODES:-2}
+      LAB_TOPOLOGY_MYSQL_NODES: ${LAB_TOPOLOGY_MYSQL_NODES:-3}
       LAB_TOPOLOGY_CACHE_SECONDS: ${LAB_TOPOLOGY_CACHE_SECONDS:-2}
       LAB_TOPOLOGY_APP_JOB: ${LAB_TOPOLOGY_APP_JOB:-seckill-app}
       LAB_TOPOLOGY_REDIS_JOB: ${LAB_TOPOLOGY_REDIS_JOB:-redis-exporter-ha}
       LAB_TOPOLOGY_MYSQL_JOB: ${LAB_TOPOLOGY_MYSQL_JOB:-mysqld-exporter-ha}
       LAB_TOPOLOGY_NGINX_JOB: ${LAB_TOPOLOGY_NGINX_JOB:-nginx-exporter}
       LAB_TOPOLOGY_RABBIT_JOB: ${LAB_TOPOLOGY_RABBIT_JOB:-rabbitmq-queue}
-      LAB_TOPOLOGY_SIDECARS: ${LAB_TOPOLOGY_SIDECARS:-jl-nginx-exporter,jl-redis-exporter,jl-redis-1-exporter,jl-redis-2-exporter,jl-redis-3-exporter,jl-mysqld-exporter,jl-mysql-1-exporter,jl-mysql-2-exporter,jl-mysql-3-exporter}
+      LAB_TOPOLOGY_SIDECARS: ${LAB_TOPOLOGY_SIDECARS:-jl-nginx-exporter,jl-redis-exporter,jl-redis-1-exporter,jl-redis-2-exporter,jl-mysqld-exporter,jl-mysql-1-exporter,jl-mysql-2-exporter,jl-mysql-3-exporter}
       LAB_RECONCILE_MYSQL_MODE: ${LAB_RECONCILE_MYSQL_MODE:-${MYSQL_MODE:-standalone}}
       LAB_RECONCILE_BUSINESS_URL: ${LAB_RECONCILE_BUSINESS_URL:-}
       LAB_RECONCILE_STANDALONE_URL: ${LAB_RECONCILE_STANDALONE_URL:-jdbc:mysql://${MYSQL_HOST:-mysql}:3306/seckill?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}

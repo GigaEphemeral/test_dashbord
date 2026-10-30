@@ -187,6 +187,8 @@ public class TopologyService {
 
     private List<NodeSpec> mainSpecs() {
         int clusterNodes = properties.getClusterNodes();
+        int redisNodes = properties.getRedisNodes();
+        int mysqlNodes = properties.getMysqlNodes();
         List<NodeSpec> specs = new ArrayList<>();
         specs.add(new NodeSpec(container("nginx"), "nginx", "Nginx", TIER_EDGE, false,
                 NodeKind.EDGE));
@@ -197,17 +199,17 @@ public class TopologyService {
             specs.add(new NodeSpec(container(service), service, service, TIER_JAVA, false,
                     NodeKind.APP));
         }
-        for (int index = 1; index <= clusterNodes; index++) {
+        for (int index = 1; index <= redisNodes; index++) {
             String service = "redis-" + index;
             specs.add(new NodeSpec(container(service), service, service, TIER_REDIS, false,
                     NodeKind.REDIS));
         }
-        for (int index = 1; index <= clusterNodes; index++) {
+        for (int index = 1; index <= redisNodes; index++) {
             String service = "sentinel-" + index;
             specs.add(new NodeSpec(container(service), service, service, TIER_SENTINEL, false,
                     NodeKind.UNWIRED));
         }
-        for (int index = 1; index <= clusterNodes; index++) {
+        for (int index = 1; index <= mysqlNodes; index++) {
             String service = "mysql-" + index;
             specs.add(new NodeSpec(container(service), service, service, TIER_MYSQL, false,
                     NodeKind.MYSQL));

@@ -233,6 +233,8 @@ lab:
     cache-seconds: ${LAB_TOPOLOGY_CACHE_SECONDS:2}
     container-prefix: ${LAB_TOPOLOGY_CONTAINER_PREFIX:jl-}
     cluster-nodes: ${LAB_TOPOLOGY_CLUSTER_NODES:3}
+    redis-nodes: ${LAB_TOPOLOGY_REDIS_NODES:2}
+    mysql-nodes: ${LAB_TOPOLOGY_MYSQL_NODES:3}
     app-job: ${LAB_TOPOLOGY_APP_JOB:seckill-app}
     app-instance-suffix: "${LAB_TOPOLOGY_APP_INSTANCE_SUFFIX::8080}"
     app-heap-area: ${LAB_TOPOLOGY_APP_HEAP_AREA:heap}

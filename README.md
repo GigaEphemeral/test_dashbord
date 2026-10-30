@@ -45,7 +45,7 @@ bash code/lab/scripts/up.sh
 可选 profile：
 
 ```bash
-bash code/lab/scripts/up.sh --profile ha          # + Redis Sentinel 拓扑
+bash code/lab/scripts/up.sh --profile ha          # + Redis 2 数据 + 2 Sentinel
 bash code/lab/scripts/up.sh --profile dual-jdk    # + JDK 8 外壳
 bash code/lab/scripts/up.sh --profile chaos-proxy # + Toxiproxy（与 ha 互斥）
 bash code/lab/scripts/db-ha-up.sh                 # MySQL InnoDB Cluster + Router

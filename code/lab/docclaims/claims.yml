@@ -1125,4 +1125,15 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: b5-05-redis-two-nodes
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-05c-redis-two-nodes.md
+  statement: "B5-05c：Redis HA 缩为 2 数据 + 2 Sentinel（quorum=2），MySQL 保持 3 节点多数派；Prometheus 只抓两个 Redis exporter，拓扑 redis-nodes=2、mysql-nodes=3"
+  verify:
+    kind: shell
+    command: "grep -q 'redisNodes = 2' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/topology/TopologyProperties.java && grep -q 'redis-nodes: ${LAB_TOPOLOGY_REDIS_NODES:2}' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379}' code/lab/docker/compose.ha.yml && ! grep -q '  redis-3:' code/lab/docker/compose.ha.yml && test $(grep -c 'redis-3-exporter:9121' code/lab/docker/prometheus/prometheus.yml) -eq 0 && grep -q 'EXPECTED_REPLICAS:-1' code/lab/scripts/verify.sh && grep -q 'EXPECTED_SENTINELS:-2' code/lab/scripts/verify.sh"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 

@@ -136,6 +136,3 @@ scrape_configs:
       - targets: ["redis-2-exporter:9121"]
         labels:
           node: redis-2
-      - targets: ["redis-3-exporter:9121"]
-        labels:
-          node: redis-3

@@ -97,7 +97,7 @@ class TopologyServiceTest {
     void keepsTheFullTopologyAndUsesNullForMissingData() {
         TopologyView view = service().snapshot(null, false);
 
-        assertThat(view.nodes()).hasSize(25);
+        assertThat(view.nodes()).hasSize(23);
         assertThat(view.enabledNodes()).containsExactly("app-1", "app-2");
         assertThat(view.includeSidecars()).isFalse();
 
@@ -140,10 +140,8 @@ class TopologyServiceTest {
         assertThat(redis1.metrics().memUsedBytes()).isEqualTo(2_776_808.0);
         assertThat(redis1.metrics().cpuPercent()).isNull();
 
-        TopologyNodeView redis3 = node(view, "jl-redis-3");
-        assertThat(redis3.health()).isEqualTo("NOT_RUNNING");
-        assertThat(redis3.dataQuality()).isEqualTo("NO_DATA");
-        assertThat(redis3.metrics().cpuPercent()).isNull();
+        assertThat(view.nodes().stream().map(TopologyNodeView::id))
+                .doesNotContain("jl-redis-3", "jl-sentinel-3");
 
         TopologyNodeView mysql1 = node(view, "jl-mysql-1");
         assertThat(mysql1.health()).isEqualTo("NOT_RUNNING");
@@ -241,7 +239,7 @@ class TopologyServiceTest {
 
         TopologyView view = service().snapshot(null, false);
 
-        assertThat(view.nodes()).hasSize(25);
+        assertThat(view.nodes()).hasSize(23);
         assertThat(node(view, "jl-app-1").health()).isEqualTo("UNKNOWN");
         assertThat(node(view, "jl-app-1").dataQuality()).isEqualTo("NO_DATA");
         assertThat(node(view, "jl-app-1").notes())

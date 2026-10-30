@@ -27,7 +27,7 @@ B5-05b：修复用户反馈的 JVM 参数“保存了但监控显示旧值”和
 
 | 项 | 说明 | 归属 |
 |---|---|---|
-| MySQL/Redis 节点数 | 用户希望 MySQL/Redis 各 2 节点；MySQL InnoDB Cluster 需要多数派，2 节点会失去自动切主能力，需确认是否接受降级 | 待确认 |
+| MySQL/Redis 节点数 | 已确认：MySQL 保持 3 节点；Redis 缩为 2 数据 + 2 Sentinel，见 `step-S2-B5-05c-redis-two-nodes.md` | 已定 |
 | JDK8 实际值来源 | JDK8 只能从 `JAVA_TOOL_OPTIONS` 解析，非运行时 flags 回读 | 记录 |
 | 自动应用 | 当前仍是“保存并应用”显式确认，不自动重启 | 设计如此 |
 

@@ -100,8 +100,8 @@ if [[ -f "$ENV_FILE" ]]; then
   done < "$ENV_FILE"
 fi
 
-DATA_CONTAINERS="${SENTINEL_STATUS_DATA_CONTAINERS:-jl-redis-1 jl-redis-2 jl-redis-3}"
-SENTINEL_CONTAINERS="${SENTINEL_STATUS_SENTINEL_CONTAINERS:-jl-sentinel-1 jl-sentinel-2 jl-sentinel-3}"
+DATA_CONTAINERS="${SENTINEL_STATUS_DATA_CONTAINERS:-jl-redis-1 jl-redis-2}"
+SENTINEL_CONTAINERS="${SENTINEL_STATUS_SENTINEL_CONTAINERS:-jl-sentinel-1 jl-sentinel-2}"
 EXEC_TIMEOUT="${SENTINEL_STATUS_EXEC_TIMEOUT_SECONDS:-5}"
 # Priority: an explicit `--watch SECONDS` beats the environment/.env key, which beats
 # the built-in 2. .env.example ships SENTINEL_STATUS_WATCH_INTERVAL_SECONDS=2, so the

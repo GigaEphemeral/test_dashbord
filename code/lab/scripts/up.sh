@@ -363,11 +363,11 @@ if [[ "$PROFILE" == "ha" ]]; then
   echo
   echo "Redis Sentinel topology (compose profile ha, jl-net + jl-sentinel-net, no host ports):"
   echo "  master name   : ${REDIS_HA_MASTER_NAME:-mymaster} (initial master ${REDIS_HA_REDIS_1_IP:-172.28.190.11}:${REDIS_HA_NODE_PORT:-6379})"
-  echo "  data nodes    : jl-redis-1 (master), jl-redis-2 + jl-redis-3 (replicas, --replicaof)"
-  echo "  pinned IPs    : nodes ${REDIS_HA_REDIS_1_IP:-172.28.190.11}/.2/.3, sentinels ${REDIS_HA_SENTINEL_1_IP:-172.28.190.21}/.2/.3 on subnet ${REDIS_HA_SUBNET:-172.28.190.0/24}"
-  echo "  sentinels     : jl-sentinel-1, jl-sentinel-2, jl-sentinel-3 on ${REDIS_HA_SENTINEL_PORT:-26379} (quorum ${REDIS_HA_QUORUM:-2})"
+  echo "  data nodes    : jl-redis-1 (master), jl-redis-2 (replica, --replicaof)"
+  echo "  pinned IPs    : nodes ${REDIS_HA_REDIS_1_IP:-172.28.190.11}/.2, sentinels ${REDIS_HA_SENTINEL_1_IP:-172.28.190.21}/.2 on subnet ${REDIS_HA_SUBNET:-172.28.190.0/24}"
+  echo "  sentinels     : jl-sentinel-1, jl-sentinel-2 on ${REDIS_HA_SENTINEL_PORT:-26379} (quorum ${REDIS_HA_QUORUM:-2})"
   echo "  failover knobs: down-after ${REDIS_HA_DOWN_AFTER_MS:-5000}ms, failover-timeout ${REDIS_HA_FAILOVER_TIMEOUT_MS:-15000}ms, parallel-syncs ${REDIS_HA_PARALLEL_SYNC:-1}"
-  echo "  exporters     : jl-redis-1-exporter, jl-redis-2-exporter, jl-redis-3-exporter on 9121 (not scraped by prometheus.yml yet)"
+  echo "  exporters     : jl-redis-1-exporter, jl-redis-2-exporter on 9121 (not scraped by prometheus.yml yet)"
   echo "  dev jl-redis  : untouched - the app still talks to the single-node Redis until M3-1b"
   echo
   echo "Read-only topology view : bash $SCRIPT_DIR/sentinel-status.sh"

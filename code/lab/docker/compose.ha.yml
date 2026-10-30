@@ -1,4 +1,4 @@
-# HA overlay: Redis Sentinel topology (1 master + 2 replicas + 3 Sentinels),
+# HA overlay: Redis Sentinel topology (1 master + 1 replica + 2 Sentinels),
 # profile-gated behind "ha" so the default dev stack never pays for it.
 #
 # Design ref: doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md §8.2 (Redis
@@ -158,7 +158,7 @@ x-app-redis-ha-env: &app-redis-ha-env
   # with the empty string WITHOUT failing the render (measured): without it a
   # missing REDIS_HA_SENTINEL_PORT would silently produce portless entries
   # `sentinel-1:` and only be caught later by the app's host:port validation.
-  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-3:${REDIS_HA_SENTINEL_PORT:-26379}}
+  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379}}
   SPRING_DATA_REDIS_SENTINEL_PASSWORD: ${REDIS_HA_SENTINEL_PASSWORD:-}
   REDIS_PASSWORD: ${REDIS_HA_PASSWORD:-}
   REDIS_DATABASE: "${REDIS_DATABASE:-0}"
@@ -206,7 +206,7 @@ services:
       jl-sentinel-net: {}
     environment: *app-redis-ha-env
 
-  # --- 1 master (no REDIS_HA_REPLICAOF_HOST) + 2 replicas -----------------------
+  # --- 1 master (no REDIS_HA_REPLICAOF_HOST) + 1 replica ------------------------
   # Every data node owns a pinned IP on jl-sentinel-net (below) besides its jl-net
   # address, because Sentinel must monitor an IP that survives `docker stop`.
   redis-1:
@@ -242,23 +242,8 @@ services:
       redis-1:
         condition: service_healthy
 
-  redis-3:
-    <<: *redis-ha-node
-    container_name: jl-redis-3
-    networks:
-      jl-net: {}
-      jl-sentinel-net:
-        ipv4_address: ${REDIS_HA_REDIS_3_IP}
-    environment:
-      <<: *redis-ha-node-env
-      REDIS_HA_ANNOUNCE_IP: ${REDIS_HA_REDIS_3_IP}
-      REDIS_HA_REPLICAOF_HOST: ${REDIS_HA_REDIS_1_IP}
-      REDIS_HA_REPLICAOF_PORT: "${REDIS_HA_NODE_PORT}"
-    depends_on:
-      redis-1:
-        condition: service_healthy
 
-  # --- 3 Sentinels (quorum from REDIS_HA_QUORUM) --------------------------------
+  # --- 2 Sentinels (quorum=2; both must be up to elect) --------------------------
   # The monitored address is redis-1's pinned IP, so a Sentinel only ever talks to
   # data nodes by IP: no DNS lookup, no tilt mode, real failover.
   sentinel-1:
@@ -273,8 +258,6 @@ services:
         condition: service_healthy
       redis-2:
         condition: service_healthy
-      redis-3:
-        condition: service_healthy
 
   sentinel-2:
     <<: *redis-ha-sentinel
@@ -288,27 +271,11 @@ services:
         condition: service_healthy
       redis-2:
         condition: service_healthy
-      redis-3:
-        condition: service_healthy
 
-  sentinel-3:
-    <<: *redis-ha-sentinel
-    container_name: jl-sentinel-3
-    networks:
-      jl-net: {}
-      jl-sentinel-net:
-        ipv4_address: ${REDIS_HA_SENTINEL_3_IP}
-    depends_on:
-      redis-1:
-        condition: service_healthy
-      redis-2:
-        condition: service_healthy
-      redis-3:
-        condition: service_healthy
 
   # --- one exporter per data node (design §8.2 "每个节点独立 redis_exporter") -----
   # Sentinel-exporter sidecars are intentionally not added here: they would need a
-  # new image tag and 3 more always-on containers for a demo whose Sentinel evidence
+  # new image tag and 2 more always-on containers for a demo whose Sentinel evidence
   # comes from `sentinel-status.sh`. See step-24a for the follow-up.
   redis-1-exporter:
     <<: *redis-ha-exporter
@@ -332,16 +299,6 @@ services:
       redis-2:
         condition: service_healthy
 
-  redis-3-exporter:
-    <<: *redis-ha-exporter
-    container_name: jl-redis-3-exporter
-    environment:
-      TZ: ${TZ}
-      REDIS_ADDR: redis://redis-3:${REDIS_HA_NODE_PORT}
-      REDIS_PASSWORD: ${REDIS_HA_PASSWORD}
-    depends_on:
-      redis-3:
-        condition: service_healthy
 
 # --- Sentinel-only network with a pinned subnet ----------------------------------
 # Declared here, not in compose.base.yml: adding it cannot change jl-net, so the dev

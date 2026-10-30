@@ -35,8 +35,14 @@ public class TopologyProperties {
     /** Docker/compose container name prefix ({@code jl-}). */
     private String containerPrefix = "jl-";
 
-    /** Redis/Sentinel/MySQL node count of the design §16.3 topology. */
+    /** Legacy app fallback; Redis and MySQL counts are separate below. */
     private int clusterNodes = 3;
+
+    /** Redis data nodes and the matching Sentinel count (B5-05: 2 + 2). */
+    private int redisNodes = 2;
+
+    /** MySQL Group Replication node count (quorum needs 3). */
+    private int mysqlNodes = 3;
 
     /** Prometheus job scraping the JDK 21 application tier. */
     private String appJob = "seckill-app";
@@ -97,6 +103,14 @@ public class TopologyProperties {
         if (clusterNodes < 1 || clusterNodes > 9) {
             throw new IllegalStateException("lab.topology.cluster-nodes must be between 1 and 9"
                     + " (was " + clusterNodes + "); env LAB_TOPOLOGY_CLUSTER_NODES");
+        }
+        if (redisNodes < 1 || redisNodes > 9) {
+            throw new IllegalStateException("lab.topology.redis-nodes must be between 1 and 9"
+                    + " (was " + redisNodes + "); env LAB_TOPOLOGY_REDIS_NODES");
+        }
+        if (mysqlNodes < 1 || mysqlNodes > 9) {
+            throw new IllegalStateException("lab.topology.mysql-nodes must be between 1 and 9"
+                    + " (was " + mysqlNodes + "); env LAB_TOPOLOGY_MYSQL_NODES");
         }
         requireMatch(appJob, NAME, "lab.topology.app-job", "LAB_TOPOLOGY_APP_JOB");
         if (appInstanceSuffix == null || !appInstanceSuffix.matches("(:[0-9]{1,5})?")) {
@@ -162,6 +176,22 @@ public class TopologyProperties {
 
     public void setContainerPrefix(String containerPrefix) {
         this.containerPrefix = containerPrefix;
+    }
+
+    public int getRedisNodes() {
+        return redisNodes;
+    }
+
+    public void setRedisNodes(int redisNodes) {
+        this.redisNodes = redisNodes;
+    }
+
+    public int getMysqlNodes() {
+        return mysqlNodes;
+    }
+
+    public void setMysqlNodes(int mysqlNodes) {
+        this.mysqlNodes = mysqlNodes;
     }
 
     public int getClusterNodes() {

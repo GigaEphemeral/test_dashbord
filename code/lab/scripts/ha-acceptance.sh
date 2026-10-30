@@ -101,8 +101,8 @@ NGINX_CONTAINER="$(env_default HA_ACCEPT_NGINX_CONTAINER jl-nginx)"
 CONTROLLER_CONTAINER="$(env_default HA_ACCEPT_CONTROLLER_CONTAINER jl-chaos-controller)"
 
 # Redis Sentinel drill (step-24d measured ~7.6s promotion, +9.1s first 200).
-SENTINEL_DATA_CONTAINERS="$(env_default HA_ACCEPT_SENTINEL_DATA_CONTAINERS 'jl-redis-1 jl-redis-2 jl-redis-3')"
-SENTINEL_CONTAINERS="$(env_default HA_ACCEPT_SENTINEL_CONTAINERS 'jl-sentinel-1 jl-sentinel-2 jl-sentinel-3')"
+SENTINEL_DATA_CONTAINERS="$(env_default HA_ACCEPT_SENTINEL_DATA_CONTAINERS 'jl-redis-1 jl-redis-2')"
+SENTINEL_CONTAINERS="$(env_default HA_ACCEPT_SENTINEL_CONTAINERS 'jl-sentinel-1 jl-sentinel-2')"
 SENTINEL_MASTER_NAME="$(env_default HA_ACCEPT_SENTINEL_MASTER_NAME "$(env_default REDIS_HA_MASTER_NAME mymaster)")"
 SENTINEL_NODE_PORT="$(env_default HA_ACCEPT_SENTINEL_NODE_PORT "$(env_default REDIS_HA_NODE_PORT 6379)")"
 SENTINEL_PORT="$(env_default HA_ACCEPT_SENTINEL_PORT "$(env_default REDIS_HA_SENTINEL_PORT 26379)")"
@@ -545,7 +545,7 @@ compose_config_services() {
 
 required_services() {
   case "$MODE" in
-    sentinel) printf '%s\n' redis-1 redis-2 redis-3 sentinel-1 sentinel-2 sentinel-3 ;;
+    sentinel) printf '%s\n' redis-1 redis-2 sentinel-1 sentinel-2 ;;
     mysql) printf '%s\n' mysql-1 mysql-2 mysql-3 mysql-router ;;
   esac
 }
