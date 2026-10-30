@@ -699,7 +699,7 @@ watch(() => props.active, (active) => {
             </select>
             <div class="help">
               {{ rules.jdk8Shell
-                ? '外壳固定 JDK 8；app-1/2/3 在「实例与 JVM」页与这里都只提供 JDK 21。'
+                ? 'JDK8 槽位固定 JDK 8；app-1/app-2 只提供 JDK 21。'
                 : 'app-1/app-2 固定 JDK 21；app-3 是 JDK 8 槽位。' }}
             </div>
           </div>
@@ -719,7 +719,7 @@ watch(() => props.active, (active) => {
             </select>
             <div class="help">{{ rules.jdk8Shell
               ? 'JDK8 槽位使用 jdk8 镜像；app-1/app-2 固定 jdk21。'
-              : 'app-1/2/3 固定 jdk21；JDK8 对照请到「实例与 JVM」页或本页下方外壳列配置。' }}</div>
+              : 'app-1/app-2 固定 jdk21；jdk8 镜像只允许 ' + JDK8_INSTANCE + '（JDK8 槽位）使用。' }}</div>
           </div>
           <div v-for="field in HEAP_FIELDS.slice(0, 4)" :key="field.key" class="field">
             <label :data-tip="field.tip">
@@ -994,7 +994,7 @@ watch(() => props.active, (active) => {
         type="button"
         class="btn"
         :disabled="!canApply"
-        :title="rules.jdk8Shell ? 'JDK8 槽位走同一受控重建：池回读 SKIPPED、指标用 seckill-app job、GC 日志按轮转命名' : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
+        :title="rules.jdk8Shell ? (limited ? 'JDK8 外壳走同一受控重建：池回读 SKIPPED、指标用外壳 job、GC 日志按轮转命名' : 'JDK8 槽位走同一受控重建：池/配置回读与 JDK21 槽位一致（FULL-OBSERVABILITY）') : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
         :data-testid="`instance-config-apply-${instance}`"
         @click="ask('apply')"
       >应用并重启</button>
@@ -1014,7 +1014,8 @@ watch(() => props.active, (active) => {
         :data-testid="`instance-config-restart-${instance}`"
         @click="ask('restart')"
       >重启 JVM</button>
-      <span v-if="rules.jdk8Shell" class="hint">JDK8 槽位实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
+      <span v-if="rules.jdk8Shell && limited" class="hint">JDK8 外壳实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
+      <span v-else-if="rules.jdk8Shell" class="hint">JDK8 槽位实例：FULL-OBSERVABILITY（池/配置/缓存回读与 app-1/app-2 相同）；应用/回滚与其他实例走同一受控重建。</span>
       <span v-else-if="!view?.config" class="hint">先「仅保存」为 DRAFT，才能应用。</span>
       <span v-else-if="status !== 'APPLIED'" class="hint">「重启 JVM」仅在配置已 APPLIED 时可用；当前为 {{ statusText }}。</span>
     </div>
