@@ -49,6 +49,15 @@ function safeRunId() {
   return String(props.runId || '').replace(/["\\]/g, '')
 }
 
+/** Ledger timestamps are UTC ISO; show them in the browser's local zone. */
+function timeLabel(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('zh-CN', { hour12: false })
+}
+
 /** Standalone has no member label; name it instead of printing an empty key. */
 function dbName(labels) {
   return labels.member || (labels.job === 'mysqld-exporter' ? 'standalone' : 'db')
@@ -259,7 +268,7 @@ onBeforeUnmount(() => {
     <div class="card-head">
       <h2>run 时间线</h2>
       <div class="bench-actions">
-        <span v-if="startedAt" class="hint" data-testid="run-timelines-window">{{ startedAt }} → {{ endedAt || '进行中' }}</span>
+        <span v-if="startedAt" class="hint" data-testid="run-timelines-window">{{ timeLabel(startedAt) }} → {{ endedAt ? timeLabel(endedAt) : '进行中' }}</span>
         <span v-if="loading" class="hint">查询中…</span>
       </div>
     </div>

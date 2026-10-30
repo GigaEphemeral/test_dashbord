@@ -58,7 +58,7 @@ const windowLabel = computed(() => {
   const from = query.value?.window?.from
   const to = query.value?.window?.to
   if (!from || !to) return ''
-  return `${from} → ${to}`
+  return `${timeLabel(from)} → ${timeLabel(to)}`
 })
 
 function timeLabel(value) {
