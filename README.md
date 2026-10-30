@@ -71,18 +71,28 @@ docker compose -f compose.base.yml -f compose.dev.yml --env-file .env \
   up -d --force-recreate chaos-controller
 ```
 
-app-3 的 JDK 8 镜像同样走离线路径（`compose build` 在容器内拉不到 Maven Central 时）：
+三个 Java 业务镜像（jdk21 / jdk8 / controller）都提供了离线运行时 Dockerfile：
 
 ```bash
-cd code && mvn -pl services/seckill-app-jdk8 -am -DskipTests package
+cd code && mvn -pl services/seckill-app-jdk21,services/seckill-app-jdk8,services/chaos-controller \
+  -am -DskipTests package
+
+# JDK 21 壳：先从“已带 OTel agent 的旧镜像”复制 agent，再覆盖同名 tag
+docker tag java-learn-lab/seckill-app:jdk21 java-learn-lab/seckill-app:otel-src
+docker build -f code/services/seckill-app-jdk21/Dockerfile.runtime \
+  -t java-learn-lab/seckill-app:jdk21 code/services/seckill-app-jdk21
+docker rmi java-learn-lab/seckill-app:otel-src
+
+# JDK 8 壳（app-3）与控制器
 docker build -f code/services/seckill-app-jdk8/Dockerfile.runtime \
   -t java-learn-lab/seckill-app:jdk8 code/services/seckill-app-jdk8
-cd code/lab/docker
-docker compose -f compose.base.yml -f compose.dev.yml up -d --no-deps --force-recreate app-3
+docker build -f code/services/chaos-controller/Dockerfile.runtime \
+  -t java-learn-lab/chaos-controller:jdk21 code/services/chaos-controller
 ```
 
 `Dockerfile.runtime` 从 `java-learn-lab/seckill-app:jdk21` 复制同一版本的 OTel agent
-（`OTEL_SOURCE_IMAGE` 可覆盖），因此两个运行时的 agent 版本不会漂移。
+（`OTEL_SOURCE_IMAGE` 可覆盖），因此三个运行时的 agent 版本不会漂移。首次没有旧 jdk21
+镜像时，先用官方 `Dockerfile`（容器内 Maven 可联网）构建一次。
 
 控制台改动只需在主树 `cd code/lab/dashboard && npm run build`（Nginx 直接挂载 `dist/`）。
 

@@ -436,6 +436,15 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # Async seckill now runs on this shell too: it needs the shared broker and
+      # the standalone cache Redis. Without these the Boot 2.7 defaults
+      # (guest/guest, localhost) fail consumer startup with ACCESS_REFUSED.
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: "${REDIS_PORT:-6379}"
       # Same heap cap as the JDK 21 instances (design 10.2).
       JAVA_TOOL_OPTIONS: "${JDK8_JAVA_TOOL_OPTIONS:--Xmx512m}"
       # Same agent/endpoint wiring as the JDK 21 tier: startup is measured with

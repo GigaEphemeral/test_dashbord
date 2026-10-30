@@ -369,7 +369,7 @@ if [[ "$PROFILE" == "ha" ]]; then
   echo "  sentinels     : jl-sentinel-1, jl-sentinel-2 on ${REDIS_HA_SENTINEL_PORT:-26379} (quorum ${REDIS_HA_QUORUM:-2})"
   echo "  failover knobs: down-after ${REDIS_HA_DOWN_AFTER_MS:-5000}ms, failover-timeout ${REDIS_HA_FAILOVER_TIMEOUT_MS:-15000}ms, parallel-syncs ${REDIS_HA_PARALLEL_SYNC:-1}"
   echo "  exporters     : jl-redis-1-exporter, jl-redis-2-exporter on 9121 (not scraped by prometheus.yml yet)"
-  echo "  dev jl-redis  : untouched - the app still talks to the single-node Redis until M3-1b"
+  echo "  dev jl-redis  : stays single-node for dev-only tools; this overlay switches the app tier to Sentinel"
   echo
   echo "Read-only topology view : bash $SCRIPT_DIR/sentinel-status.sh"
   echo "Sentinel verify checks  : REDIS_HA_VERIFY=auto bash $SCRIPT_DIR/verify.sh (skipped while jl-sentinel-1 is absent)"

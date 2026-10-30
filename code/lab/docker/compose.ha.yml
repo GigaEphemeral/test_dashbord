@@ -160,6 +160,12 @@ x-app-redis-ha-env: &app-redis-ha-env
   # `sentinel-1:` and only be caught later by the app's host:port validation.
   SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379}}
   SPRING_DATA_REDIS_SENTINEL_PASSWORD: ${REDIS_HA_SENTINEL_PASSWORD:-}
+  # Boot 2.7 names for the JDK 8 slot (app-3). The two runtimes read different
+  # keys (spring.redis.* vs spring.data.redis.*), so the same overlay must
+  # publish both or app-3 fails startup in sentinel mode. Harmless for JDK 21.
+  SPRING_REDIS_SENTINEL_MASTER: ${REDIS_HA_MASTER_NAME:-mymaster}
+  SPRING_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-sentinel-1:${REDIS_HA_SENTINEL_PORT:-26379},sentinel-2:${REDIS_HA_SENTINEL_PORT:-26379}}
+  SPRING_REDIS_SENTINEL_PASSWORD: ${REDIS_HA_SENTINEL_PASSWORD:-}
   REDIS_PASSWORD: ${REDIS_HA_PASSWORD:-}
   REDIS_DATABASE: "${REDIS_DATABASE:-0}"
 

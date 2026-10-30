@@ -1125,6 +1125,28 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: jdk8-ha-sentinel-env
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-08-full-reinstall.md
+  statement: "完整形态下 app-3（JDK8）能加入 Sentinel：compose.ha.yml 同时下发 spring.data.redis.* 与 Boot 2.7 的 spring.redis.sentinel.* 环境变量"
+  verify:
+    kind: shell
+    command: "grep -q 'SPRING_REDIS_SENTINEL_MASTER' code/lab/docker/compose.ha.yml && grep -q 'SPRING_REDIS_SENTINEL_NODES' code/lab/docker/compose.ha.yml && grep -q 'SPRING_DATA_REDIS_SENTINEL_MASTER' code/lab/docker/compose.ha.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+- id: jdk21-offline-runtime-image
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-08-full-reinstall.md
+  statement: "jdk21/jdk8/controller 三个 Java 镜像都有离线运行时 Dockerfile，可在容器内 Maven 不可达时用宿主机构建的 jar 重打"
+  verify:
+    kind: shell
+    command: "test -f code/services/seckill-app-jdk21/Dockerfile.runtime && test -f code/services/seckill-app-jdk8/Dockerfile.runtime && test -f code/services/chaos-controller/Dockerfile.runtime && grep -q 'MaxRAMPercentage=70' code/services/seckill-app-jdk21/Dockerfile.runtime"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 - id: jdk8-real-redis-cache-it
   polarity: positive
   doc:
