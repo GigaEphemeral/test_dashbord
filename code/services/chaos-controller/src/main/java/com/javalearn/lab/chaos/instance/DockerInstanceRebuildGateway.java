@@ -243,8 +243,9 @@ public class DockerInstanceRebuildGateway implements InstanceRebuildGateway {
         if (!snapshot.primaryAliases().isEmpty()) {
             create.withAliases(snapshot.primaryAliases());
         }
+        String containerId;
         try {
-            return create.exec().getId();
+            containerId = create.exec().getId();
         } catch (NotFoundException e) {
             throw new DockerUnavailableException("Image '" + imageRef
                     + "' disappeared before the replacement could be created", e);
@@ -255,6 +256,42 @@ public class DockerInstanceRebuildGateway implements InstanceRebuildGateway {
             throw new DockerUnavailableException("Failed to create replacement container '"
                     + name + "'", e);
         }
+        // Docker attaches only the primary network at create time. The lab's
+        // ha overlay puts the app tier on jl-sentinel-net as a SECOND network;
+        // dropping it leaves REDIS_MODE=sentinel pointing at an unreachable
+        // master (and wedges every Lettuce call). Re-attach the snapshot's
+        // other networks before the caller starts the replacement.
+        for (Map.Entry<String, List<String>> network
+                : extraNetworks(snapshot, hostConfig.getNetworkMode()).entrySet()) {
+            try {
+                dockerClient.connectToNetworkCmd()
+                        .withContainerId(containerId)
+                        .withNetworkId(network.getKey())
+                        .withContainerNetwork(new ContainerNetwork()
+                                .withAliases(network.getValue()))
+                        .exec();
+            } catch (RuntimeException e) {
+                throw new DockerUnavailableException("Failed to attach replacement container '"
+                        + name + "' to network '" + network.getKey() + "'", e);
+            }
+        }
+        return containerId;
+    }
+
+    /**
+     * Networks the parked container had besides its primary one, with their
+     * aliases. Connecting these after {@code create} is the only way docker-java
+     * attaches more than one network before start.
+     */
+    static Map<String, List<String>> extraNetworks(InstanceSnapshot snapshot, String primaryNetwork) {
+        Map<String, List<String>> extra = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> network : snapshot.networkAliases().entrySet()) {
+            if (primaryNetwork != null && primaryNetwork.equals(network.getKey())) {
+                continue;
+            }
+            extra.put(network.getKey(), network.getValue());
+        }
+        return extra;
     }
 
     @Override

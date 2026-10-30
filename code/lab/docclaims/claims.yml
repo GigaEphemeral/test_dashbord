@@ -1147,6 +1147,17 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: rebuild-preserves-secondary-networks
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-09-rebuild-network-regression.md
+  statement: "受控重建会保留容器快照里的所有网络（如 app 的 jl-net + jl-sentinel-net），不再只挂主网络"
+  verify:
+    kind: shell
+    command: "grep -q 'connectToNetworkCmd' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/DockerInstanceRebuildGateway.java && grep -q 'extraNetworks' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/DockerInstanceRebuildGateway.java && test -f code/services/chaos-controller/src/test/java/com/javalearn/lab/chaos/instance/DockerInstanceRebuildGatewayNetworkTest.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 - id: jdk8-real-redis-cache-it
   polarity: positive
   doc:

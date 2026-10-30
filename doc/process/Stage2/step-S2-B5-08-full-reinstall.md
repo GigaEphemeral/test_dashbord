@@ -53,6 +53,10 @@
 
 # 待定事项和注意事项
 
+> **2026-10-30 后续**：重装后用户首次 apply JVM 配置时，受控重建把 app 移出了 `jl-sentinel-net`，
+> 导致 Redis/指标大面积无数据；根因与修复见 [`step-S2-B5-09-rebuild-network-regression.md`](step-S2-B5-09-rebuild-network-regression.md)。
+
+
 1. **默认连接形态**：app-1/2/3 连 Sentinel；MySQL 仍是 `MYSQL_MODE=standalone`（单机 `jl-mysql`）。
    如果要测 Router 读写分流，改 `.env` 的 `MYSQL_MODE=router` 后重建 app 层。
 2. **控制台令牌**：`X-Lab-Token` 默认 `lab-token`（见 `.env` 的 `LAB_TOKEN`）。
