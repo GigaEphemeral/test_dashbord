@@ -78,6 +78,8 @@ docker compose -f compose.base.yml -f compose.dev.yml --env-file .env \
    （k6 压力、JVM 堆、GC 次数与停顿、缓存命中、数据库 QPS/线程）、导出 JSON、复制为新草稿。
 5. **对比与复盘**：选两个 run 对比；把多次导出的 JSON 并排人工比较。
 
+示例报告：[`doc/demo.html`](doc/demo.html)（`run-20261030-001` 的真实数据，自包含单文件，可直接浏览器打开或发给别人）。
+
 常用维护命令：
 
 ```bash
