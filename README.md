@@ -83,6 +83,8 @@ docker compose -f compose.base.yml -f compose.dev.yml --env-file .env \
    （k6 压力、JVM 堆、GC 次数与停顿、缓存命中、数据库 QPS/线程）、导出 JSON、复制为新草稿。
 5. **对比与复盘**：选两个 run 对比；把多次导出的 JSON 并排人工比较；向导第 7 步可跑缓存 A/B。
 
+故障注入与线程故障的完整行为、可注入线程和 OOM 限制见 [`doc/process/Stage2/故障注入使用说明.md`](doc/process/Stage2/故障注入使用说明.md)。
+
 离线演示：[`doc/demo.html`](doc/demo.html) —— 真实控制台的**可操作单文件副本**（内联前端 + 录制接口数据）：
 侧边导航、向导步骤、表格与图表、右侧工具抽屉均可交互；数据是 2026-10-30 的快照，写操作返回空成功，
 仅用于 UI 评审与优化，不代表真实后端。

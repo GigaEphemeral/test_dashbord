@@ -279,8 +279,13 @@ onBeforeUnmount(stopPolling)
           </button>
         </div>
         <p class="hint">
-          pause 只冻结 TTL，不停止参与线程；manual 故障不会自动回退，演示后请停止。
-          同一模式重复注入返回 409。
+          线程故障在目标 JVM 内创建 <code>thread-lab-&lt;mode&gt;-*</code> 演示线程，不会操作 Tomcat
+          <code>http-nio-*</code> 或业务线程池线程。pause 只冻结 TTL，不停止参与线程；manual 故障不会自动回退，
+          演示后请停止。同一模式重复注入返回 409。
+        </p>
+        <p v-if="form.mode === 'oom'" class="notice warn" data-testid="thread-oom-disabled-note">
+          OOM 是无上限分配，会杀死整个共享 JVM，默认被服务端拒绝（40001）。只有在一次性小堆实例上设置
+          <code>LAB_THREAD_OOM_THROWAWAY=true</code> 后才可演示；共享 app-1/2/3 请使用 heap-leak。
         </p>
       </section>
 

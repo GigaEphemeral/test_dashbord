@@ -23,10 +23,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Chaos action API. Token-protected by {@code TokenFilter}; every target is
@@ -64,10 +66,16 @@ import java.util.Map;
 @RequestMapping("/chaos")
 public class ChaosController {
 
+    private static final Pattern APP_INSTANCE = Pattern.compile("app-\\d+");
+
     private final ChaosActionService chaosActionService;
     private final EnvironmentStopAllService environmentStopAllService;
     private final OperationService operations;
     private final FaultEventService faultEvents;
+
+    /** {@code app-1} is the console's instance name; Docker needs {@code jl-app-1}. */
+    @Value("${lab.instance.container-prefix:jl-}")
+    private String containerPrefix = "jl-";
 
     public ChaosController(ChaosActionService chaosActionService,
                            EnvironmentStopAllService environmentStopAllService,
@@ -85,6 +93,7 @@ public class ChaosController {
             @RequestHeader(name = IdempotencyKeys.HEADER, required = false) String idempotencyKey,
             @RequestBody(required = false) ChaosActionRequest request) {
         String key = IdempotencyKeys.normalize(idempotencyKey);
+        String target = resolveTarget(name);
         ChaosActionType type = ChaosActionType.maybeParse(request == null ? null : request.action())
                 .orElse(null);
         String action = type != null ? type.wireName()
@@ -95,16 +104,16 @@ public class ChaosController {
         // fault run without a timeline row (fault actions are non-strict by design).
         String runStatus = runId == null ? null : faultEvents.validateRun(runId);
         Map<String, Object> before = new LinkedHashMap<>();
-        before.put("container", name);
+        before.put("container", target);
         before.put("action", action);
         if (runId != null) {
             before.put("runId", runId);
             before.put("runStatus", runStatus);
         }
 
-        OperationExecution execution = operations.submit(new OperationRequest(runId, "container", name,
+        OperationExecution execution = operations.submit(new OperationRequest(runId, "container", target,
                 action, ttl, key, before, false), () -> {
-            ChaosActionView view = chaosActionService.execute(name, request);
+            ChaosActionView view = chaosActionService.execute(target, request);
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("container", view.target());
             after.put("actionStatus", view.status());
@@ -166,6 +175,16 @@ public class ChaosController {
         HttpStatus status = execution.pending() ? HttpStatus.ACCEPTED
                 : execution.replay() ? HttpStatus.OK : settledStatus;
         return ResponseEntity.status(status).body(Result.success(operations.view(execution)));
+    }
+
+    /**
+     * The console speaks instance names ({@code app-1}); the Docker gateway and
+     * the chaos operation ledger speak container names ({@code jl-app-1}).
+     * Accept both so an API caller cannot hit "Container not found: app-1".
+     */
+    private String resolveTarget(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        return APP_INSTANCE.matcher(trimmed).matches() ? containerPrefix + trimmed : trimmed;
     }
 
     /** Blank run ids are the same as no run id; the service validates the format. */

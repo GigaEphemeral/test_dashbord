@@ -96,6 +96,22 @@ class ChaosControllerTest {
     }
 
     @Test
+    void instanceNameIsMappedToTheContainerName() throws Exception {
+        when(chaosActionService.execute(eq("jl-app-1"), any(ChaosActionRequest.class)))
+                .thenReturn(new ChaosActionView("id-2", "jl-app-1", "kill", 30,
+                        Instant.parse("2026-10-26T10:00:30Z"), "start", "active", null)
+                        .withRuntime(false, 30_000L));
+
+        mockMvc.perform(post("/chaos/instances/app-1/actions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"kill\",\"ttlSeconds\":30}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.target").value("jl-app-1"));
+
+        verify(chaosActionService).execute(eq("jl-app-1"), any(ChaosActionRequest.class));
+    }
+
+    @Test
     void validActionReturns202WithViewAndOperationId() throws Exception {
         when(chaosActionService.execute(eq("jl-app-3"), any(ChaosActionRequest.class)))
                 .thenReturn(new ChaosActionView("id-1", "jl-app-3", "kill", 30,

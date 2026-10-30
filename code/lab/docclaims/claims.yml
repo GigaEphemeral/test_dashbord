@@ -1136,4 +1136,27 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: chaos-app-instance-mapping
+  polarity: positive
+  doc:
+    - doc/process/Stage2/故障注入使用说明.md
+  statement: "故障注入接口同时接受实例名 app-N 与容器名 jl-app-N：控制器在查 Docker 前把 app-N 规范化为配置的容器前缀 + app-N，避免 404 Container not found"
+  verify:
+    kind: shell
+    command: "grep -q 'resolveTarget' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/web/ChaosController.java && grep -q 'instanceNameIsMappedToTheContainerName' code/services/chaos-controller/src/test/java/com/javalearn/lab/chaos/ChaosControllerTest.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: fault-injection-guide
+  polarity: positive
+  doc:
+    - doc/process/Stage2/故障注入使用说明.md
+  statement: "故障注入使用说明覆盖容器动作、线程故障作用线程/模式、TTL/stop-all、线程快照及 OOM 默认拒绝与一次性实例开关"
+  verify:
+    kind: shell
+    command: "test -f 'doc/process/Stage2/故障注入使用说明.md' && grep -q 'thread-lab-' 'doc/process/Stage2/故障注入使用说明.md' && grep -q 'LAB_THREAD_OOM_THROWAWAY=true' 'doc/process/Stage2/故障注入使用说明.md' && grep -q 'thread-oom-disabled-note' code/lab/dashboard/src/components/ThreadLab.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 

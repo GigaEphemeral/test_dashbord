@@ -141,9 +141,10 @@ function remainingLabel(item) {
       <span class="hint">目标 <code>{{ instance }}</code> · 动作 <code>{{ action }}</code></span>
     </div>
     <p class="hint">
-      动作走 <code>POST /lab-api/chaos/instances/{name}/actions</code>。
+      动作走 <code>POST /lab-api/chaos/instances/{name}/actions</code>；控制台传 <code>app-N</code>，
+      服务端规范化为容器名 <code>jl-app-N</code>。这里操作的是<strong>整个容器/JVM 进程</strong>，不是某个线程。
       kill/freeze 带 TTL 自动回滚；202 表示 PENDING_CONFIRMATION，卡片会轮询 operation 到终态。
-      「已请求」不等于「已生效」，以 operation 状态为准。
+      「已请求」不等于「已生效」，以 operation 状态为准。详见《故障注入使用说明》。
     </p>
 
     <div class="chaos-form">
