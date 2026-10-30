@@ -11,11 +11,11 @@ run 节点集合，承接 login / 商品两级缓存读 / `POST|GET /api/orders`
 
 | 闸门 | 结果 |
 |---|---|
-| jdk8 模块 `mvn test` | **350 tests / 0 failures / 0 errors** |
+| jdk8 模块 `mvn test` | **356 tests / 0 failures / 0 errors** |
 | 控制器 `mvn test` | **892 tests / 0 failures / 0 errors** |
 | `smoke.sh` | **7 passed / 0 failed**（`SMOKE PASSED.`） |
 | `verify.sh` | **110 PASS / 1 WARN / 0 FAIL**（WARN 仍为 cAdvisor/WSL2；新增 app-2/app-3 的 cache 指标断言 +2，Sentinel 2+2 少一条 per-sentinel 断言） |
-| `console-smoke.sh` | **158 PASS / 0 FAIL** |
+| `console-smoke.sh` | **159 PASS / 0 FAIL** |
 | `check-doc-claims.sh` | **91 PASS / 0 FAIL** |
 | 分流探测 | 经 Nginx 各 9 次 `POST /api/orders`、`POST /api/seckill/orders`，**全部 200/202，无 404** |
 
@@ -23,7 +23,7 @@ run 节点集合，承接 login / 商品两级缓存读 / `POST|GET /api/orders`
 
 | 项 | 落地 |
 |---|---|
-| 业务移植 | `seckill-app-jdk8` 增加 order（JPA 下单/幂等重放/库存条件扣减）、admission（Redisson 锁 → Redis 幂等 → Lua 原子扣库存 → Rabbit 发布 → 202 → 轮询）、业务池、Resilience4j 限流/熔断、Lab toggle、Redis 客户端（standalone/sentinel） |
+| 业务移植 | `seckill-app-jdk8` 增加 login 令牌落 Redis（与 JDK21 同键 `login:token:<token>`、TTL 1800）、order（JPA 下单/幂等重放/库存条件扣减）、admission（Redisson 锁 → Redis 幂等 → Lua 原子扣库存 → Rabbit 发布 → 202 → 轮询）、业务池、Resilience4j 限流/熔断、Lab toggle、Redis 客户端（standalone/sentinel） |
 | 跨运行时队列 | 三个实例共享同一 exchange/queue；app-3 发布时把 `__TypeId__` 改写为 JDK21 的 `SeckillOrderMessage` FQCN（`app.seckill.mq.type-id`，可配），消费端按监听签名反序列化，双向兼容 |
 | 两级缓存 | 移植 TwoLevelCache（Caffeine L1 + Redis L2）、穿透/击穿/雪崩防御、L1 开关、预热与热键追踪；商品读改走 `CachedProductViewService`，指标名与 JDK21 一致（`cache_l1_*`/`cache_l2_*`/`cache_*_total`） |
 | 回读端点 | `/lab/pool`、`/lab/config`、`/lab/toggles`、`/lab/cache/{mode,seed,state,preheat,keys,l1,reset}` 与 JDK21 同契约 |
@@ -102,6 +102,10 @@ SMOKE PASSED.
 orders_created_total{instance="app-3:8080",app="seckill-app",job="seckill-app"} = 4
 up{job="seckill-app"} -> app-1/app-2/app-3 全 1
 
+# 登录令牌（6 次经 Nginx 轮询，修复前 app-3 的令牌不落 Redis）
+token=4bc3f9d7 value=login-probe-1 ttl=1797
+... 6/6 均命中 login:token:<token>，TTL≈1800
+
 # 受控重建（app-3，之前遗留 status=FAILED rev2）
 POST /lab-api/lab/instances/app-3/apply
 -> status=APPLIED, image=java-learn-lab/seckill-app:jdk8
@@ -119,6 +123,18 @@ flow_errors=0.00% (0/324)   server_errors=0.00%   http_req_failed=0.00%   p95=7.
 sum by(instance) increase(http_server_requests_seconds_count{uri=~"/api/products/.*"}[3m])
 -> app-1 104.9 / app-2 103.9 / app-3 103.9（约 1/3 均分）
 ```
+
+## 附录 C：独立审核（Qwen，隔离 worktree）
+
+| 级别 | 发现 | 处理 |
+|---|---|---|
+| Critical | jdk8 的 mock login 只发 UUID、不写 `login:token:<token>`；verify 经 Nginx 轮询登录后断言 Redis 键，app-3 命中时约 1/3 概率失败；TTL 默认也与 JDK21 不一致（3600 vs 1800） | 移植 LoginService/LoginProperties/LoginConfig，同键同 env 同默认值；补 3 条 HTTP 测试 + 存储测试。提交 `a19ed7a` |
+| Important | `HotKeyTrackerTest` 在 Caffeine 2.9.3 下因写缓冲异步 drain 偶发失败（上界断言本身正确） | 重试 `cleanUp()` 直至收敛，断言未弱化。提交 `afbfaf4` |
+| Important | `InstanceConfigEditor` 仍残留“外壳/池回读 SKIPPED/LIMITED”文案，与 app-3 的 FULL 契约矛盾 | SKIPPED/LIMITED 文案改由服务端 `limited` 判定门控。提交 `efdc618` |
+| Minor | stop-all 把任意 404 都记为 not-applicable；未移植的 consumer/resilience 单测；UI 文案硬编码 app-3 | 记录，P3/后续顺带 |
+
+审核等价性结论：admission/consumer/stores 与 JDK21 逐文件 diff 仅语法差异；Lua 字节一致；
+`__TypeId__` 双向兼容有测试；缓存指标名与配置占位符 diff 为空；控制面 limited 判定四处一致。
 
 ## 附录 B：关键文件
 

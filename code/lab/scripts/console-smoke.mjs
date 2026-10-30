@@ -1086,6 +1086,20 @@ async function main() {
       };
     });
 
+    await page.getByTestId('thread-instance').selectOption('app-3');
+    await expectCondition('instances: app-3 explains its missing thread lab instead of 404ing', async () => {
+      const banner = page.getByTestId('thread-error');
+      if ((await banner.count()) === 0) {
+        return { ok: false, detail: 'no notice rendered' };
+      }
+      const text = ((await banner.textContent()) || '').trim();
+      return {
+        ok: text.includes('JDK8 业务槽位') && text.includes('/lab/thread'),
+        detail: text.slice(0, 140),
+      };
+    });
+    await page.getByTestId('thread-instance').selectOption('app-2');
+
     // -------------------------------------------- instance config (wizard 03)
     // Configuration moved out of the retired 实例与 JVM page into the wizard's
     // step 3; the same editor/testids are used, now next to the cache setup.
