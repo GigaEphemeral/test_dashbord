@@ -42,6 +42,16 @@ const HINT_REFRESH_MS = Number(import.meta.env.VITE_LAB_JVM_HINT_REFRESH_MS || 1
 const JOB = `job="${APP_JOB}"`
 const requestsTotal = `sum(rate(http_server_requests_seconds_count{${JOB}}[1m]))`
 
+/** Redis HA nodes expose `node`; the standalone instance has no node label. */
+function redisName(labels) {
+  return labels.node || (labels.job === 'redis-exporter' ? 'standalone' : labels.job || 'redis')
+}
+
+/** MySQL HA members expose `member`; the standalone instance has no member label. */
+function mysqlName(labels) {
+  return labels.member || (labels.job === 'mysqld-exporter' ? 'standalone' : labels.job || 'db')
+}
+
 const CHARTS = [
   {
     id: 'requests',
@@ -173,6 +183,40 @@ const CHARTS = [
         format: (value) => value.toFixed(0),
         split: true,
         dash: '5 3'
+      }
+    ]
+  },
+  {
+    id: 'redis',
+    testid: 'chart-redis',
+    title: 'Redis 命令速率（按节点）',
+    note: 'standalone / HA 分线',
+    series: [
+      {
+        key: 'commands',
+        label: 'commands/s',
+        expr: 'sum by (job, node) (rate(redis_commands_processed_total{job=~"redis-exporter.*"}[1m]))',
+        format: (value) => `${value.toFixed(1)} /s`,
+        split: true,
+        groupBy: ['job', 'node'],
+        nameFor: redisName
+      }
+    ]
+  },
+  {
+    id: 'mysql',
+    testid: 'chart-mysql',
+    title: 'MySQL QPS（按节点）',
+    note: 'standalone / HA 分线',
+    series: [
+      {
+        key: 'queries',
+        label: 'questions/s',
+        expr: 'sum by (job, member) (rate(mysql_global_status_queries{job=~"mysqld-exporter.*"}[1m]))',
+        format: (value) => `${value.toFixed(1)} /s`,
+        split: true,
+        groupBy: ['job', 'member'],
+        nameFor: mysqlName
       }
     ]
   }
@@ -357,9 +401,14 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="hint">
-      最近 15 分钟，三排布局：请求性能 / k6 负载、JVM 堆 / GC、业务线程池 / 连接池。
+      最近 15 分钟，前三排是应用层：请求性能 / k6 负载、JVM 堆 / GC、业务线程池 / 连接池；
+      第四排是数据层：Redis 命令速率与 MySQL QPS（standalone 与 HA 节点分别成线）。
       图例里的 JVM 参数来自实例配置台账（Xms/Xmx · GC · 目标停顿），便于直接比对。
       单个查询失败只影响对应曲线；没有序列时显示无数据，不显示 0。
+    </p>
+    <p class="hint">
+      <strong>standalone 与 HA 的流量取决于应用配置</strong>：当前环境若 <code>MYSQL_MODE=standalone</code> 且
+      <code>REDIS_HOST=redis</code>，应用只会打单机库，HA 节点保持基线属于正常，不是采集故障。
     </p>
 
     <div v-if="chartErrors.length" class="notice warn" role="alert" data-testid="monitor-timeline-error">

@@ -54,6 +54,11 @@ function dbName(labels) {
   return labels.member || (labels.job === 'mysqld-exporter' ? 'standalone' : 'db')
 }
 
+/** Redis exporters expose `node`; the standalone instance has no node label. */
+function redisName(labels) {
+  return labels.node || (labels.job === 'redis-exporter' ? 'standalone' : 'redis')
+}
+
 function chartSeries(entries, definition) {
   const instances = [...new Set(entries.map((entry) => entry.instance))].sort()
   return entries.map((entry) => ({
@@ -87,6 +92,9 @@ const charts = computed(() => {
   })
   const dbThreads = chartSeries(data.dbThreads?.series || [], {
     format: (value) => value.toFixed(0)
+  })
+  const redis = chartSeries(data.redis?.series || [], {
+    format: (value) => `${value.toFixed(1)} /s`
   })
   return [
     {
@@ -160,6 +168,14 @@ const charts = computed(() => {
       note: 'threads_running',
       axis: compact,
       series: dbThreads
+    },
+    {
+      id: 'run-redis',
+      testid: 'run-chart-redis',
+      title: 'Redis 命令速率（按节点）',
+      note: 'standalone / HA 分线',
+      axis: compact,
+      series: redis
     }
   ]
 })
@@ -201,7 +217,10 @@ async function refresh() {
       1, { groupBy: ['job', 'member'], nameFor: dbName }],
     ['dbThreads',
       `max by (job, member) (mysql_global_status_threads_running{job=~"mysqld-exporter|mysqld-exporter-ha"})`,
-      1, { groupBy: ['job', 'member'], nameFor: dbName }]
+      1, { groupBy: ['job', 'member'], nameFor: dbName }],
+    ['redis',
+      `sum by (job, node) (rate(redis_commands_processed_total{job=~"redis-exporter|redis-exporter-ha"}[1m]))`,
+      1, { groupBy: ['job', 'node'], nameFor: redisName }]
   ]
   try {
     const answers = await Promise.all(jobs.map(([, expr]) =>

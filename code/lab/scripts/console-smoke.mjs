@@ -1309,10 +1309,15 @@ async function main() {
       }
       return { ok: missing.length === 0, detail: missing.join(',') };
     });
-    await expectCondition('observe: the six charts are laid out in three rows of two', async () => {
+    await expectCondition('observe: eight charts are laid out in four rows of two (data layer included)', async () => {
       const rows = await page.locator('[data-testid^="chart-row-"]').count();
       const perRow = await page.locator('[data-testid="chart-row-0"] .chart-box').count();
-      return { ok: rows === 3 && perRow === 2, detail: `rows=${rows} row0=${perRow}` };
+      const redis = await page.getByTestId('chart-redis').count();
+      const mysql = await page.getByTestId('chart-mysql').count();
+      return {
+        ok: rows === 4 && perRow === 2 && redis === 1 && mysql === 1,
+        detail: `rows=${rows} row0=${perRow} redis=${redis} mysql=${mysql}`,
+      };
     });
     // and the JVM chart must be per-instance rather than one summed line.
     await expectCondition('observe: the floating refresh button is pinned to the viewport', async () => {
@@ -2007,7 +2012,7 @@ async function main() {
       // after READY→RUNNING (the DRAFT detail intentionally shows none).
       await expectCondition('runs: the report renders k6/JVM/GC/cache/database timelines', async () => {
         const ids = ['run-chart-k6', 'run-chart-jvm', 'run-chart-gc', 'run-chart-gc-pause',
-          'run-chart-cache', 'run-chart-db-qps', 'run-chart-db-threads'];
+          'run-chart-cache', 'run-chart-db-qps', 'run-chart-db-threads', 'run-chart-redis'];
         const missing = [];
         for (const id of ids) {
           if ((await page.getByTestId(id).count()) === 0) missing.push(id);

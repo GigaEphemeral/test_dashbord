@@ -157,6 +157,12 @@ function contractHeat(node) {
 
 function heatLabel(node) {
   const metrics = node.metrics || {}
+  if (node.tier === 'mysql' || node.tier === 'mysql-router') {
+    return `仅可达性 ${node.health || '未知'} · QPS 见监控时间轴`
+  }
+  if (node.tier === 'redis' && isFiniteNumber(metrics.memUsedBytes)) {
+    return `Redis 内存 ${fmtBytes(metrics.memUsedBytes)} · UP ${node.health}`
+  }
   if (heatDimension.value === 'network') return '网络 I/O 无数据/未接线'
   if (heatDimension.value === 'cpu') return `CPU ${fmtPercent(metrics.cpuPercent)}`
   if (heatDimension.value === 'memory') {
@@ -562,6 +568,9 @@ function localTime(value) {
         <code>null</code> 指标显示为“无数据”，不会填 0。dataQuality 徽标是数据事实：
         <code>OK / PARTIAL / NO_DATA / UNWIRED</code>。网络 I/O 当前无采集源，热度保持中性。
       </p>
+      <p class="hint topo-source" data-testid="topology-data-layer-note">
+        Redis 节点当前只暴露内存与 UP，MySQL 节点当前只暴露 UP；Redis 命令速率、MySQL QPS 与运行线程在
+        监控时间轴的第四排（standalone 与 HA 节点分线）。</p>
       <p v-if="contract.enabledNodes?.length" class="hint" data-testid="topology-enabled-note">
         当前 run 启用节点：{{ contract.enabledNodes.join('、') }}；其余可切换节点灰显为“未启用”，但不从拓扑中删除。
       </p>

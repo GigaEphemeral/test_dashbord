@@ -56,7 +56,13 @@ export function splitSeriesPoints(result, factor = 1, options = {}) {
   return (result || [])
     .map((series) => {
       const labels = series.metric || {}
-      const instance = hostOf(labels.instance)
+      const host = hostOf(labels.instance)
+      // Redis/MySQL exporters do not expose an `instance` label; their node
+      // identity lives in `node` (Redis) or `member` (MySQL). Fall back to those
+      // so those charts get one colour and legend entry per real node.
+      const instance = host === 'unknown'
+        ? (labels.node || labels.member || labels.job || 'unknown')
+        : host
       const points = (series.values || [])
         .map(([rawStamp, rawValue]) => ({ t: Number(rawStamp), v: Number(rawValue) * factor }))
         .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))

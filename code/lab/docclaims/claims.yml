@@ -1060,10 +1060,10 @@
   polarity: positive
   doc:
     - doc/process/Stage2/step-S2-B5-04f-report-charts-failure.md
-  statement: "run 报告包含 GC 停顿、缓存 L1 命中率、数据库 QPS 与运行线程时间线（按 run 窗口，standalone/HA 成员分线）"
+  statement: "run 报告包含 GC 停顿、缓存 L1 命中率、数据库 QPS/运行线程、Redis 命令速率时间线（按 run 窗口，standalone/HA 成员分线）"
   verify:
     kind: shell
-    command: "grep -q 'run-chart-gc-pause' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-cache' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-qps' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-threads' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'mysql_global_status_queries' code/lab/dashboard/src/components/RunTimelines.vue"
+    command: "grep -q 'run-chart-gc-pause' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-cache' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-qps' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-threads' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-redis' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'redis_commands_processed_total' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'mysql_global_status_queries' code/lab/dashboard/src/components/RunTimelines.vue"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
