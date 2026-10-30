@@ -1989,6 +1989,7 @@ async function main() {
       };
     }, ACTION_TIMEOUT_MS * 2);
     check('runs: the result panel shows export, clone and the single-run note', resultPanel.ok, resultPanel.detail);
+
     check(
       'runs: the detail view shows the test name',
       ((await page.getByTestId('run-name').textContent()) || '').trim() === ledgerRunName,
@@ -2020,6 +2021,17 @@ async function main() {
         started.ok && running.ok,
         `${started.detail}; status=${running.detail}`,
       );
+      // Only a started run has a window, so the report timelines are asserted
+      // after READY→RUNNING (the DRAFT detail intentionally shows none).
+      await expectCondition('runs: the report renders k6/JVM/GC/cache/database timelines', async () => {
+        const ids = ['run-chart-k6', 'run-chart-jvm', 'run-chart-gc', 'run-chart-gc-pause',
+          'run-chart-cache', 'run-chart-db-qps', 'run-chart-db-threads'];
+        const missing = [];
+        for (const id of ids) {
+          if ((await page.getByTestId(id).count()) === 0) missing.push(id);
+        }
+        return { ok: missing.length === 0, detail: missing.join(',') };
+      });
       // Wait out the start action's post-refresh (actionBusy keeps stop
       // disabled) before reading the k6 card, so the stop step below still has
       // most of the run's 30s budget left.

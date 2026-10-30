@@ -1055,3 +1055,39 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+
+- id: report-extra-charts
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04f-report-charts-failure.md
+  statement: "run 报告包含 GC 停顿、缓存 L1 命中率、数据库 QPS 与运行线程时间线（按 run 窗口，standalone/HA 成员分线）"
+  verify:
+    kind: shell
+    command: "grep -q 'run-chart-gc-pause' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-cache' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-qps' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'run-chart-db-threads' code/lab/dashboard/src/components/RunTimelines.vue && grep -q 'mysql_global_status_queries' code/lab/dashboard/src/components/RunTimelines.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: product-range-warning
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04f-report-charts-failure.md
+  statement: "商品 ID 采样超出库内 1–10000 时，向导提示越界请求返回 404 并计入 flow_errors"
+  verify:
+    kind: shell
+    command: "grep -q 'wizard-product-penetration-warning' code/lab/dashboard/src/components/ProductSamplingField.vue && grep -q 'flow_errors' code/lab/dashboard/src/components/ProductSamplingField.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
+- id: controller-runtime-dockerfile
+  polarity: positive
+  doc:
+    - README.md
+  statement: "控制器提供可复现的离线运行时 Dockerfile（使用宿主机构建的 jar）"
+  verify:
+    kind: shell
+    command: "test -f code/services/chaos-controller/Dockerfile.runtime && grep -q 'chaos-controller-\*.jar' code/services/chaos-controller/Dockerfile.runtime"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

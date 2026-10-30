@@ -1,0 +1,24 @@
+# Offline runtime image for the chaos-controller.
+#
+# The shipped Dockerfile builds the jar inside a maven image. On hosts where the
+# container cannot reach Maven Central (TLS handshake fails in this lab), build
+# the jar on the host and use this file instead:
+#
+#   cd code && mvn -pl services/chaos-controller -am -DskipTests package
+#   cd services/chaos-controller
+#   docker build -f Dockerfile.runtime -t java-learn-lab/chaos-controller:jdk21 .
+#   cd ../../lab/docker && docker compose -f compose.base.yml -f compose.dev.yml \
+#     --env-file .env up -d --force-recreate chaos-controller
+#
+# The official path remains `docker compose build chaos-controller`.
+FROM eclipse-temurin:21-jre-alpine
+
+LABEL org.opencontainers.image.title="java-learn-lab chaos-controller"
+LABEL org.opencontainers.image.version="0.1.0-SNAPSHOT"
+
+WORKDIR /app
+COPY target/chaos-controller-*.jar /app/app.jar
+
+EXPOSE 8081
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=70", "-jar", "/app/app.jar"]

@@ -49,6 +49,11 @@ function safeRunId() {
   return String(props.runId || '').replace(/["\\]/g, '')
 }
 
+/** Standalone has no member label; name it instead of printing an empty key. */
+function dbName(labels) {
+  return labels.member || (labels.job === 'mysqld-exporter' ? 'standalone' : 'db')
+}
+
 function chartSeries(entries, definition) {
   const instances = [...new Set(entries.map((entry) => entry.instance))].sort()
   return entries.map((entry) => ({
@@ -70,6 +75,18 @@ const charts = computed(() => {
   })
   const gc = chartSeries(data.gc?.series || [], {
     format: (value) => `${value.toFixed(0)} 次/分`
+  })
+  const gcPause = chartSeries(data.gcPause?.series || [], {
+    format: (value) => `${value.toFixed(1)} ms/s`
+  })
+  const cacheHit = chartSeries(data.cacheHit?.series || [], {
+    format: (value) => `${value.toFixed(1)} %`
+  })
+  const dbQps = chartSeries(data.dbQps?.series || [], {
+    format: (value) => `${value.toFixed(1)} /s`
+  })
+  const dbThreads = chartSeries(data.dbThreads?.series || [], {
+    format: (value) => value.toFixed(0)
   })
   return [
     {
@@ -111,6 +128,38 @@ const charts = computed(() => {
       note: '实线 minor · 虚线 major',
       axis: compact,
       series: gc
+    },
+    {
+      id: 'run-gc-pause',
+      testid: 'run-chart-gc-pause',
+      title: 'GC 停顿时间（按实例）',
+      note: 'GC 暂停累计速率',
+      axis: compact,
+      series: gcPause
+    },
+    {
+      id: 'run-cache',
+      testid: 'run-chart-cache',
+      title: '缓存 L1 命中率（按实例）',
+      note: 'L1 关闭时不适用',
+      axis: compact,
+      series: cacheHit
+    },
+    {
+      id: 'run-db-qps',
+      testid: 'run-chart-db-qps',
+      title: '数据库 QPS（按节点）',
+      note: 'questions 速率',
+      axis: compact,
+      series: dbQps
+    },
+    {
+      id: 'run-db-threads',
+      testid: 'run-chart-db-threads',
+      title: '数据库运行线程（按节点）',
+      note: 'threads_running',
+      axis: compact,
+      series: dbThreads
     }
   ]
 })
@@ -142,7 +191,17 @@ async function refresh() {
         groupBy: ['instance', 'action'],
         nameFor: (labels, instance) => `${instance} ${gcActionName(labels.action)}`,
         dashFor: (labels) => (labels.action === 'end of major GC' ? '5 3' : '')
-      }]
+      }],
+    ['gcPause', `sum by (instance) (rate(jvm_gc_pause_seconds_sum{${job}}[1m]))`,
+      1000, { groupBy: ['instance'] }],
+    ['cacheHit', `max by (instance) (cache_l1_hit_ratio{${job}})`,
+      100, { groupBy: ['instance'] }],
+    ['dbQps',
+      `sum by (job, member) (rate(mysql_global_status_queries{job=~"mysqld-exporter|mysqld-exporter-ha"}[1m]))`,
+      1, { groupBy: ['job', 'member'], nameFor: dbName }],
+    ['dbThreads',
+      `max by (job, member) (mysql_global_status_threads_running{job=~"mysqld-exporter|mysqld-exporter-ha"})`,
+      1, { groupBy: ['job', 'member'], nameFor: dbName }]
   ]
   try {
     const answers = await Promise.all(jobs.map(([, expr]) =>
