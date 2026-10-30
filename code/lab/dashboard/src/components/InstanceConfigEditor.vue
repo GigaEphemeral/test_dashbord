@@ -492,8 +492,8 @@ async function runValidate() {
 }
 
 async function runSave() {
-  if (!canSave.value) return
-  if (guardJdk8()) return
+  if (!canSave.value) return false
+  if (guardJdk8()) return false
   error.value = ''
   busy.value = 'save'
   try {
@@ -502,10 +502,19 @@ async function runSave() {
     validation.value = null
     await loadEffective()
     emit('changed')
+    return true
   } catch (err) {
     error.value = `保存失败：${describeError(err)}`
+    return false
   } finally {
     busy.value = ''
+  }
+}
+
+/** One-click path for "save and make it real": save, then open the apply confirmation. */
+async function saveThenApply() {
+  if (await runSave()) {
+    ask('apply')
   }
 }
 
@@ -601,6 +610,15 @@ watch(() => props.active, (active) => {
     <div v-if="error" class="notice danger" role="alert" :data-testid="`instance-config-error-${instance}`">{{ error }}</div>
     <div v-if="view?.lastError" class="notice warn" :data-testid="`instance-config-last-error-${instance}`">
       上次结果：{{ view.lastError }}
+    </div>
+    <div
+      v-if="['DRAFT', 'PENDING_RESTART'].includes(status)"
+      class="notice warn"
+      role="status"
+      :data-testid="`instance-config-unapplied-${instance}`"
+    >
+      已保存 rev{{ view?.revision || '—' }}，但<strong>尚未生效</strong>：保存不会重启 JVM。
+      点击下方「保存并应用」或「应用并重启」完成受控重建后，参数才会在容器里生效。
     </div>
 
     <section class="config-facts">
@@ -961,7 +979,15 @@ watch(() => props.active, (active) => {
         :disabled="!canSave"
         :data-testid="`instance-config-save-${instance}`"
         @click="runSave"
-      >仅保存</button>
+      >仅保存草稿</button>
+      <button
+        type="button"
+        class="btn"
+        :disabled="!canSave"
+        title="先保存当前表单，再打开应用确认；应用会触发受控重建并重启 JVM"
+        :data-testid="`instance-config-save-apply-${instance}`"
+        @click="saveThenApply"
+      >保存并应用</button>
       <button
         type="button"
         class="btn"

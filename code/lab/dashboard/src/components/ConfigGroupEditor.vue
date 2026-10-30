@@ -135,7 +135,9 @@ watch(
       这里的配置与监控页的「JVM 参数对照」是<strong>同一份实例台账</strong>：保存、应用并重启、重启 JVM、回滚都在下方编辑器完成。
       未启用节点不参与本实验，不会下发。
     </p>
-    <p v-if="loading" class="hint">读取实例配置…</p>
+    <div class="config-status-slot" aria-live="polite">
+      <span v-if="loading" class="hint">读取实例配置…</span>
+    </div>
     <p v-if="error" class="error-banner" role="alert" data-testid="wizard-config-error">{{ error }}</p>
 
     <table class="data-table config-table">
@@ -225,6 +227,13 @@ watch(
 .config-args {
   max-width: 380px;
   overflow-wrap: anywhere;
+}
+
+/* The loading line is always present: showing/removing it used to shift the
+   whole editor stack up and down on every save/refresh. */
+.config-status-slot {
+  min-height: 18px;
+  line-height: 18px;
 }
 
 /* Three instances side by side: parameters line up row-for-row for comparison. */

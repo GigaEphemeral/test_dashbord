@@ -247,7 +247,11 @@ function summarizeConfig(view) {
     : ''
   const gc = config.gcCollector || ''
   const pause = config.maxGcPauseMillis ? `${config.maxGcPauseMillis}ms` : ''
-  return [heap, gc, pause].filter(Boolean).join(' · ')
+  const summary = [heap, gc, pause].filter(Boolean).join(' · ')
+  if (summary && view?.status && view.status !== 'APPLIED') {
+    return `${summary} · ${view.status === 'DRAFT' ? '未生效' : view.status}`
+  }
+  return summary
 }
 
 async function loadJvmHints(force = false) {

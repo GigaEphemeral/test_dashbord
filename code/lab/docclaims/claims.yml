@@ -1114,4 +1114,15 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: jvm-save-apply-ux
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-05b-jvm-apply-ux.md
+  statement: "JVM 参数保存与生效分离：草稿状态有显式提示与“保存并应用”按钮，监控参数表同时展示目标与实际回读并提示未生效"
+  verify:
+    kind: shell
+    command: "grep -q 'instance-config-unapplied' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'instance-config-save-apply' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'jvm-params-pending' code/lab/dashboard/src/components/JvmParamsPanel.vue && grep -q 'actualSummary' code/lab/dashboard/src/components/JvmParamsPanel.vue && grep -q '未生效' code/lab/dashboard/src/components/MonitorTimeline.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 

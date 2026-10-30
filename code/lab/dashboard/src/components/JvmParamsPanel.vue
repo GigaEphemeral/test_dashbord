@@ -47,11 +47,47 @@ function summarize(view) {
 function matchState(node) {
   const view = views.value[node]
   const live = effective.value[node]
+  if (['DRAFT', 'PENDING_RESTART'].includes(view?.status)) {
+    return { text: '未生效（待应用）', tone: 'warn' }
+  }
   if (!view?.jvmArgs?.length || !live?.javaToolOptions) return { text: '未验证', tone: 'warn' }
   const normalize = (text) => String(text || '').trim().split(/\s+/).filter(Boolean).sort().join(' ')
   return normalize(view.jvmArgs.join(' ')) === normalize(live.javaToolOptions)
     ? { text: '与目标一致', tone: 'ok' }
     : { text: '与目标不一致', tone: 'warn' }
+}
+
+/** Actual JVM values parsed from jcmd VM.flags (preferred) or JAVA_TOOL_OPTIONS. */
+function actualSummary(live) {
+  if (!live) return null
+  const tokens = Array.isArray(live.jvmFlags) && live.jvmFlags.length
+    ? live.jvmFlags
+    : String(live.javaToolOptions || '').trim().split(/\s+/).filter(Boolean)
+  if (!tokens.length) return null
+  const find = (prefix) => tokens.find((token) => token.startsWith(prefix)) || ''
+  const megabytes = (raw) => {
+    if (!raw) return '—'
+    let value = String(raw).replace(/^[^=]*=/, '')
+    value = value.replace(/^-Xm[sx]/i, '')
+    if (/^\d+[mM]$/.test(value)) return value.replace(/[mM]$/, '')
+    if (/^\d+$/.test(value)) {
+      const number = Number(value)
+      return number > 100000 ? (number / (1024 * 1024)).toFixed(0) : String(number)
+    }
+    return value
+  }
+  const plain = (raw) => (raw ? String(raw).replace(/^[^=]*=/, '') : '—')
+  const xms = megabytes(find('-Xms') || find('-XX:InitialHeapSize='))
+  const xmx = megabytes(find('-Xmx') || find('-XX:MaxHeapSize='))
+  const gc = tokens.includes('-XX:+UseG1GC') ? 'G1'
+    : tokens.includes('-XX:+UseParallelGC') ? 'Parallel'
+      : tokens.includes('-XX:+UseSerialGC') ? 'Serial' : '—'
+  const pause = plain(find('-XX:MaxGCPauseMillis='))
+  return {
+    heap: `${xms} / ${xmx} MB`,
+    gc,
+    pause: pause === '—' ? '—' : `${pause} ms`
+  }
 }
 
 const rows = computed(() => nodes.value.map((node) => {
@@ -61,11 +97,17 @@ const rows = computed(() => nodes.value.map((node) => {
     status: view?.status || 'NOT_CONFIGURED',
     revision: view?.revision || 0,
     summary: summarize(view),
+    actual: actualSummary(effective.value[node]),
     image: effective.value[node]?.imageTag || view?.appliedImageTag || '未配置',
     readback: effective.value[node]?.javaToolOptions || '无回读',
     match: matchState(node)
   }
 }))
+
+const pendingRows = computed(() => rows.value.filter((row) => (
+  ['DRAFT', 'PENDING_RESTART'].includes(row.status)
+  || row.match.text === '与目标不一致'
+)))
 
 function tone(status) {
   if (status === 'APPLIED') return 'q-ok'
@@ -126,15 +168,25 @@ watch(
       </div>
     </div>
     <p v-if="error" class="error-banner" role="alert" data-testid="jvm-params-error">{{ error }}</p>
+    <p v-if="pendingRows.length" class="notice warn" data-testid="jvm-params-pending">
+      <strong>有配置尚未生效：</strong>
+      <span v-for="(row, index) in pendingRows" :key="row.node">
+        {{ index ? '；' : '' }}{{ row.node }}（{{ row.status }} rev{{ row.revision || '—' }}）
+      </span>
+      。保存草稿不会重启 JVM；请到向导第 3 步点击「保存并应用」或「应用并重启」，重启后本表 5s 内刷新。
+    </p>
     <table class="data-table" data-testid="jvm-params-table">
       <thead>
         <tr>
           <th>实例</th>
           <th>状态</th>
           <th>rev</th>
-          <th>Xms / Xmx</th>
-          <th>GC</th>
+          <th>目标 Xms / Xmx</th>
+          <th>目标 GC</th>
           <th>目标停顿</th>
+          <th>实际 Xms / Xmx</th>
+          <th>实际 GC</th>
+          <th>实际停顿</th>
           <th>Young 区间</th>
           <th>IHOP</th>
           <th>Region</th>
@@ -151,6 +203,9 @@ watch(
           <td>{{ row.summary?.heap || '未配置' }}</td>
           <td>{{ row.summary?.gc || '—' }}</td>
           <td>{{ row.summary?.pause || '—' }}</td>
+          <td :class="{ 'jvm-actual-missing': !row.actual }">{{ row.actual?.heap || '无回读' }}</td>
+          <td :class="{ 'jvm-actual-missing': !row.actual }">{{ row.actual?.gc || '无回读' }}</td>
+          <td :class="{ 'jvm-actual-missing': !row.actual }">{{ row.actual?.pause || '无回读' }}</td>
           <td>{{ row.summary?.young || '—' }}</td>
           <td>{{ row.summary?.ihop || '—' }}</td>
           <td>{{ row.summary?.region || '—' }}</td>
@@ -163,8 +218,8 @@ watch(
       </tbody>
     </table>
     <p class="hint">
-      Xms/Xmx/GC 等取自<strong>已保存的实例配置</strong>（应用后生效），“回读”列是容器实际参数；两者不一致时显示黄色。
-      改参数去「实例与 JVM」页或场景向导第 3 步（同一份台账），应用/重启后这里 5s 内刷新。
+      前三列参数取自<strong>已保存的目标配置</strong>；「实际」列来自容器 <code>jcmd VM.flags</code> 回读。
+      两者不一致时显示黄色，并提示该实例需要应用/重启。改参数去向导第 3 步（同一份台账）。
     </p>
   </section>
 </template>
@@ -172,5 +227,9 @@ watch(
 <style scoped>
 .jvm-params .data-table {
   font-size: 0.8rem;
+}
+
+.jvm-actual-missing {
+  color: var(--text-muted);
 }
 </style>
