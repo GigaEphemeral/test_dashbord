@@ -70,6 +70,9 @@ run 节点集合，承接 login / 商品两级缓存读 / `POST|GET /api/orders`
 4. **共享队列的双向兼容**由 `app.seckill.mq.type-id` 决定，改动 JDK21 消息类名时必须同步该默认值。
 5. **app-3 的 `INFO_SHELL=seckill-app-jdk8`** 只用于 info 面板标识；Prometheus `app` 标签仍是 `seckill-app`，
    保证三个实例落在同一 job/面板查询里。
+6. **验证会消耗商品库存**：`verify.sh`/`smoke.sh` 与分流探测都会扣减 product 1/20 的 DB 与 Redis 库存；
+   本轮探测把 product 1 打到 0 后，已按 `reset-lab.sh` 的基线公式恢复 `available=MOD(id*37,501)`（DB）并同步
+   `seckill:stock:1`。批量演示前建议按需跑一次 `reset-lab.sh`。
 
 ---
 
@@ -110,6 +113,11 @@ POST /lab-api/lab/instances/app-3/apply
 # 故障注入（app-3 容器级）
 POST /chaos/instances/app-3/actions {"action":"freeze","ttlSeconds":6}
 -> target=jl-app-3；8s 后自动 resume，容器 running/healthy，/api/products/1=200
+
+# k6 load（20s × 20 VU，经 Nginx，2026-10-30）
+flow_errors=0.00% (0/324)   server_errors=0.00%   http_req_failed=0.00%   p95=7.67ms
+sum by(instance) increase(http_server_requests_seconds_count{uri=~"/api/products/.*"}[3m])
+-> app-1 104.9 / app-2 103.9 / app-3 103.9（约 1/3 均分）
 ```
 
 ## 附录 B：关键文件
