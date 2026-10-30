@@ -137,6 +137,13 @@ const CHARTS = [
         format: (value) => value.toFixed(0),
         split: true,
         dash: '5 3'
+      },
+      {
+        // Reference line: without it an idle pool (active=queue=0) looks blank.
+        key: 'max',
+        label: 'pool max（参考）',
+        expr: `max(executor_pool_max_threads{${JOB}})`,
+        format: (value) => value.toFixed(0)
       }
     ]
   },

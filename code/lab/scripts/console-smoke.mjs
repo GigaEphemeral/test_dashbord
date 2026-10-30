@@ -597,19 +597,25 @@ async function main() {
       }
       const rows = await page.locator('[data-testid^="wizard-config-row-"]').count();
       const text = (await row.textContent()) || '';
-      const options = await page
-        .getByTestId('wizard-config-instance')
-        .locator('option')
-        .evaluateAll((nodes) => nodes.map((node) => node.value));
-      const editDisabled = await page.getByTestId('wizard-config-edit-app-3').isDisabled();
+      const columns = await page.locator('[data-testid^="wizard-config-column-"]').count();
+      const app3Column = await page.getByTestId('wizard-config-column-app-3').count();
       return {
         ok: rows === 3
           && text.includes('未启用')
           && text.includes('未启用节点不参与本实验')
-          && options.join(',') === 'app-1,app-2'
-          && editDisabled,
-        detail: `rows=${rows} options=${options.join(',')} editDisabled=${editDisabled}`,
+          && columns === 2
+          && app3Column === 0,
+        detail: `rows=${rows} columns=${columns} app3Column=${app3Column}`,
       };
+    });
+    // B5: the three enabled JVMs are shown side by side so parameters can be
+    // compared without switching a select.
+    await expectCondition('wizard: the enabled JVMs are laid out side by side', async () => {
+      const columns = await page.locator('[data-testid^="wizard-config-column-"]').count();
+      const firstEditor = await page.getByTestId('instance-config-editor-app-1').count();
+      const secondEditor = await page.getByTestId('instance-config-editor-app-2').count();
+      return { ok: columns >= 2 && firstEditor >= 1 && secondEditor >= 1,
+        detail: `columns=${columns} editors=${firstEditor}/${secondEditor}` };
     });
 
     await page.getByTestId('wizard-step-4').click();
@@ -1343,6 +1349,15 @@ async function main() {
       const box = page.getByTestId('chart-gc');
       const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
       return { ok: text.includes('minor') && text.includes('major'), detail: text.slice(0, 90) };
+    });
+    await expectCondition('observe: the thread-pool chart keeps a pool-max reference', async () => {
+      const box = page.getByTestId('chart-threads');
+      const text = ((await box.textContent()) || '').replace(/\s+/g, ' ');
+      return { ok: text.includes('pool max'), detail: text.slice(0, 100) };
+    });
+    await expectCondition('console: every section uses the full viewport width', async () => {
+      const maxWidth = await page.locator('.page').first().evaluate((el) => getComputedStyle(el).maxWidth);
+      return { ok: maxWidth === 'none', detail: `max-width=${maxWidth}` };
     });
     await expectCondition('observe: the JVM parameter table lists every app instance', async () => {
       if ((await page.getByTestId('jvm-params').count()) === 0) {

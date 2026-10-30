@@ -54,7 +54,7 @@ a:hover {
 }
 
 .page {
-  max-width: 1280px;
+  max-width: none;
   margin: 0 auto;
   padding: 28px 24px 20px;
   min-height: 100vh;
@@ -63,9 +63,8 @@ a:hover {
   gap: 20px;
 }
 
-/* The live monitor needs the full viewport: per-instance JVM lines, the
-   topology and the instance table all lose information in a narrow column.
-   Every other section keeps the readable 1280px layout. */
+/* The console uses the whole viewport on every section: the topology, the
+   timelines and the per-instance tables all gain from the extra width. */
 .page.page-wide {
   max-width: none;
 }

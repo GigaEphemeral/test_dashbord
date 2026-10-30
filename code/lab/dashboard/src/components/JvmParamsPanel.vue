@@ -17,7 +17,7 @@ const props = defineProps({
   syncTick: { type: Number, default: 0 }
 })
 
-const REFRESH_MIN_MS = 15000
+const REFRESH_MIN_MS = 5000
 
 const views = ref({})
 const effective = ref({})
@@ -119,7 +119,7 @@ watch(
     <div class="card-head">
       <h2>JVM 参数对照</h2>
       <div class="bench-actions">
-        <span class="hint">来源：实例配置台账 + 容器回读（每 15s 最多刷新一次）</span>
+        <span class="hint">来源：实例配置台账 + 容器回读（跟随 5s 全局同步，最多 5s 一次）</span>
         <button type="button" class="btn ghost" data-testid="jvm-params-refresh" :disabled="loading" @click="load(true)">
           {{ loading ? '查询中…' : '刷新参数' }}
         </button>
@@ -163,7 +163,8 @@ watch(
       </tbody>
     </table>
     <p class="hint">
-      参数不同的实例可直接按行对比；改参数去「实例与 JVM」页或场景向导第 3 步（同一份台账），应用/重启后这里 15s 内刷新。
+      Xms/Xmx/GC 等取自<strong>已保存的实例配置</strong>（应用后生效），“回读”列是容器实际参数；两者不一致时显示黄色。
+      改参数去「实例与 JVM」页或场景向导第 3 步（同一份台账），应用/重启后这里 5s 内刷新。
     </p>
   </section>
 </template>

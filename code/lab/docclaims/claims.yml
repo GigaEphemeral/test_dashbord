@@ -1043,3 +1043,15 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+
+- id: console-usability-fixes
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04e-console-usability.md
+  statement: "控制台可用性：整站全宽；jdk8 配置常驻可编辑；堆转储默认路径自动填充；向导 JVM 配置按节点并排；线程池图含 pool max 参考；参数对照 5s 刷新"
+  verify:
+    kind: shell
+    command: "grep -q 'max-width: none' code/lab/dashboard/src/style.css && grep -q 'instance-config-jdk8-offline-hint' code/lab/dashboard/src/components/InstanceConfigGroup.vue && grep -q 'onHeapDumpChange' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'executor_pool_max_threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'REFRESH_MIN_MS = 5000' code/lab/dashboard/src/components/JvmParamsPanel.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

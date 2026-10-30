@@ -417,6 +417,16 @@ function onGcLogChange() {
   validation.value = null
 }
 
+/** Enabling a dump without a path prefills the server-side default location. */
+function onHeapDumpChange() {
+  if (String(form.value.heapDumpOnOutOfMemory) === 'true'
+    && !String(form.value.heapDumpPath || '').trim()) {
+    // Mirrors InstanceConfigValidator.defaultPath(gcLogRoot = /app/lab-snapshots).
+    form.value.heapDumpPath = `/app/lab-snapshots/heap-${props.instance}.hprof`
+  }
+  validation.value = null
+}
+
 async function loadEffective() {
   effectiveError.value = ''
   try {
@@ -900,19 +910,25 @@ watch(() => props.active, (active) => {
               v-model="form.heapDumpOnOutOfMemory"
               class="input select"
               :data-testid="`instance-config-field-${instance}-heapDumpOnOutOfMemory`"
+              @change="onHeapDumpChange"
             >
               <option value="">未设置</option>
               <option value="true">开启</option>
               <option value="false">关闭</option>
             </select>
-            <div class="help">开启后生成 -XX:+HeapDumpOnOutOfMemoryError。</div>
+            <div class="help">开启后生成 -XX:+HeapDumpOnOutOfMemoryError；路径留空时服务端默认 <code>/app/lab-snapshots/heap-{{ instance }}.hprof</code>。</div>
           </div>
           <div v-if="form.heapDumpOnOutOfMemory === 'true'" class="field">
             <label data-tip="留空由控制器生成 /app/lab-snapshots/heap-<instance>.hprof。">
               堆转储路径 <span class="key">heapDumpPath</span>
             </label>
-            <input v-model="form.heapDumpPath" class="input" :data-testid="`instance-config-field-${instance}-heapDumpPath`" />
-            <div class="help">OOM 转储文件路径。</div>
+            <input
+              v-model="form.heapDumpPath"
+              class="input"
+              :placeholder="`/app/lab-snapshots/heap-${instance}.hprof（留空自动）`"
+              :data-testid="`instance-config-field-${instance}-heapDumpPath`"
+            />
+            <div class="help">OOM 转储文件路径；开启时若为空，这里会自动填默认位置。</div>
           </div>
         </div>
       </section>

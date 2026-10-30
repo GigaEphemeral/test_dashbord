@@ -35,6 +35,7 @@ const view = computed(() => {
   }))
   const all = series.flatMap((item) => (item.points || []).map((point) => point.v))
   const hasData = all.length > 0
+  const allZero = hasData && all.every((value) => value === 0)
   const yMax = niceCeil(Math.max(...(all.length ? all : [0]), 0))
   const start = props.windowStart
   const end = props.windowEnd
@@ -70,7 +71,7 @@ const view = computed(() => {
         anchor: index === 0 ? 'start' : index === 3 ? 'end' : 'middle'
       }
     })
-  return { series: rendered, hasData, yMax, yTicks, xTicks, axis }
+  return { series: rendered, hasData, allZero, yMax, yTicks, xTicks, axis }
 })
 </script>
 
@@ -78,7 +79,10 @@ const view = computed(() => {
   <div class="chart-box" :data-testid="chart.testid">
     <div class="chart-head">
       <strong>{{ chart.title }}</strong>
-      <span class="hint">{{ chart.note ? `${chart.note} · ` : '' }}峰值 {{ view.axis(view.yMax) }}</span>
+      <span class="hint">
+        <template v-if="view.hasData && view.allZero">当前均为 0（空闲） · </template>
+        {{ chart.note ? `${chart.note} · ` : '' }}峰值 {{ view.axis(view.yMax) }}
+      </span>
     </div>
     <svg v-if="view.hasData" :viewBox="`0 0 ${SVG_W} ${SVG_H}`" role="img" :aria-label="chart.title">
       <line

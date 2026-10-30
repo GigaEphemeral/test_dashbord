@@ -51,7 +51,6 @@ const views = ref({})
 const effective = ref({})
 const loading = ref(false)
 const error = ref('')
-const selected = ref('')
 
 const rows = computed(() => (props.allNodes.length ? props.allNodes : props.nodes).map((node) => {
   const enabled = props.nodes.includes(node)
@@ -66,8 +65,6 @@ const rows = computed(() => (props.allNodes.length ? props.allNodes : props.node
     readback: live?.readback || (enabled ? '未验证' : '—')
   }
 }))
-
-const options = computed(() => props.nodes)
 
 function statusLabel(status) {
   return STATUS_LABELS[status] || status
@@ -101,17 +98,9 @@ async function loadAll() {
       }
     }))
     emit('update:config', snapshot)
-    if (!props.nodes.includes(selected.value)) {
-      selected.value = props.nodes[0] || ''
-    }
   } finally {
     loading.value = false
   }
-}
-
-function edit(node) {
-  if (!props.nodes.includes(node)) return
-  selected.value = node
 }
 
 watch(
@@ -139,7 +128,6 @@ watch(
           <th>revision</th>
           <th>目标参数</th>
           <th>回读</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -162,36 +150,28 @@ watch(
           <td>{{ row.revision || '—' }}</td>
           <td class="hint config-args">{{ row.args }}</td>
           <td>{{ row.readback }}</td>
-          <td>
-            <button
-              type="button"
-              class="btn ghost"
-              :disabled="!row.enabled"
-              :data-testid="`wizard-config-edit-${row.node}`"
-              @click="edit(row.node)"
-            >编辑</button>
-          </td>
         </tr>
       </tbody>
     </table>
 
-    <label class="config-select">
-      编辑实例
-      <select v-model="selected" class="input select" data-testid="wizard-config-instance">
-        <option v-for="node in options" :key="node" :value="node">{{ node }}</option>
-      </select>
-    </label>
-
-    <InstanceConfigEditor
-      v-if="selected"
-      :key="selected"
-      :token="token"
-      :instance="selected"
-      :active="true"
-      :limited-observability="selected === 'seckill-app-jdk8'"
-      @changed="loadAll"
-    />
-    <p v-else class="hint">请选择一个已启用节点。</p>
+    <div class="config-columns">
+      <section
+        v-for="node in nodes"
+        :key="node"
+        class="config-column"
+        :data-testid="`wizard-config-column-${node}`"
+      >
+        <h4><code>{{ node }}</code> · JVM 配置</h4>
+        <InstanceConfigEditor
+          :token="token"
+          :instance="node"
+          :active="true"
+          :limited-observability="node === 'seckill-app-jdk8'"
+          @changed="loadAll"
+        />
+      </section>
+    </div>
+    <p v-if="!nodes.length" class="hint">请先在向导第 1 步选择至少一个 Java 节点。</p>
   </div>
 </template>
 
@@ -201,13 +181,18 @@ watch(
   overflow-wrap: anywhere;
 }
 
-.config-select {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 0 12px;
+/* Three instances side by side: parameters line up row-for-row for comparison. */
+.config-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.config-column h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
 }
 
 .config-table tr.disabled {

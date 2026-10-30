@@ -4,8 +4,9 @@ import InstanceConfigEditor from './InstanceConfigEditor.vue'
 
 /**
  * B4-04 configuration tab: one editor per app instance plus the jdk8 control
- * shell. The jdk8 shell is only editable while its container runs; an absent or
- * stopped jl-seckill-app-jdk8 stays a greyed row with no apply button.
+ * shell. The jdk8 config is ledger-only, so the editor is ALWAYS available;
+ * only apply/restart need the container (the rebuild reports a clear error when
+ * it is absent), which is why a stopped shell still shows editable fields.
  */
 const props = defineProps({
   token: { type: String, default: '' },
@@ -37,38 +38,16 @@ const jdk8Running = computed(() => jdk8Container.value?.state === 'running')
       :active="active"
     />
 
+    <p v-if="!jdk8Running" class="hint" data-testid="instance-config-jdk8-offline-hint">
+      <code>{{ JDK8_CONTAINER }}</code> 当前为 {{ jdk8Container?.state || 'absent' }}（dual-jdk profile）：
+      仍可校验与保存配置；应用/重启前需先启动该容器。
+    </p>
     <InstanceConfigEditor
-      v-if="jdk8Running"
       :token="token"
       instance="seckill-app-jdk8"
       :active="active"
       limited-observability
     />
-
-    <article
-      v-else
-      class="card instance-card off jdk8-offline"
-      data-testid="instance-config-jdk8-unavailable"
-    >
-      <header class="instance-head">
-        <div>
-          <h3><code>{{ JDK8_CONTAINER }}</code></h3>
-          <p class="instance-sub">seckill-app-jdk8 · JDK8 对照外壳</p>
-        </div>
-        <div class="instance-badges">
-          <span class="badge muted">{{ jdk8Container?.state || 'absent' }}</span>
-          <span class="badge warn">LIMITED-OBSERVABILITY</span>
-        </div>
-      </header>
-      <p class="hint">
-        容器未运行（dual-jdk profile）：启动 <code>jl-seckill-app-jdk8</code> 后才可编辑；
-        当前不显示应用/回滚按钮，也不会写入任何配置。
-      </p>
-      <p class="hint">
-        该外壳只提供有限观测：app 级热回读为 <code>READBACK_UNAVAILABLE</code>，
-        池/GC 日志回读不可用时保持「无数据」。
-      </p>
-    </article>
   </section>
 </template>
 
