@@ -1,37 +1,30 @@
 package com.javalearn.lab.seckill.jdk8.login.api;
 
-import com.javalearn.lab.common.BizException;
-import com.javalearn.lab.common.CommonErrorCode;
 import com.javalearn.lab.common.Result;
-import org.springframework.beans.factory.annotation.Value;
+import com.javalearn.lab.seckill.jdk8.login.app.LoginService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.UUID;
-
 /**
- * Mock login for k6 and the demo. The JDK 8 peer keeps the same path and JSON
- * envelope as the JDK 21 shell; it does not need Redis because the lab does not
- * enforce the bearer token yet.
+ * Mock login for k6 and the demo. Same path, JSON envelope and Redis-backed
+ * token store as the JDK 21 peers: the login probe in verify.sh round-robins
+ * over all three business instances through Nginx, so app-3 must write the
+ * {@code login:token:<token> -> userId} key exactly like app-1/app-2.
  */
 @RestController
 @RequestMapping("/api")
 public class LoginController {
 
-    private final long tokenTtlSeconds;
+    private final LoginService loginService;
 
-    public LoginController(@Value("${app.login.token-ttl-seconds:3600}") long tokenTtlSeconds) {
-        this.tokenTtlSeconds = tokenTtlSeconds;
+    public LoginController(LoginService loginService) {
+        this.loginService = loginService;
     }
 
     @PostMapping("/login")
     public Result<LoginResponse> login(@RequestBody(required = false) LoginRequest request) {
-        String userId = request == null ? null : request.getUserId();
-        if (userId == null || userId.trim().isEmpty()) {
-            throw new BizException(CommonErrorCode.INVALID_ARGUMENT, "userId is required");
-        }
-        return Result.success(new LoginResponse(UUID.randomUUID().toString(), tokenTtlSeconds));
+        return Result.success(loginService.login(request == null ? null : request.getUserId()));
     }
 }

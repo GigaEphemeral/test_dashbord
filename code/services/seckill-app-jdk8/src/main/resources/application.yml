@@ -193,9 +193,12 @@ app:
       subscription-connection-pool-size: ${SECKILL_REDISSON_SUBSCRIPTION_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
 
   login:
-    # Mock login parity with the JDK 21 shell; no Redis token store is needed
-    # because the lab does not enforce the bearer token yet.
-    token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:3600}
+    # Mock login parity with the JDK 21 peers: the UUID token is stored as
+    # <prefix><token> -> userId in the SHARED Redis (verify.sh logs in through
+    # Nginx, so one third of those probes land here). Same keys, env names and
+    # defaults as the JDK 21 shell.
+    token-key-prefix: ${LOGIN_TOKEN_KEY_PREFIX:login:token:}
+    token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:1800}
   lab:
     token: ${LAB_TOKEN:lab-token}
 
