@@ -24,14 +24,20 @@
   `end of minor GC` / `end of major GC` 两条线；Serial/Parallel 的 major 基本等价 full GC，
   G1 的 major 是老年代回收（不保证整堆压缩）。停顿图按实例给出 GC 暂停速率。
 
-## 2. 失败实验复盘（run-20261030-001）
+## 2. 失败实验复盘（run-20261030-001）与修复
 
 - 现象：`load` 10 分钟、200 VU，`FAILED`；step `k6-exit-failed`，`exitCode=99`。
-- 证据：`flow_errors.value=0.1438`（阈值 `<0.01` 被击穿）；`http_req_failed` 同值；`server_errors=0`；
-  p95/p99 阈值通过；运行参数 `PRODUCT_ID_MIN=4000, MAX=11000`；库内仅 1–10000。
-- 根因：越界商品 ID ≈ `1000/7001=14.3%`，请求 404 被计入 `flow_errors`（`/api/products/10500 → 404`，`/9000 → 200`）。
-  **不是集群或控制器故障**。
-- 保护：`ProductSamplingField` 在越界占比 >0 时显示警告，明确“404 → flow_errors → 阈值失败”，并建议基线把上界调到 ≤10000。
+- 证据：`flow_errors.value=0.1438`（阈值 `<0.01` 被击穿）；`server_errors=0`；p95/p99 阈值通过；
+  运行参数 `PRODUCT_ID_MIN=4000, MAX=11000`；库内仅 1–10000。
+- **根因（脚本语义缺陷）**：越界 ID 本就是缓存穿透的合法场景，但 `product()` 把 404 当成了
+  `flow_errors`；越界占比 `1000/7001≈14.3%`，与错误率一致（`/api/products/10500 → 404`，`/9000 → 200`）。
+  也就是说失败来自 **k6 流程对 404 的判定**，不是集群/控制器故障，也不该用“别越界”来规避。
+- **修复**：`PRODUCT_DB_MAX`（默认 10000，k6 env 可覆盖）之上的 ID 视为穿透：
+  `acceptStatuses=[200,404]`、`requireCode=false`，404 计入新计数器 `product_missing`（带 `flow=product` 标签），
+  不再写入 `flow_errors`；库内 ID 仍严格要求 200 + id 匹配。
+- **验证**：`bench.sh load -- PRODUCT_ID_MIN=9000 PRODUCT_ID_MAX=11000 LOAD_DURATION=20s` →
+  `flow_errors=0`、`product_missing.count=142`、`checks=100%`、`BENCH PASSED`。
+- 向导提示同步改为“404 计入 product_missing，不计入 flow_errors”。
 
 ## 3. 环境恢复（顺带发现并处理）
 
@@ -58,7 +64,7 @@
 
 | 项 | 说明 |
 |---|---|
-| k6 失败原因可读性 | summary 只有聚合 rate，没有状态码分布；后续可在场景里增加按状态码的 Counter，便于报告直接显示 404 占比 |
+| k6 状态码分布 | 除 `product_missing` 外仍无通用按状态码计数器；后续可按需补充 |
 | 集群自动恢复 | 容器被外部停止后 GR 不会自动 bootstrap，需要人工（本轮已手工恢复并记录步骤） |
 | Toxiproxy 预检查 | dev 栈未启用 chaos-proxy 时固定 WARN；可考虑按 profile 自动关闭 |
 

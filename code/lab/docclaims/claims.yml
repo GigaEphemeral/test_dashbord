@@ -1072,10 +1072,10 @@
   polarity: positive
   doc:
     - doc/process/Stage2/step-S2-B5-04f-report-charts-failure.md
-  statement: "商品 ID 采样超出库内 1–10000 时，向导提示越界请求返回 404 并计入 flow_errors"
+  statement: "商品 ID 越界采样按缓存穿透处理：404 计入 product_missing，不计入 flow_errors；向导提示越界占比"
   verify:
     kind: shell
-    command: "grep -q 'wizard-product-penetration-warning' code/lab/dashboard/src/components/ProductSamplingField.vue && grep -q 'flow_errors' code/lab/dashboard/src/components/ProductSamplingField.vue"
+    command: "grep -q 'wizard-product-penetration-warning' code/lab/dashboard/src/components/ProductSamplingField.vue && grep -q 'product_missing' code/lab/dashboard/src/components/ProductSamplingField.vue && grep -q 'penetration' code/lab/k6/lib/flow.js"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30

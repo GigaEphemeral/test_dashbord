@@ -208,10 +208,10 @@ function updateNumber(key, raw) {
       <span class="out" :style="{ width: `${outPercent}%` }"></span>
     </div>
     <p class="hint" data-testid="wizard-product-summary">{{ summary }}</p>
-    <p v-if="outPercent > 0" class="notice warn" role="alert" data-testid="wizard-product-penetration-warning">
-      越界 ID 约 {{ outPercent }}%：这些请求会返回 404 并计入 <code>flow_errors</code>，
-      正式压测的 <code>flow_errors.rate&lt;1%</code> 阈值会因此失败。
-      仅做缓存穿透实验时保留越界；普通基线请把上界调到 ≤ {{ DB_MAX }}。
+    <p v-if="outPercent > 0" class="notice info" data-testid="wizard-product-penetration-warning">
+      越界 ID 约 {{ outPercent }}%：这些请求会返回 404，k6 视为**缓存穿透命中**并计入
+      <code>product_missing</code>，不计入 <code>flow_errors</code>。
+      只做纯库内基线时把上界调到 ≤ {{ DB_MAX }}；穿透实验可保留。
     </p>
   </div>
 </template>

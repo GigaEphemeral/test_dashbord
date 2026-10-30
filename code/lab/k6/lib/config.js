@@ -270,6 +270,9 @@ export const config = {
     seckillOrders: apiPath('SECKILL_ORDERS_PATH', '/api/seckill/orders'),
   },
   productId: integer('PRODUCT_ID', 1, 1),
+  // Last seeded product id. Ids above it are the deliberate cache-penetration
+  // range: a 404 there is an expected miss, not a flow error.
+  productDbMax: integer('PRODUCT_DB_MAX', 10000, 1),
   // B3-00: load-only sampling range. Defaults (1..1) keep every load
   // iteration on PRODUCT_ID's historical value, product 1.
   productSampling: parseSampling(ENV),

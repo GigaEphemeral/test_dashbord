@@ -17,6 +17,7 @@ import { config } from './config.js';
 
 export const flowErrors = new Rate('flow_errors');
 export const serverErrors = new Rate('server_errors');
+export const productMissing = new Counter('product_missing');
 export const seckillExpected409 = new Counter('seckill_expected_409');
 export const seckillExpected429 = new Counter('seckill_expected_429');
 export const seckillTerminalFailed = new Counter('seckill_terminal_failed');

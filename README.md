@@ -104,7 +104,7 @@ bash code/lab/scripts/console-smoke.sh       # 控制台端到端冒烟
 - **正式 run 被 BLOCKED**：实例刚重建后 60s 稳定期内会阻断；等稳定期结束。
 - **Prometheus 内存/序列增长**：k6 远程写已限制 `systemTags`，仍可在 `.env` 调 `PROMETHEUS_MEM_LIMIT` / `PROMETHEUS_RETENTION`。
 - **jcmd 回读超时**：负载下会变慢，默认 10s，可调 `LAB_INSTANCE_JVM_FLAGS_TIMEOUT_SECONDS`。
-- **商品 ID 越界**：库内只有 1–10000；越界请求返回 404 并计入 `flow_errors`，正式压测阈值会失败。
+- **商品 ID 越界**：库内只有 1–10000；越界请求按缓存穿透处理，404 计入 `product_missing`，不计入 `flow_errors`（`PRODUCT_DB_MAX` 可覆盖）。
 - **Grafana 登录**：默认 `admin/admin`；改密码需 `docker exec jl-grafana grafana cli admin reset-admin-password <new>`。
 - **更多坑位**：见 [doc/avoid_common_error/index.md](doc/avoid_common_error/index.md)。
 

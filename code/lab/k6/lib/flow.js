@@ -10,6 +10,7 @@ import { sleep } from 'k6';
 import { config } from './config.js';
 import {
   call,
+  productMissing,
   recordError,
   seckillExpected409,
   seckillExpected429,
@@ -58,12 +59,24 @@ export function ensureLogin() {
 /** Product read used by load/stress/soak (no inventory is consumed). */
 export function product(productId) {
   const id = productId === undefined ? config.productId : productId;
+  // Penetration sampling (id > seeded max) expects a 404: it is a cache miss,
+  // not a flow failure. It is counted separately so flow_errors stays
+  // meaningful and the run thresholds keep their original meaning.
+  const penetration = Number.isFinite(id) && id > config.productDbMax;
   const result = call('GET', `${config.paths.products}/${id}`, {
     token,
     flow: 'product',
     checkName: 'product ok',
-    validate: (payload) => payload !== null && payload.data !== null && Number(payload.data.id) === id,
+    acceptStatuses: penetration ? [200, 404] : [200],
+    requireCode: penetration ? false : true,
+    validate: (payload, res) => (penetration
+      ? res.status === 404 || (payload !== null && payload.data !== null
+        && Number(payload.data.id) === id)
+      : payload !== null && payload.data !== null && Number(payload.data.id) === id),
   });
+  if (penetration && result.status === 404) {
+    productMissing.add(1, { flow: 'product' });
+  }
   return result.ok;
 }
 
