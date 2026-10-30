@@ -71,11 +71,13 @@
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
 
-    <!-- Business parity with the JDK 21 peers: the catalog read path, the
-         durable order path and the async seckill admission path. Redis is the
-         stock/idempotency store, RabbitMQ the admission queue and Redisson the
-         per-product lock. Flyway and the cache stack stay in the JDK 21 shell
-         (later steps own them); this shell reuses the Flyway-owned tables. -->
+    <!-- Business parity with the JDK 21 peers: the catalog read path (including
+         the two-level cache and the /lab/cache contract), the durable order path
+         and the async seckill admission path. Redis is the stock/idempotency
+         store and the product-cache L2, RabbitMQ the admission queue and
+         Redisson the per-product lock/bloom filter. Flyway stays in the JDK 21
+         shell (later steps own the schema); this shell reuses the Flyway-owned
+         tables. -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -83,6 +85,20 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- Two-level product cache, the same stack the JDK 21 peers run: Spring's
+         cache abstraction + Caffeine L1 + the Redis starter above as L2. The
+         Boot 2.7.18 BOM manages Caffeine 2.9.3, which is also the last
+         Java 8-compatible line (3.x requires Java 11); the API used here
+         (newBuilder/recordStats/expireAfterWrite/refreshAfterWrite/policy) is
+         identical, so the cache semantics match the JDK 21 shell. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-cache</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -126,6 +142,15 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- The ported cache-lab unit tests mock the final strategy/guard classes
+         exactly as the JDK 21 peers do (Mockito 5 enables the inline mock maker
+         by default). Boot 2.7.18's Mockito 4.5.1 needs the explicit inline
+         artifact for final classes; test scope only, no runtime impact. -->
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-inline</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -135,6 +160,19 @@
 
   <build>
     <plugins>
+      <!-- The module targets Java 8 but the lab's Maven runs on a newer JDK.
+           Mockito 4.5.1's bundled Byte Buddy predates that JDK's class-file
+           version; the experimental switch lets the inline mock maker read it.
+           It changes nothing when the tests run on the Java 8 runtime. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <net.bytebuddy.experimental>true</net.bytebuddy.experimental>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
       <!-- repackage so the EOL JRE can run `java -jar target/seckill-app-jdk8-....jar`. -->
       <plugin>
         <groupId>org.springframework.boot</groupId>

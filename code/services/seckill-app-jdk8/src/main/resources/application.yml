@@ -198,6 +198,180 @@ app:
     token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:3600}
   lab:
     token: ${LAB_TOKEN:lab-token}
+
+    # Cache experiment (design 8.4), byte-for-byte the same contract as the
+    # JDK 21 peers: the same property keys, the same LAB_CACHE_* env names and
+    # the same defaults, so app-3 is interchangeable with app-1/app-2 for the
+    # cache-lab scenario and for GET /lab/config. /lab/cache/seed generates the
+    # dataset in a RESERVED id range above protected-max-id, so the demo
+    # products (1 and 20) that verify.sh / smoke.sh / reset-lab.sh assert on are
+    # never written. Counts, id range, TTLs, jitter, batch size, SCAN hint and
+    # the bloom geometry are all here; nothing is hardcoded in Java.
+    cache:
+      seed:
+        # 1000 experiment products, ids 90000..90999 by default.
+        product-count: ${LAB_CACHE_SEED_PRODUCT_COUNT:1000}
+        # Upper bound of one POST /lab/cache/seed {"count":N} request (B3-02).
+        max-request-count: ${LAB_CACHE_SEED_MAX_REQUEST_COUNT:10000}
+        start-id: ${LAB_CACHE_SEED_START_ID:90000}
+        # Highest id that belongs to the built-in demo baseline; seeding must
+        # start above it.
+        protected-max-id: ${LAB_CACHE_SEED_PROTECTED_MAX_ID:10000}
+        # M4-2/M4-3 avalanche set: this many keys are warmed with ONE identical
+        # TTL so they expire in the same second.
+        avalanche-key-count: ${LAB_CACHE_SEED_AVALANCHE_KEY_COUNT:200}
+        avalanche-ttl-seconds: ${LAB_CACHE_SEED_AVALANCHE_TTL_SECONDS:60}
+        # One designated hot key, addressed as an offset inside the range. It
+        # must sit at or after avalanche-key-count: it is warmed with its own
+        # TTL, so an offset inside the avalanche range would overwrite an
+        # identically-expiring key (rejected by startup validation).
+        hot-key-index: ${LAB_CACHE_SEED_HOT_KEY_INDEX:999}
+        hot-key-ttl-seconds: ${LAB_CACHE_SEED_HOT_KEY_TTL_SECONDS:300}
+        write-batch-size: ${LAB_CACHE_SEED_WRITE_BATCH_SIZE:200}
+        name-prefix: ${LAB_CACHE_SEED_NAME_PREFIX:实验商品}
+        status: ${LAB_CACHE_SEED_STATUS:ON_SALE}
+        price: ${LAB_CACHE_SEED_PRICE:99.00}
+      state:
+        # Redis SCAN COUNT hint used by GET /lab/cache/state to count live keys.
+        scan-count: ${LAB_CACHE_STATE_SCAN_COUNT:500}
+      # SCAN-only key browser (GET /lab/cache/keys) and experiment reset
+      # (POST /lab/cache/reset). The prefix allow-list is closed so the endpoint
+      # can never dump the whole keyspace; max-limit is the hard page cap and
+      # reset-max-keys bounds one destructive call on the 10k dataset.
+      keys:
+        default-prefix: ${LAB_CACHE_KEYS_DEFAULT_PREFIX:cache:product:}
+        allowed-prefixes: ${LAB_CACHE_KEYS_ALLOWED_PREFIXES:cache:product:}
+        default-limit: ${LAB_CACHE_KEYS_DEFAULT_LIMIT:100}
+        max-limit: ${LAB_CACHE_KEYS_MAX_LIMIT:1000}
+        scan-count: ${LAB_CACHE_KEYS_SCAN_COUNT:500}
+        # Bounded batches per page so a sparse prefix still fills the page.
+        scan-batches: ${LAB_CACHE_KEYS_SCAN_BATCHES:20}
+        value-max-bytes: ${LAB_CACHE_KEYS_VALUE_MAX_BYTES:2048}
+        reset-scan-count: ${LAB_CACHE_KEYS_RESET_SCAN_COUNT:1000}
+        reset-max-keys: ${LAB_CACHE_KEYS_RESET_MAX_KEYS:50000}
+      # TwoLevelCache's own Redis L2 write side. The prefix is the L2 key LAYOUT
+      # contract: the cache, the experiment seeder, GET /lab/cache/state, the
+      # preheat service and the TTL-jitter adjuster all resolve it from this
+      # single key (TwoLevelCacheSettings), so re-pointing it moves every reader
+      # and writer together.
+      l2:
+        ttl-seconds: ${LAB_CACHE_L2_TTL_SECONDS:300}
+        key-prefix: ${LAB_CACHE_L2_KEY_PREFIX:cache:}
+        clear-scan-count: ${LAB_CACHE_L2_CLEAR_SCAN_COUNT:500}
+      penetration:
+        # Startup seed of the runtime mode; POST /lab/cache/mode switches it
+        # without a restart. off is the unprotected symptom state the lab starts
+        # in. Since M4-2 this key seeds ALL defense modes.
+        mode: ${LAB_CACHE_DEFENSE_MODE:off}
+        null-cache:
+          key-prefix: ${LAB_CACHE_NULL_KEY_PREFIX:null:product:}
+          # Short TTL because a marker only promises "absent so far"; the jitter
+          # keeps a miss burst from expiring in lockstep with the avalanche keys.
+          ttl-seconds: ${LAB_CACHE_NULL_TTL_SECONDS:10}
+          jitter-seconds: ${LAB_CACHE_NULL_JITTER_SECONDS:5}
+        bloom:
+          key: ${LAB_CACHE_BLOOM_KEY:bloom:product-ids}
+          # Capacity covers the demo products plus the experiment range with
+          # room for growth; re-seeding rebuilds the filter from the real ids.
+          expected-insertions: ${LAB_CACHE_BLOOM_EXPECTED_INSERTIONS:10000}
+          false-probability: ${LAB_CACHE_BLOOM_FALSE_PROBABILITY:0.01}
+      # 击穿 (hot-key breakdown) defense, design 8.4. Same runtime switch as the
+      # penetration modes; every lock time, TTL, bound and pool number is here.
+      breakdown:
+        mutex:
+          # Redisson lock per key (prefix + id); one holder rebuilds, waiters
+          # double-check L2/stale before touching the DB. lease-ms >= wait-ms is
+          # enforced at startup.
+          key-prefix: ${LAB_CACHE_MUTEX_KEY_PREFIX:lock:product:}
+          wait-ms: ${LAB_CACHE_MUTEX_WAIT_MS:200}
+          lease-ms: ${LAB_CACHE_MUTEX_LEASE_MS:2000}
+          # What a waiter whose lock wait timed out does: db = honestly query
+          # the database (default), stale = serve the retained value if one
+          # exists, else still db. This is the visible P99 cost knob.
+          on-lock-timeout: ${LAB_CACHE_MUTEX_ON_LOCK_TIMEOUT:db}
+        logical-expire:
+          # Value keeps its own logical TTL; after that it is served stale for
+          # up to retention-seconds (physical window, must be larger) while ONE
+          # async refresh rebuilds it and publishes the fresh value back into
+          # the shared cache. retention-seconds must ALSO exceed
+          # seed.hot-key-ttl-seconds, enforced at startup.
+          logical-ttl-seconds: ${LAB_CACHE_LOGICAL_TTL_SECONDS:30}
+          retention-seconds: ${LAB_CACHE_LOGICAL_RETENTION_SECONDS:600}
+          # Per-instance bounded stale store; a key storm cannot grow it.
+          max-entries: ${LAB_CACHE_LOGICAL_MAX_ENTRIES:10000}
+          # Bounded refresh pool; saturation is counted as
+          # cache_breakdown_refresh{result="rejected"} and stale keeps serving.
+          refresh-pool-size: ${LAB_CACHE_LOGICAL_REFRESH_POOL_SIZE:2}
+          refresh-queue-capacity: ${LAB_CACHE_LOGICAL_REFRESH_QUEUE_CAPACITY:100}
+          keep-alive-seconds: ${LAB_CACHE_LOGICAL_REFRESH_KEEP_ALIVE_SECONDS:60}
+          thread-name-prefix: ${LAB_CACHE_LOGICAL_REFRESH_THREAD_PREFIX:breakdown-refresh}
+      # 雪崩 (cache avalanche) defense, design 8.4 row three. Three strategies on
+      # the same runtime switch: ttl-jitter spreads every product L2 write by
+      # ±percent; l1-cache is the L1-first posture; db-fallback bounds database
+      # reads with a fixed permits/period budget and fast fails with 42901.
+      avalanche:
+        ttl-jitter:
+          percent: ${LAB_CACHE_TTL_JITTER_PERCENT:20}
+        l1-cache:
+          # A value is fresh this long; after that it is served stale while ONE
+          # async refresh rebuilds it. Design 8.4: refresh interval 10s.
+          refresh-interval-seconds: ${LAB_CACHE_L1_REFRESH_INTERVAL_SECONDS:10}
+          # Worst-case staleness of the L1-first posture (design 8.4: L1 TTL).
+          stale-window-seconds: ${LAB_CACHE_L1_STALE_WINDOW_SECONDS:60}
+          # Per-instance bounded mirror; a key storm cannot grow it.
+          max-entries: ${LAB_CACHE_L1_MAX_ENTRIES:10000}
+          # Bounded refresh pool; saturation is counted as
+          # cache_avalanche_l1_refresh{result="rejected"} and stale keeps serving.
+          refresh-pool-size: ${LAB_CACHE_L1_REFRESH_POOL_SIZE:2}
+          refresh-queue-capacity: ${LAB_CACHE_L1_REFRESH_QUEUE_CAPACITY:100}
+          keep-alive-seconds: ${LAB_CACHE_L1_KEEP_ALIVE_SECONDS:60}
+          thread-name-prefix: ${LAB_CACHE_L1_REFRESH_THREAD_PREFIX:avalanche-l1-refresh}
+        db-fallback:
+          # At most this many database reads per period across all avalanche
+          # traffic; the rest fail fast with 42901. Both numbers validated.
+          permits: ${LAB_CACHE_DB_FALLBACK_PERMITS:50}
+          period-ms: ${LAB_CACHE_DB_FALLBACK_PERIOD_MS:1000}
+      # Caffeine 预热 (M4-3, design 8.4). The hot-key tracker is per instance and
+      # capped; the Top-N is published to ONE shared Redis ZSet so every instance
+      # preheats from the same list. Startup/periodic preheat warms L1 from L2
+      # only — it never rewrites cache:product:<id> TTLs.
+      preheat:
+        # Gates the automatic startup + periodic runs. Hot-key tracking and
+        # publishing stay active, and POST /lab/cache/preheat stays available.
+        enabled: ${LAB_CACHE_PREHEAT_ENABLED:true}
+        top-n: ${LAB_CACHE_PREHEAT_TOP_N:200}
+        hot-list-key: ${LAB_CACHE_PREHEAT_HOT_LIST_KEY:hot:products}
+        tracker:
+          # Caffeine cap on tracked product ids (design 8.4: 10 万).
+          capacity: ${LAB_CACHE_PREHEAT_TRACKER_CAPACITY:100000}
+          # Counters halve once per interval (design 8.4: 30s).
+          decay-interval-seconds: ${LAB_CACHE_PREHEAT_TRACKER_DECAY_INTERVAL_SECONDS:30}
+          # How often the local Top-N replaces the shared ZSet.
+          flush-interval-seconds: ${LAB_CACHE_PREHEAT_TRACKER_FLUSH_INTERVAL_SECONDS:10}
+        load:
+          # Rate limit: this many L2 reads, then chunk-pause-ms of sleep.
+          chunk-size: ${LAB_CACHE_PREHEAT_LOAD_CHUNK_SIZE:50}
+          chunk-pause-ms: ${LAB_CACHE_PREHEAT_LOAD_CHUNK_PAUSE_MS:50}
+          # The startup run is async after ApplicationReadyEvent, never during boot.
+          startup-delay-ms: ${LAB_CACHE_PREHEAT_STARTUP_DELAY_MS:1000}
+          # Incremental reheat period (design 8.4: 5 minutes).
+          periodic-interval-seconds: ${LAB_CACHE_PREHEAT_PERIODIC_INTERVAL_SECONDS:300}
+          scheduler-pool-size: ${LAB_CACHE_PREHEAT_SCHEDULER_POOL_SIZE:1}
+          thread-name-prefix: ${LAB_CACHE_PREHEAT_THREAD_PREFIX:cache-preheat}
+        # Externalized Caffeine L1 geometry (the former TwoLevelCache constants).
+        l1:
+          maximum-size: ${LAB_CACHE_L1_MAXIMUM_SIZE:10000}
+          refresh-after-write-seconds: ${LAB_CACHE_L1_REFRESH_AFTER_WRITE_SECONDS:10}
+          expire-after-write-seconds: ${LAB_CACHE_L1_EXPIRE_AFTER_WRITE_SECONDS:60}
+          # Register the Caffeine-native L1 stats series (cache_l1_caffeine_*,
+          # cache_l1_estimated_size) with Micrometer for every L1 instance.
+          micrometer-stats-enabled: ${LAB_CACHE_L1_MICROMETER_STATS_ENABLED:true}
+          # Startup state of the per-JVM Caffeine switch; POST /lab/cache/l1 can
+          # still flip it at runtime.
+          enabled: ${LAB_CACHE_L1_ENABLED:true}
+          # Idle expiry of an L1 entry, in seconds (0 = disabled).
+          expire-after-access-seconds: ${LAB_CACHE_L1_EXPIRE_AFTER_ACCESS_SECONDS:0}
+
     snapshot:
       enabled: ${LAB_SNAPSHOT_ENABLED:true}
       # Container path of the host mount doc/process/Stage1/snapshots (compose.base.yml).
