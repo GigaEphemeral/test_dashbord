@@ -431,16 +431,20 @@ for app_container in jl-app-1 jl-app-2 jl-app-3; do
 done
 
 # The L2 error counter must be exported even at zero, so outage dashboards and
-# alerts can bind to it (a typo'd meter name fails here, not in M3).
+# alerts can bind to it (a typo'd meter name fails here, not in M3). Checked on
+# every business slot: app-3 is the JDK 8 peer (B5-05 P1), and a port that
+# silently drops the cache meters must fail here rather than on a dashboard.
 # Capture first: `grep -q` closes the pipe early and pipefail would then report
 # wget's SIGPIPE as a failed check even when the series matched.
-cache_metrics_body="$(docker exec jl-app-1 wget -qO- \
-  http://127.0.0.1:8080/actuator/prometheus 2>/dev/null || true)"
-if grep -q '^cache_l2_errors_total' <<<"$cache_metrics_body"; then
-  pass "app-1 exposes cache_l2_errors_total on /actuator/prometheus"
-else
-  fail "app-1 exposes cache_l2_errors_total on /actuator/prometheus" "series missing"
-fi
+for app_container in jl-app-1 jl-app-2 jl-app-3; do
+  cache_metrics_body="$(docker exec "$app_container" wget -qO- \
+    http://127.0.0.1:8080/actuator/prometheus 2>/dev/null || true)"
+  if grep -q '^cache_l2_errors_total' <<<"$cache_metrics_body"; then
+    pass "$app_container exposes cache_l2_errors_total on /actuator/prometheus"
+  else
+    fail "$app_container exposes cache_l2_errors_total on /actuator/prometheus" "series missing"
+  fi
+done
 
 # 2d. Inventory + idempotent order flow through Nginx (Task 13). The three
 # instances share one database, so the retried POST may hit a different app.

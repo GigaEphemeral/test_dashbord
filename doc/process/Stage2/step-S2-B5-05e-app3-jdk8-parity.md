@@ -14,7 +14,7 @@ run 节点集合，承接 login / 商品两级缓存读 / `POST|GET /api/orders`
 | jdk8 模块 `mvn test` | **350 tests / 0 failures / 0 errors** |
 | 控制器 `mvn test` | **892 tests / 0 failures / 0 errors** |
 | `smoke.sh` | **7 passed / 0 failed**（`SMOKE PASSED.`） |
-| `verify.sh` | **108 PASS / 1 WARN / 0 FAIL**（WARN 仍为 cAdvisor/WSL2；Sentinel 2+2 后比 109 少一条 per-sentinel 断言） |
+| `verify.sh` | **110 PASS / 1 WARN / 0 FAIL**（WARN 仍为 cAdvisor/WSL2；新增 app-2/app-3 的 cache 指标断言 +2，Sentinel 2+2 少一条 per-sentinel 断言） |
 | `console-smoke.sh` | **158 PASS / 0 FAIL** |
 | `check-doc-claims.sh` | **91 PASS / 0 FAIL** |
 | 分流探测 | 经 Nginx 各 9 次 `POST /api/orders`、`POST /api/seckill/orders`，**全部 200/202，无 404** |
@@ -98,6 +98,18 @@ SMOKE PASSED.
 # Prometheus（同一 job，app-3 的 jvm_version=1.8.0_504）
 orders_created_total{instance="app-3:8080",app="seckill-app",job="seckill-app"} = 4
 up{job="seckill-app"} -> app-1/app-2/app-3 全 1
+
+# 受控重建（app-3，之前遗留 status=FAILED rev2）
+POST /lab-api/lab/instances/app-3/apply
+-> status=APPLIED, image=java-learn-lab/seckill-app:jdk8
+-> checks: snapshot/park/create/... 全 PASS（pool-probe 不再 SKIP）
+-> effective: readback=OK, observability=FULL-OBSERVABILITY
+-> JAVA_TOOL_OPTIONS=-Xms256m -Xmx512m ... -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+-> 容器 running/healthy；/lab/pool、/api/products/1、9 次 seckill 全 2xx
+
+# 故障注入（app-3 容器级）
+POST /chaos/instances/app-3/actions {"action":"freeze","ttlSeconds":6}
+-> target=jl-app-3；8s 后自动 resume，容器 running/healthy，/api/products/1=200
 ```
 
 ## 附录 B：关键文件
