@@ -74,6 +74,20 @@ public class InstanceConfigValidator {
             throw invalid("imageTag '" + imageTag + "' is not allow-listed (allowed: "
                     + properties.getImageTags() + "; lab.instance.image-tags)");
         }
+        boolean jdk8Slot = instance.equals(properties.getJdk8Instance());
+        if (!jdk8Slot && (jdk == 8 || "jdk8".equals(imageTag))) {
+            throw invalid("instance '" + instance + "' is not the JDK 8 slot ("
+                    + properties.getJdk8Instance() + "); only that slot may use jdkVersion 8 "
+                    + "or the jdk8 image");
+        }
+        if (jdk8Slot && jdk != 8) {
+            throw invalid("instance '" + instance + "' is the configured JDK 8 slot; "
+                    + "jdkVersion must be 8 (was " + jdk + ")");
+        }
+        if (jdk8Slot && imageTag != null && !"jdk8".equals(imageTag)) {
+            throw invalid("instance '" + instance + "' is the configured JDK 8 slot; "
+                    + "imageTag must be jdk8 (was " + imageTag + ")");
+        }
         if (imageTag == null) {
             warnings.add("imageTag is not set: the running image is not pinned by this configuration");
         }

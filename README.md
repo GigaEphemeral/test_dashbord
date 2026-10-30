@@ -52,6 +52,10 @@ bash code/lab/scripts/db-ha-up.sh                 # MySQL InnoDB Cluster + Route
 bash code/lab/scripts/down.sh                     # 停止；数据卷保留
 ```
 
+> **JDK 8 口径（P0，2026-10-30）**：默认仍是 3×JDK21 + 可选 `dual-jdk` 外壳。控制面已支持
+> `LAB_INSTANCE_JDK8_MODE=app-slot`（app-3 = JDK8 业务槽位，2×21+1×8），但需要 P1 的 JDK8
+> 完整业务镜像就绪后才切换；切换变量见 `doc/process/Stage2/step-S2-B5-05-app3-jdk8-p0.md`。
+
 ### 控制器离线重建（Maven Central 不可达时）
 
 `compose build` 会在容器内跑 Maven；若拉不到依赖，用宿主机构建 jar 再打运行时镜像：

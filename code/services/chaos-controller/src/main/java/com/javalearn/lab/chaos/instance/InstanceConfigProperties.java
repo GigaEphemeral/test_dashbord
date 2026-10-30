@@ -76,9 +76,23 @@ public class InstanceConfigProperties {
     private int eventsLogTail = 200;
     private int eventsMaxEvents = 50;
     private int eventsLineMaxChars = 400;
-    /** B4-04: the JDK 8 shell instance and its Prometheus job (LIMITED). */
+    /**
+     * B4-04/B5-05: where the JDK 8 runtime lives. {@code shell} keeps the
+     * historical separate {@code seckill-app-jdk8} container; {@code app-slot}
+     * makes {@link #jdk8Instance} one of the three business app slots (2x21 +
+     * 1x8) and retires the shell. The default stays {@code shell} until the
+     * JDK 8 business image exists; deploying the app slot only needs env:
+     * LAB_INSTANCE_JDK8_MODE=app-slot, LAB_INSTANCE_NAMES=app-1,app-2,app-3,
+     * LAB_INSTANCE_JDK8_INSTANCE=app-3.
+     */
+    private String jdk8Mode = "shell";
     private String jdk8Instance = "seckill-app-jdk8";
     private String jdk8PrometheusJob = "seckill-app-jdk8";
+
+    /** True when the JDK 8 runtime is one of the three app slots. */
+    public boolean isJdk8AppSlotMode() {
+        return "app-slot".equalsIgnoreCase(jdk8Mode);
+    }
 
     // ------------------------------------------------------- B4-02 rebuild
 
@@ -126,6 +140,15 @@ public class InstanceConfigProperties {
                 throw new IllegalStateException("lab.instance.names entry '" + name
                         + "' must match " + INSTANCE_NAME + "; env LAB_INSTANCE_NAMES");
             }
+        }
+        if (!"shell".equalsIgnoreCase(jdk8Mode) && !"app-slot".equalsIgnoreCase(jdk8Mode)) {
+            throw new IllegalStateException("lab.instance.jdk8-mode must be shell or app-slot (was '"
+                    + jdk8Mode + "'); env LAB_INSTANCE_JDK8_MODE");
+        }
+        if (isJdk8AppSlotMode() && !names.contains(jdk8Instance)) {
+            throw new IllegalStateException("lab.instance.jdk8-instance '" + jdk8Instance
+                    + "' must be one of lab.instance.names " + names
+                    + " when jdk8-mode=app-slot; env LAB_INSTANCE_JDK8_INSTANCE");
         }
         if (containerPrefix == null || containerPrefix.isBlank()) {
             throw new IllegalStateException(
@@ -334,6 +357,14 @@ public class InstanceConfigProperties {
 
     public void setImageTags(List<String> imageTags) {
         this.imageTags = imageTags;
+    }
+
+    public String getJdk8Mode() {
+        return jdk8Mode;
+    }
+
+    public void setJdk8Mode(String jdk8Mode) {
+        this.jdk8Mode = jdk8Mode;
     }
 
     public String getJdk8Instance() {

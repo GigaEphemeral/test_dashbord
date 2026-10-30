@@ -188,15 +188,42 @@ class InstanceConfigValidatorTest {
     }
 
     @Test
+    void appSlotModeMovesTheJdk8SlotToApp3() throws Exception {
+        properties.setJdk8Mode("app-slot");
+        properties.setJdk8Instance("app-3");
+        properties.setNames(List.of("app-1", "app-2", "app-3"));
+        properties.validate();
+        InstanceConfigValidator slotValidator = new InstanceConfigValidator(properties);
+
+        assertThat(slotValidator.validate("app-3", config("""
+                {"jdkVersion":8,"imageTag":"jdk8"}
+                """)).limitedObservability()).isTrue();
+        assertThatThrownBy(() -> slotValidator.validate("app-2", config("""
+                {"jdkVersion":8,"imageTag":"jdk8"}
+                """)))
+                .isInstanceOf(InvalidInstanceConfigException.class)
+                .hasMessageContaining("JDK 8 slot");
+    }
+
+    @Test
+    void nonJdk8SlotRejectsJdk8Config() throws Exception {
+        assertThatThrownBy(() -> validator.validate("app-1", config("""
+                {"jdkVersion":8,"imageTag":"jdk8"}
+                """)))
+                .isInstanceOf(InvalidInstanceConfigException.class)
+                .hasMessageContaining("JDK 8 slot");
+    }
+
+    @Test
     void jdk8RejectsJdk21OnlyFlagsAndMarksLimitedObservability() throws Exception {
-        InstanceConfigValidator.ValidationResult result = validator.validate("app-1", config("""
+        InstanceConfigValidator.ValidationResult result = validator.validate("seckill-app-jdk8", config("""
                 {"jdkVersion":8,"gcCollector":"G1","gcLogEnabled":true}
                 """));
         assertThat(result.limitedObservability()).isTrue();
         assertThat(result.warnings()).anyMatch(w -> w.contains("LIMITED-OBSERVABILITY"));
-        assertThat(result.jvmArgs()).contains("-Xloggc:/app/lab-snapshots/gc-app-1.log");
+        assertThat(result.jvmArgs()).contains("-Xloggc:/app/lab-snapshots/gc-seckill-app-jdk8.log");
 
-        assertThatThrownBy(() -> validator.validate("app-1", config("""
+        assertThatThrownBy(() -> validator.validate("seckill-app-jdk8", config("""
                 {"jdkVersion":8,"extraJvmArgs":["-Xlog:gc*"]}
                 """)))
                 .isInstanceOf(InvalidInstanceConfigException.class)

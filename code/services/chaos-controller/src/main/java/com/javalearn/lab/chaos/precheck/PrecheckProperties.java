@@ -82,6 +82,14 @@ public class PrecheckProperties {
      */
     private String expectedAppImageId = "";
 
+    /**
+     * B5-05: the app container allowed to run a different image from the rest
+     * of the tier. Blank keeps the historical "all app containers agree" rule.
+     * When set (P1: jl-app-3), exactly one minority image is accepted and only
+     * for this container.
+     */
+    private String mixedImageContainer = "";
+
     /** How many entries {@code blocking[]/warnings[]/passed[]} may list. */
     private int maxListedItems = 10;
 
@@ -136,6 +144,12 @@ public class PrecheckProperties {
         if (appContainerNames().isEmpty()) {
             throw new IllegalStateException("lab.precheck.app-containers lists no container name;"
                     + " env LAB_PRECHECK_APP_CONTAINERS");
+        }
+        String mixed = mixedImageContainer == null ? "" : mixedImageContainer.trim();
+        if (!mixed.isEmpty() && !appContainerNames().contains(mixed)) {
+            throw new IllegalStateException("lab.precheck.mixed-image-container '" + mixed
+                    + "' must be one of lab.precheck.app-containers " + appContainerNames()
+                    + "; env LAB_PRECHECK_MIXED_IMAGE_CONTAINER");
         }
         range(prometheusTimeoutSeconds, 1, 300, "lab.precheck.prometheus-timeout-seconds",
                 "LAB_PRECHECK_PROMETHEUS_TIMEOUT_SECONDS");
@@ -258,6 +272,14 @@ public class PrecheckProperties {
 
     public void setExpectedAppImageId(String expectedAppImageId) {
         this.expectedAppImageId = expectedAppImageId;
+    }
+
+    public String getMixedImageContainer() {
+        return mixedImageContainer;
+    }
+
+    public void setMixedImageContainer(String mixedImageContainer) {
+        this.mixedImageContainer = mixedImageContainer;
     }
 
     public int getMaxListedItems() {

@@ -255,7 +255,7 @@ class InstanceRebuildServiceTest {
         assertThatThrownBy(() -> service.apply("app-1"))
                 .isInstanceOf(InvalidInstanceConfigException.class)
                 .hasMessageContaining("jdk8")
-                .hasMessageContaining("B4-04");
+                .hasMessageContaining("JDK 8 slot");
         assertThat(gateway.calls).isEmpty();
     }
 

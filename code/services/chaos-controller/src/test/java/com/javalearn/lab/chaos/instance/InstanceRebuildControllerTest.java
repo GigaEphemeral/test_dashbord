@@ -122,7 +122,7 @@ class InstanceRebuildControllerTest {
     @Test
     void jdk8Is400With40001() throws Exception {
         when(service.apply("app-1")).thenThrow(new InvalidInstanceConfigException(
-                "instance app-1 cannot be rebuilt with the jdk8 image"));
+                "instance app-1 cannot use the jdk8 image: only the configured JDK 8 slot may run it"));
 
         mvc.perform(post("/lab/instances/app-1/apply"))
                 .andExpect(status().isBadRequest())

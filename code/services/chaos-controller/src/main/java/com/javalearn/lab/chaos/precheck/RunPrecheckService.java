@@ -549,6 +549,7 @@ public class RunPrecheckService implements RunPrecheckGate {
         }
         List<Map<String, Object>> listed = new ArrayList<>();
         List<String> runningIds = new ArrayList<>();
+        Map<String, String> imageByContainer = new LinkedHashMap<>();
         int missing = 0;
         for (String name : names) {
             try {
@@ -563,6 +564,7 @@ public class RunPrecheckService implements RunPrecheckGate {
                 if ("running".equals(facts.state()) && facts.imageId() != null
                         && !facts.imageId().isBlank()) {
                     runningIds.add(facts.imageId());
+                    imageByContainer.put(facts.name(), facts.imageId());
                 }
             } catch (ContainerNotFoundException e) {
                 missing++;
@@ -579,12 +581,38 @@ public class RunPrecheckService implements RunPrecheckGate {
             detail.put("enabledNodes", nodes);
         }
         detail.put("expectedImageId", blankToNull(properties.getExpectedAppImageId()));
+        detail.put("mixedImageContainer", blankToNull(properties.getMixedImageContainer()));
         Set<String> distinct = new LinkedHashSet<>(runningIds);
         if (runningIds.isEmpty()) {
             return PrecheckItem.warn(KEY_IMAGES,
                     "no running app container was found; image consistency is not verifiable", detail);
         }
         if (distinct.size() > 1) {
+            String mixedContainer = blankToNull(properties.getMixedImageContainer());
+            String mixedImage = mixedContainer == null ? null : imageByContainer.get(mixedContainer);
+            if (mixedImage != null) {
+                Set<String> otherImages = new LinkedHashSet<>(runningIds);
+                otherImages.remove(mixedImage);
+                long mixedCount = runningIds.stream().filter(mixedImage::equals).count();
+                boolean mixedByDesign = mixedCount == 1 && otherImages.size() == 1
+                        && !otherImages.contains(mixedImage);
+                if (mixedByDesign) {
+                    String majority = otherImages.iterator().next();
+                    String expectedMajority = blankToNull(properties.getExpectedAppImageId());
+                    if (expectedMajority != null && !imageMatches(majority, expectedMajority)) {
+                        detail.put("majorityImageId", majority);
+                        return PrecheckItem.block(KEY_IMAGES,
+                                "mixed app tier: the non-" + mixedContainer + " image " + majority
+                                        + " does not match LAB_PRECHECK_EXPECTED_APP_IMAGE_ID "
+                                        + expectedMajority, detail);
+                    }
+                    detail.put("imageByContainer", imageByContainer);
+                    return PrecheckItem.pass(KEY_IMAGES,
+                            "mixed app tier by design: " + mixedContainer + " runs jdk8 ("
+                                    + mixedImage + "); the other app containers share "
+                                    + majority, detail);
+                }
+            }
             return PrecheckItem.block(KEY_IMAGES,
                     "app containers run different images (" + distinct.size() + " distinct ids);"
                             + " rebuild or recreate the tier before a run", detail);
@@ -689,5 +717,14 @@ public class RunPrecheckService implements RunPrecheckGate {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static boolean imageMatches(String imageId, String expected) {
+        if (imageId == null || expected == null) {
+            return false;
+        }
+        String expectedId = expected.toLowerCase(Locale.ROOT);
+        String actual = imageId.toLowerCase(Locale.ROOT);
+        return actual.equals(expectedId) || actual.startsWith(expectedId);
     }
 }

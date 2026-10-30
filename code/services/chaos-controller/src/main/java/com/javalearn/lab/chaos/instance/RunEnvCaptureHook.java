@@ -50,7 +50,8 @@ public class RunEnvCaptureHook implements RunStartedHook {
             }
             List<String> nodes = stored.get().nodeList().isEmpty()
                     ? properties.getNames().stream()
-                            .filter(name -> !name.equals(properties.getJdk8Instance()))
+                            .filter(name -> !(!properties.isJdk8AppSlotMode()
+                                    && name.equals(properties.getJdk8Instance())))
                             .toList()
                     : stored.get().nodeList();
             for (String node : nodes) {

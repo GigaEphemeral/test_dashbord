@@ -236,16 +236,23 @@ public class InstanceRebuildService {
     }
 
     /**
-     * The JDK 8 shell is a separate compose service (B4-04); rebuilding app-1/2/3
-     * onto the jdk8 image would silently change the comparison topology.
+     * Only the configured JDK 8 slot may run the jdk8 image. In the historical
+     * {@code shell} mode that is the separate {@code seckill-app-jdk8}
+     * container; in {@code app-slot} mode it is one of app-1/2/3 (2x21 + 1x8).
      */
     private void rejectJdk8(String instance, InstanceConfig config) {
         boolean jdk8 = "jdk8".equals(config.imageTag())
                 || (config.jdkVersion() != null && config.jdkVersion() == 8);
-        if (jdk8 && instance.matches("app-\\d+")) {
+        boolean slot = instance.equals(properties.getJdk8Instance());
+        if (jdk8 && !slot) {
             throw new InvalidInstanceConfigException("instance " + instance
-                    + " cannot be rebuilt with the jdk8 image: the JDK 8 shell is a separate "
-                    + "instance (jl-seckill-app-jdk8, B4-04); app-1/2/3 stay on JDK 21");
+                    + " cannot use the jdk8 image: only the configured JDK 8 slot ("
+                    + properties.getJdk8Instance() + ", mode " + properties.getJdk8Mode()
+                    + ") may run it");
+        }
+        if (slot && !jdk8) {
+            throw new InvalidInstanceConfigException("instance " + instance
+                    + " is the configured JDK 8 slot and must pin jdkVersion=8/imageTag=jdk8");
         }
     }
 

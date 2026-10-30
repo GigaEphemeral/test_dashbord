@@ -424,6 +424,22 @@ class RunPrecheckServiceTest {
     }
 
     @Test
+    void oneConfiguredMixedSlotIsAcceptedButAMinorityElsewhereIsBlocked() {
+        properties.setMixedImageContainer("jl-app-3");
+        docker.containers.put("jl-app-3",
+                new LabContainerFacts("jl-app-3", "sha256:jdk8-image", 512L * MB, "running"));
+
+        PrecheckItem mixed = item(service.inspectReport(RUN), RunPrecheckService.KEY_IMAGES);
+        assertThat(mixed.status()).isEqualTo(PrecheckStatus.PASS);
+        assertThat(mixed.message()).contains("mixed app tier by design").contains("jl-app-3");
+
+        docker.containers.put("jl-app-2",
+                new LabContainerFacts("jl-app-2", "sha256:another-image", 512L * MB, "running"));
+        PrecheckItem majorityChanged = item(service.inspectReport(RUN), RunPrecheckService.KEY_IMAGES);
+        assertThat(majorityChanged.status()).isEqualTo(PrecheckStatus.BLOCK);
+    }
+
+    @Test
     void aConfiguredExpectedImageMustMatchTheRunningIds() {
         properties.setExpectedAppImageId("sha256:expected");
 

@@ -122,21 +122,21 @@ class InstanceConfigServiceTest {
 
     @Test
     void jdk8EffectiveReadbackIsLimitedAndCopiesOnlyContainerEnvironment() throws Exception {
-        service.save("app-1", config("{\"jdkVersion\":8,\"gcCollector\":\"G1\"}"));
+        service.save("seckill-app-jdk8", config("{\"jdkVersion\":8,\"gcCollector\":\"G1\"}"));
         ContainerGateway gateway = mock(ContainerGateway.class);
-        when(gateway.inspectLabContainerFacts("jl-app-1")).thenReturn(Optional.of(
-                new ContainerFacts("jl-app-1", "seckill-jdk8:local", "sha256:abc",
-                        Map.of("JAVA_TOOL_OPTIONS", "-Xmx256m", "INSTANCE_ID", "app-1",
+        when(gateway.inspectLabContainerFacts("jl-seckill-app-jdk8")).thenReturn(Optional.of(
+                new ContainerFacts("jl-seckill-app-jdk8", "seckill-jdk8:local", "sha256:abc",
+                        Map.of("JAVA_TOOL_OPTIONS", "-Xmx256m", "INSTANCE_ID", "app-jdk8",
                                 "MYSQL_PASSWORD", "must-not-leak"))));
         when(gatewayProvider.getIfAvailable()).thenReturn(gateway);
 
-        InstanceViews.EffectiveInstanceView view = service.effective("app-1");
+        InstanceViews.EffectiveInstanceView view = service.effective("seckill-app-jdk8");
         assertThat(view.readback()).isEqualTo(InstanceConfigService.READBACK_LIMITED);
         assertThat(view.jvmReadback()).isEqualTo(InstanceConfigService.JVM_READBACK_READBACK_UNAVAILABLE);
         assertThat(view.jvmFlags()).isNull();
         assertThat(view.observability()).isEqualTo(InstanceConfigService.OBSERVABILITY_LIMITED);
         assertThat(view.javaToolOptions()).isEqualTo("-Xmx256m");
-        assertThat(view.instanceId()).isEqualTo("app-1");
+        assertThat(view.instanceId()).isEqualTo("app-jdk8");
         assertThat(view.imageTag()).isEqualTo("seckill-jdk8:local");
         assertThat(view.imageId()).isEqualTo("sha256:abc");
         // B5-04b: JDK 8 never runs jcmd VM.flags.

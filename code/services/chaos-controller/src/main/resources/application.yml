@@ -60,6 +60,7 @@ lab:
     events-log-tail: ${LAB_INSTANCE_EVENTS_LOG_TAIL:200}
     events-max-events: ${LAB_INSTANCE_EVENTS_MAX_EVENTS:50}
     events-line-max-chars: ${LAB_INSTANCE_EVENTS_LINE_MAX_CHARS:400}
+    jdk8-mode: ${LAB_INSTANCE_JDK8_MODE:shell}
     jdk8-instance: ${LAB_INSTANCE_JDK8_INSTANCE:seckill-app-jdk8}
     jdk8-prometheus-job: ${LAB_INSTANCE_JDK8_PROMETHEUS_JOB:seckill-app-jdk8}
     # Stage2 B4-02 controlled rebuild: stable period, health gates and the
@@ -277,6 +278,7 @@ lab:
     # Optional expected app image id (full id or a unique prefix). Blank = only
     # check that the running instances agree.
     expected-app-image-id: ${LAB_PRECHECK_EXPECTED_APP_IMAGE_ID:}
+    mixed-image-container: ${LAB_PRECHECK_MIXED_IMAGE_CONTAINER:}
     # Cap for blocking[] / warnings[] / passed[]; items[] stays complete.
     max-listed-items: ${LAB_PRECHECK_MAX_LISTED_ITEMS:10}
     # Wall-clock budget of one report; a check that cannot start in it is

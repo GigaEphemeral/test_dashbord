@@ -1103,3 +1103,15 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: b5-05-jdk8-app-slot-support
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-05-app3-jdk8-p0.md
+  statement: "B5-05 P0：控制面支持 app-3 作为 JDK8 业务槽位（2x21+1x8）：jdk8-mode=app-slot 时仅该槽位允许 jdk8，预检允许唯一混合镜像，compose 可覆盖 app-3 镜像/Dockerfile"
+  verify:
+    kind: shell
+    command: "grep -q 'jdk8-mode' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'isJdk8AppSlotMode' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigProperties.java && grep -q 'mixedImageContainer' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/precheck/RunPrecheckService.java && grep -q 'APP3_DOCKERFILE' code/lab/docker/compose.base.yml && grep -q 'configured JDK 8 slot' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+
