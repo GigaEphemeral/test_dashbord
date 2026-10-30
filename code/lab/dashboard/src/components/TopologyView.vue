@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { classifyContainer, containerTone, instanceName, sortContainers } from '../labModel'
 
 /**
@@ -166,7 +166,11 @@ function heatLabel(node) {
   if (heatDimension.value === 'threads') {
     return `线程池队列 ${fmtNumber(metrics.poolQueue, 0)}`
   }
-  return `CPU ${fmtPercent(metrics.cpuPercent)} · 内存 ${memoryPercent(node) === null ? '无数据' : `${memoryPercent(node).toFixed(1)}%`} · 队列 ${fmtNumber(metrics.poolQueue, 0)}`
+  const memory = memoryPercent(node)
+  const hasCpu = isFiniteNumber(metrics.cpuPercent)
+  const hasQueue = isFiniteNumber(metrics.poolQueue)
+  if (!hasCpu && memory === null && !hasQueue) return '无数据/未接线'
+  return `CPU ${fmtPercent(metrics.cpuPercent)} · 内存 ${memory === null ? '—' : `${memory.toFixed(1)}%`} · 队列 ${fmtNumber(metrics.poolQueue, 0)}`
 }
 
 // -------------------------------------------------------------- contract state
@@ -189,8 +193,12 @@ const nodeById = computed(() => new Map(
 function isNodeDisabled(node) {
   if (!node) return true
   if (node.enabled) return false
-  if (node.tier === 'java' && enabledSet.value.size === 0) return false
-  return true
+  // Only Java slots are experiment nodes. Infrastructure (Redis/MySQL/Router)
+  // is always a dependency of the running apps; its `enabled=false` flag only
+  // means it is outside the newest run's toggleable set, not that it is missing.
+  if (node.tier !== 'java') return false
+  if (enabledSet.value.size === 0) return false
+  return !enabledSet.value.has(String(node.id || '').replace(/^jl-/, ''))
 }
 
 const contractUp = computed(() => visibleNodes.value.filter((node) => node.health === 'UP').length)
@@ -216,6 +224,128 @@ function edgeMuted(edge) {
 }
 
 const activeEdgeCount = computed(() => contractEdges.value.filter((edge) => !edgeMuted(edge)).length)
+
+// --------------------------------------------------------------- flow layout
+// The contract view is drawn as a left-to-right dependency flow instead of one
+// card grid per tier: entry → app instances → cache / database / messaging.
+// Edges are measured from the rendered cards, so the diagram never invents a
+// position and reorganises itself when sidecars are toggled.
+const FLOW_COLUMNS = [
+  { id: 'entry', title: '入口', caption: 'Nginx 反向代理', tiers: ['edge'] },
+  { id: 'app', title: '应用实例', caption: 'app-1..3 · 同源码', tiers: ['java'] },
+  { id: 'cache', title: '缓存', caption: 'Redis + Sentinel', tiers: ['redis', 'sentinel'], wide: true },
+  { id: 'db', title: '数据库', caption: 'InnoDB Cluster + Router', tiers: ['mysql', 'router'], wide: true },
+  { id: 'async', title: '消息与代理', caption: 'RabbitMQ · Toxiproxy', tiers: ['mq', 'proxy'] }
+]
+
+const flowRef = ref(null)
+const nodeRects = ref({})
+const flowSize = ref({ w: 0, h: 0 })
+const hoveredNode = ref('')
+const nodeElements = new Map()
+let flowObserver = null
+
+function setNodeElement(id, element) {
+  if (element) nodeElements.set(id, element)
+  else nodeElements.delete(id)
+}
+
+const mainNodes = computed(() => (contract.value?.nodes || []).filter((node) => !node.hidden))
+const supportNodes = computed(() => (
+  props.includeSidecars ? (contract.value?.nodes || []).filter((node) => node.hidden) : []
+))
+
+const flowColumns = computed(() => {
+  const used = new Set()
+  const columns = FLOW_COLUMNS.map((column) => {
+    const nodes = mainNodes.value.filter((node) => column.tiers.includes(node.tier))
+    nodes.forEach((node) => used.add(node.id))
+    return { ...column, nodes }
+  }).filter((column) => column.nodes.length)
+  const rest = mainNodes.value.filter((node) => !used.has(node.id))
+  if (rest.length) columns.push({ id: 'other', title: '其他', caption: '未归类节点', nodes: rest })
+  return columns
+})
+
+const edgePaths = computed(() => contractEdges.value
+  .map((edge) => {
+    const from = nodeRects.value[edge.from]
+    const to = nodeRects.value[edge.to]
+    if (!from || !to) return null
+    const x1 = from.x + from.w
+    const y1 = from.y + from.h / 2
+    const x2 = to.x
+    const y2 = to.y + to.h / 2
+    const bend = Math.max(30, Math.abs(x2 - x1) * 0.45)
+    return {
+      ...edge,
+      d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
+      muted: edgeMuted(edge)
+    }
+  })
+  .filter(Boolean))
+
+function edgeHighlighted(edge) {
+  if (!hoveredNode.value) return true
+  return edge.from === hoveredNode.value || edge.to === hoveredNode.value
+}
+
+function measureFlow() {
+  const flow = flowRef.value
+  if (!flow || !contract.value) return
+  const flowRect = flow.getBoundingClientRect()
+  const rects = {}
+  for (const [id, element] of nodeElements) {
+    const rect = element.getBoundingClientRect()
+    if (!rect.width && !rect.height) continue
+    rects[id] = {
+      x: rect.left - flowRect.left,
+      y: rect.top - flowRect.top,
+      w: rect.width,
+      h: rect.height
+    }
+  }
+  nodeRects.value = rects
+  flowSize.value = { w: flow.clientWidth, h: flow.clientHeight }
+}
+
+function observeFlow() {
+  if (flowObserver) flowObserver.disconnect()
+  if (typeof ResizeObserver === 'undefined' || !flowRef.value) return
+  flowObserver = new ResizeObserver(() => measureFlow())
+  flowObserver.observe(flowRef.value)
+}
+
+watch(
+  () => [flowColumns.value.map((column) => column.nodes.map((node) => node.id).join(',')).join('|'), props.includeSidecars, contract.value],
+  async () => {
+    await nextTick()
+    measureFlow()
+    observeFlow()
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  flowObserver?.disconnect()
+  flowObserver = null
+  nodeElements.clear()
+})
+
+onMounted(async () => {
+  await nextTick()
+  measureFlow()
+  observeFlow()
+})
+
+function edgeKindOf(edge) {
+  const kind = String(edge.kind || 'other')
+  return ['http', 'redis', 'sentinel', 'mysql', 'amqp', 'proxy'].includes(kind) ? kind : 'other'
+}
+
+function edgeKindClass(edge) {
+  return `edge-${edgeKindOf(edge)}`
+}
 
 function healthClass(health) {
   if (health === 'UP') return 'ok'
@@ -440,78 +570,143 @@ function localTime(value) {
         网络 I/O 无数据/未接线：当前契约没有每节点网卡收发速率，节点保持中性，不伪造 0。
       </div>
 
-      <div v-for="tier in contractTiers" :key="tier.id" class="topo-tier" :data-testid="`topology-tier-${tier.id}`">
-        <div class="topo-tier-head">
-          <h3>{{ tier.title }}</h3>
-          <span class="hint">{{ tier.caption }}</span>
+      <div class="topo-flow-wrap">
+        <div ref="flowRef" class="topo-flow" data-testid="topology-flow">
+          <svg
+            class="topo-links"
+            :viewBox="`0 0 ${flowSize.w || 1200} ${flowSize.h || 400}`"
+            :width="flowSize.w || 1200"
+            :height="flowSize.h || 400"
+            aria-hidden="true"
+          >
+            <defs>
+              <marker
+                v-for="kind in ['http', 'redis', 'sentinel', 'mysql', 'amqp', 'proxy', 'other']"
+                :id="`topo-arrow-${kind}`"
+                :key="kind"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" :class="`topo-arrow-head arrow-${kind}`" />
+              </marker>
+            </defs>
+            <path
+              v-for="edge in edgePaths"
+              :key="edge.key"
+              :d="edge.d"
+              class="topo-link"
+              :class="[edgeKindClass(edge), {
+                muted: edge.muted,
+                faded: hoveredNode && !edgeHighlighted(edge),
+                hot: hoveredNode && edgeHighlighted(edge)
+              }]"
+              :data-testid="`topology-edge-${edge.from}-${edge.to}`"
+              :data-state="edge.muted ? 'muted' : 'active'"
+              :marker-end="`url(#topo-arrow-${edgeKindOf(edge)})`"
+            />
+          </svg>
+
+          <section
+            v-for="column in flowColumns"
+            :key="column.id"
+            class="topo-col"
+            :class="{ wide: column.wide }"
+            :data-testid="`topology-column-${column.id}`"
+          >
+            <header class="topo-col-head">
+              <h3>{{ column.title }}</h3>
+              <span class="hint" :title="column.caption">{{ column.nodes.length }} 个</span>
+            </header>
+            <div class="topo-col-body">
+              <article
+                v-for="node in column.nodes"
+                :key="node.id"
+                :ref="(el) => setNodeElement(node.id, el)"
+                class="topo-node topo-flow-node"
+                :class="[`heat-${contractHeat(node)}`, {
+                  'has-fault': faultsOf(node.id).length,
+                  disabled: isNodeDisabled(node),
+                  hovered: hoveredNode === node.id
+                }]"
+                :data-testid="`topology-node-${node.id}`"
+                :data-heat="contractHeat(node)"
+                :data-health="node.health"
+                tabindex="0"
+                @click="openDetail(node)"
+                @mouseenter="hoveredNode = node.id"
+                @mouseleave="hoveredNode = ''"
+                @focus="hoveredNode = node.id"
+                @blur="hoveredNode = ''"
+                @keydown.enter="openDetail(node)"
+              >
+                <div class="topo-node-head">
+                  <span class="topo-dot" aria-hidden="true"></span>
+                  <code class="topo-name" :title="node.id">{{ node.id }}</code>
+                  <span class="badge" :class="healthClass(node.health)" :data-testid="`topology-health-${node.id}`">{{ node.health }}</span>
+                </div>
+                <div class="topo-node-meta">
+                  <span class="topo-role">{{ node.label }}</span>
+                  <span v-if="node.jdkVersion" class="badge muted">JDK {{ node.jdkVersion }}</span>
+                  <span v-if="isNodeDisabled(node)" class="badge muted" :data-testid="`topology-disabled-${node.id}`">未启用</span>
+                  <span :class="['badge', qualityClass(node.dataQuality)]" :data-testid="`topology-quality-${node.id}`">{{ node.dataQuality }}</span>
+                </div>
+                <div class="topo-heat-line" :class="`heat-text-${contractHeat(node)}`" :title="heatLabel(node)">{{ heatLabel(node) }}</div>
+                <div v-if="faultsOf(node.id).length" class="topo-faults" :data-testid="`topology-faults-${node.id}`">
+                  <span
+                    v-for="fault in faultsOf(node.id)"
+                    :key="fault.id"
+                    class="badge warn"
+                    :data-action="fault.action"
+                    :title="`${fault.action} · ${fault.status}${fault.expiresAt ? ` · 到期 ${localTime(fault.expiresAt)}` : ''}`"
+                  >{{ fault.action }}</span>
+                </div>
+              </article>
+            </div>
+          </section>
         </div>
-        <div class="topo-node-grid">
+
+        <div class="topo-edge-legend">
+          <span class="legend-item"><i class="edge-swatch edge-http"></i>http</span>
+          <span class="legend-item"><i class="edge-swatch edge-redis"></i>redis</span>
+          <span class="legend-item"><i class="edge-swatch edge-sentinel"></i>sentinel</span>
+          <span class="legend-item"><i class="edge-swatch edge-mysql"></i>mysql</span>
+          <span class="legend-item"><i class="edge-swatch edge-amqp"></i>amqp</span>
+          <span class="legend-item"><i class="edge-swatch edge-proxy"></i>proxy</span>
+          <span class="hint">悬停节点高亮其依赖；灰线 = 任一端未启用/缺失，结构不裁剪。</span>
+        </div>
+      </div>
+
+      <section v-if="supportNodes.length" class="topo-support" data-testid="topology-sidecars">
+        <div class="topo-tier-head">
+          <h3>支撑面</h3>
+          <span class="hint">exporter / sidecar 只展示，不参与依赖边与实验目标</span>
+        </div>
+        <div class="topo-support-grid">
           <article
-            v-for="node in tier.nodes"
+            v-for="node in supportNodes"
             :key="node.id"
-            class="topo-node"
-            :class="[`heat-${contractHeat(node)}`, { 'has-fault': faultsOf(node.id).length, disabled: isNodeDisabled(node) }]"
+            class="topo-node topo-support-node"
             :data-testid="`topology-node-${node.id}`"
-            :data-heat="contractHeat(node)"
             :data-health="node.health"
             tabindex="0"
             @click="openDetail(node)"
-            @mouseenter="openDetail(node)"
-            @focus="openDetail(node)"
             @keydown.enter="openDetail(node)"
           >
             <div class="topo-node-head">
               <span class="topo-dot" aria-hidden="true"></span>
-              <code class="topo-name">{{ node.id }}</code>
-              <span v-if="node.hidden" class="badge muted">sidecar</span>
+              <code class="topo-name" :title="node.id">{{ node.id }}</code>
+              <span class="badge" :class="healthClass(node.health)">{{ node.health }}</span>
             </div>
             <div class="topo-node-meta">
               <span class="topo-role">{{ node.label }}</span>
-              <span class="badge" :class="healthClass(node.health)" :data-testid="`topology-health-${node.id}`">{{ node.health }}</span>
-              <span class="badge" :class="qualityClass(node.dataQuality)" :data-testid="`topology-quality-${node.id}`">{{ node.dataQuality }}</span>
-              <span v-if="node.jdkVersion" class="badge muted">JDK {{ node.jdkVersion }}</span>
-              <span v-if="isNodeDisabled(node)" class="badge muted" :data-testid="`topology-disabled-${node.id}`">未启用</span>
+              <span :class="['badge', qualityClass(node.dataQuality)]">{{ node.dataQuality }}</span>
             </div>
-            <div class="topo-heat-line" :class="`heat-text-${contractHeat(node)}`">{{ heatLabel(node) }}</div>
-            <div v-if="faultsOf(node.id).length" class="topo-faults" :data-testid="`topology-faults-${node.id}`">
-              <span
-                v-for="fault in faultsOf(node.id)"
-                :key="fault.id"
-                class="badge warn"
-                :data-action="fault.action"
-                :title="`${fault.action} · ${fault.status}${fault.expiresAt ? ` · 到期 ${localTime(fault.expiresAt)}` : ''}`"
-              >{{ fault.action }}</span>
-            </div>
-            <p
-              v-if="node.notes?.length && node.dataQuality !== 'OK'"
-              class="topo-extra"
-              :title="node.notes.join('；')"
-              :data-testid="`topology-note-${node.id}`"
-            >{{ node.notes[0] }}</p>
-            <p v-else-if="node.id === 'jl-toxiproxy' && toxiproxyInfo" class="topo-extra">{{ toxiproxyInfo }}</p>
+            <p v-if="node.id === 'jl-toxiproxy' && toxiproxyInfo" class="topo-extra">{{ toxiproxyInfo }}</p>
           </article>
-        </div>
-      </div>
-
-      <section class="topo-edges" data-testid="topology-edges">
-        <div class="topo-tier-head">
-          <h3>依赖边</h3>
-          <span class="hint">共 {{ contractEdges.length }} 条 · 任一端未启用/缺失时灰显，结构不裁剪</span>
-        </div>
-        <div class="topo-edge-grid">
-          <span
-            v-for="edge in contractEdges"
-            :key="edge.key"
-            class="topo-edge"
-            :class="{ muted: edgeMuted(edge) }"
-            :data-testid="`topology-edge-${edge.from}-${edge.to}`"
-            :data-state="edgeMuted(edge) ? 'muted' : 'active'"
-          >
-            <code>{{ edge.from }}</code>
-            <span aria-hidden="true">→</span>
-            <code>{{ edge.to }}</code>
-            <span class="badge muted">{{ edge.kind }}</span>
-          </span>
         </div>
       </section>
 
@@ -702,5 +897,196 @@ function localTime(value) {
 
 .topo-node.disabled .topo-name {
   text-decoration: line-through;
+}
+
+/* Layered dependency flow: columns are tiers, SVG paths are contract edges. */
+.topo-flow-wrap {
+  overflow-x: auto;
+  padding: 2px 2px 12px;
+}
+
+.topo-flow {
+  position: relative;
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.75fr)
+    minmax(165px, 0.9fr)
+    minmax(330px, 1.5fr)
+    minmax(300px, 1.4fr)
+    minmax(150px, 0.75fr);
+  gap: 44px;
+  align-items: start;
+  min-width: 1180px;
+}
+
+.topo-links {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.topo-col {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topo-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.topo-col-head h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.topo-col-head .hint {
+  font-size: 0.66rem;
+  text-align: right;
+}
+
+.topo-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.topo-col.wide .topo-col-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.topo-flow-node {
+  gap: 3px;
+  height: 92px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.topo-flow-node .topo-name {
+  font-size: 0.7rem;
+}
+
+.topo-flow-node .topo-role {
+  font-size: 0.62rem;
+}
+
+.topo-flow-node .badge {
+  font-size: 0.6rem;
+  padding: 1px 5px;
+}
+
+.topo-flow-node .topo-heat-line {
+  overflow: hidden;
+  font-size: 0.6rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topo-flow-node .topo-faults {
+  margin-top: auto;
+}
+
+.topo-flow-node.hovered {
+  box-shadow: 0 0 0 2px rgba(56, 211, 159, 0.35);
+}
+
+.topo-flow-node .topo-heat-line {
+  font-size: 0.64rem;
+}
+
+.topo-flow-node .topo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topo-link {
+  fill: none;
+  stroke-width: 1.2;
+  opacity: 0.5;
+  transition: opacity 100ms ease, stroke-width 100ms ease;
+}
+
+.topo-link.edge-http { stroke: #5aa9e6; }
+.topo-link.edge-redis { stroke: #38d39f; }
+.topo-link.edge-sentinel { stroke: #a78bfa; }
+.topo-link.edge-mysql { stroke: #e6b45a; }
+.topo-link.edge-amqp { stroke: #f472b6; }
+.topo-link.edge-proxy { stroke: #ef6b6b; }
+.topo-link.edge-other { stroke: #94a3b8; }
+
+.topo-link.muted {
+  stroke: rgba(148, 163, 184, 0.28);
+  stroke-dasharray: 3 4;
+  opacity: 0.45;
+}
+
+.topo-link.faded {
+  opacity: 0.07;
+}
+
+.topo-link.hot {
+  opacity: 0.95;
+  stroke-width: 2;
+}
+
+.topo-arrow-head.arrow-http { fill: #5aa9e6; }
+.topo-arrow-head.arrow-redis { fill: #38d39f; }
+.topo-arrow-head.arrow-sentinel { fill: #a78bfa; }
+.topo-arrow-head.arrow-mysql { fill: #e6b45a; }
+.topo-arrow-head.arrow-amqp { fill: #f472b6; }
+.topo-arrow-head.arrow-proxy { fill: #ef6b6b; }
+.topo-arrow-head.arrow-other { fill: #94a3b8; }
+
+.topo-edge-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 2px 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.edge-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+
+.edge-swatch.edge-http { background: #5aa9e6; }
+.edge-swatch.edge-redis { background: #38d39f; }
+.edge-swatch.edge-sentinel { background: #a78bfa; }
+.edge-swatch.edge-mysql { background: #e6b45a; }
+.edge-swatch.edge-amqp { background: #f472b6; }
+.edge-swatch.edge-proxy { background: #ef6b6b; }
+
+.topo-support-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.topo-support-node {
+  gap: 5px;
+  padding: 8px 10px;
 }
 </style>

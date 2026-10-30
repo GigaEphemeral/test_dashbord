@@ -1,24 +1,22 @@
 /**
- * Console smoke test for the B3-00 six-section workspace.
+ * Console smoke test for the B5-04g four-section workspace.
  *
- * The old seven-section sidebar (总览 / 场景向导 / 实例与 JVM / Benchmark /
- * 实时监控 / 故障与缓存实验 / 实验记录) is gone. The console now exposes
- * exactly six sections; the old 故障与缓存实验 page lives inside
- * 实时监控与操作 as the 实时操作 / 实验工具 tabs, and the fault runner is the
- * 故障演练 tab of 场景向导. ScenarioWizard, ThreadLab, CacheLab, ChaosActions
- * and AnimationLab keep their testids, so the deep assertions moved with them.
+ * B5-04g: four sections (总览 / 场景向导 / 实时监控与操作 / 实验记录). Instance
+ * configuration lives in wizard step 3, instance cards + cache flow + topology
+ * live on the monitor sheet, and faults / thread lab / cache keys / container
+ * logs open as right-hand drawers. The fault runner is still the 故障演练 tab.
  *
  * New coverage on top of the moved blocks:
- *   - shell: exact six nav ids/order, no nav-faults, token input, auto-sync,
+ *   - shell: exact four nav ids/order, no nav-faults/instances/bench, token input, auto-sync,
  *     controller online;
  *   - experiment wizard: eight steps, node scoping (app-3 unchecked excludes
  *     its config row / target option, <2 nodes locks the instance goal), the
  *     k6 load form, the product-sampling preview, a manual + an auto fault row
  *     (manual disables the TTL), draft → DRAFT + pre-check, start → jump to
  *     observe with a RUNNING jl-k6- container, stop → COMPLETED;
- *   - observe: 13 KPI cards with quality badges, four charts, k6 progress,
- *     three instance rows, topology == /containers, then the legacy cache /
- *     chaos / thread / animation blocks on the new tabs;
+ *   - observe: 13 KPI cards, six charts in three rows, k6 progress, three
+ *     instance cards, per-instance cache flow, layered topology and the four
+ *     floating tool drawers;
  *   - ledger: named DRAFT, pre-check, start/k6/log/report, two-run compare,
  *     archive/unarchive, delete through the modal + 404 afterwards, reload
  *     restore.
@@ -87,8 +85,8 @@ const CACHE_MODES = [
   'off', 'null-cache', 'bloom', 'mutex',
   'logical-expire', 'ttl-jitter', 'l1-cache', 'db-fallback',
 ];
-// Exact order of the six workspace sections (App.vue SECTIONS).
-const SECTIONS = ['overview', 'wizard', 'instances', 'bench', 'observe', 'runs'];
+// Exact order of the four workspace sections (App.vue SECTIONS, B5-04g).
+const SECTIONS = ['overview', 'wizard', 'observe', 'runs'];
 const QUALITY = ['OK', 'NO_DATA', 'COLLECTING', 'DEGRADED'];
 
 let passed = 0;
@@ -362,10 +360,10 @@ async function restoreLabState(page) {
   }
 }
 
-/** Force the animation view to sync instead of waiting for its 5s timer. */
-async function refreshAnimation(page) {
+/** Force the monitor page's drawers/timelines to sync via the global refresh. */
+async function refreshMonitor(page) {
   try {
-    await page.getByTestId('animation-refresh').click({ timeout: 5000 });
+    await page.getByTestId('monitor-refresh-fab').click({ timeout: 5000 });
   } catch {
     // busy or gone: the 5s poller (or the assertion's own deadline) takes over
   }
@@ -467,13 +465,15 @@ async function main() {
     const navButtons = page.locator('.workspace-sidebar [data-testid^="nav-"]');
     const navIds = await navButtons.evaluateAll((nodes) => nodes.map((node) => node.dataset.testid));
     check(
-      'shell: sidebar exposes exactly the six workspace sections in order',
+      'shell: sidebar exposes exactly the four workspace sections in order',
       navIds.length === SECTIONS.length && SECTIONS.every((id, index) => navIds[index] === `nav-${id}`),
       navIds.join(','),
     );
     check(
-      'shell: the legacy faults section is gone',
-      (await page.getByTestId('nav-faults').count()) === 0,
+      'shell: the retired faults/instances/benchmark sections are gone',
+      (await page.getByTestId('nav-faults').count()) === 0
+        && (await page.getByTestId('nav-instances').count()) === 0
+        && (await page.getByTestId('nav-bench').count()) === 0,
     );
 
     const healthPill = page.locator('.topbar-meta .pill').first();
@@ -967,74 +967,52 @@ async function main() {
     await page.getByTestId('action-reset').click();
     await expectText(guideStatus, 'idle', 'wizard: reset returns the wizard to idle');
 
-    // ---------------------------------------------------------------- bench
-    await gotoSection(page, 'bench');
+    // ------------------------------------------------- environment drawer
+    // Benchmark was retired in B5-04g: its container inventory, logs and the
+    // background-traffic switch now live in the monitor page's environment
+    // drawer; the scenario catalog is the wizard's k6 step.
+    await gotoSection(page, 'observe');
+    await page.getByTestId('dock-logs').click();
+    await waitForCondition(async () => ({
+      ok: await page.getByTestId('drawer-env').isVisible().catch(() => false),
+      detail: 'environment drawer',
+    }));
     const trafficState = page.getByTestId('traffic-state');
-    await expectCondition('bench: traffic container state is known', async () => {
+    await expectCondition('env drawer: traffic container state is known', async () => {
       const text = ((await trafficState.textContent()) || '').trim();
       return { ok: ['created', 'exited', 'running', 'restarting', 'missing'].includes(text), detail: text };
     });
     await page.getByTestId('traffic-start').click();
-    await expectText(trafficState, 'running', 'bench: background traffic start shows running');
+    await expectText(trafficState, 'running', 'env drawer: background traffic start shows running');
     await page.getByTestId('traffic-stop').click();
-    await expectText(trafficState, 'exited', 'bench: background traffic stop shows exited');
+    await expectText(trafficState, 'exited', 'env drawer: background traffic stop shows exited');
 
     await page.getByTestId('log-container').selectOption(LOG_CONTAINER);
     await page.getByTestId('log-refresh').click();
-    await expectCondition('bench: log panel renders container output', async () => {
+    await expectCondition('env drawer: log panel renders container output', async () => {
       const logs = ((await page.getByTestId('log-view').textContent()) || '').trim();
       return { ok: logs.length > 20, detail: `${logs.length} chars` };
     });
-    // The button is disabled while a previous operation is still settling
-    // (busy), so wait for it instead of sampling isEnabled() once.
+    await page.getByTestId('drawer-close').click();
+
+    // The global clear action is still the top-bar button.
     const stopAllReady = await waitForCondition(async () => {
-      const button = page.getByTestId('stop-all');
+      const button = page.getByTestId('global-stop-all');
       return { ok: await button.isEnabled(), detail: 'disabled while busy' };
     }, ACTION_TIMEOUT_MS);
-    check('bench: stop-all is available as the global clear action', stopAllReady.ok, stopAllReady.detail);
-    await page.getByTestId('stop-all').click();
-    await expectCondition('bench: stop-all summary reports traffic/threads/k6 sub-results', async () => {
-      const summary = page.getByTestId('stop-all-summary');
-      if ((await summary.count()) === 0) {
-        return { ok: false, detail: 'summary not rendered' };
-      }
-      const text = ((await summary.textContent()) || '').trim();
-      return {
-        ok: text.includes('traffic=') && text.includes('threads=') && text.includes('k6='),
-        detail: text,
-      };
-    });
-
-    const scenarioCard = page.getByTestId('bench-scenarios');
-    await expectCondition('bench: scenario catalog card is visible', async () => ({
-      ok: (await scenarioCard.count()) > 0,
-    }));
-    await expectText(
-      page.getByTestId('bench-scenarios-state'),
-      'OK',
-      'bench: scenario catalog state is OK',
-    );
-    await expectCondition('bench: scenario catalog lists exactly smoke/load/spike', async () => {
-      const ids = await page
-        .locator('[data-testid^="bench-scenario-"]')
-        .evaluateAll((nodes) => nodes.map((node) => node.dataset.testid));
-      const expected = ['bench-scenario-smoke', 'bench-scenario-load', 'bench-scenario-spike'];
-      return {
-        ok: ids.length === expected.length && expected.every((id) => ids.includes(id)),
-        detail: ids.join(','),
-      };
-    });
+    check('env drawer: global stop-all remains available', stopAllReady.ok, stopAllReady.detail);
+    await page.getByTestId('global-stop-all').click();
+    await page.waitForTimeout(1500);
     check(
-      'bench: stress/soak are absent from the scenario catalog',
-      (await page.getByTestId('bench-scenario-stress').count()) === 0
-        && (await page.getByTestId('bench-scenario-soak').count()) === 0,
+      'env drawer: stop-all issues no error banner',
+      (await page.getByTestId('error-banner').count()) === 0,
     );
 
-    // ------------------------------------------------------------ instances
-    await gotoSection(page, 'instances');
+    // ------------------------------------------------- instance cards (monitor)
+    await gotoSection(page, 'observe');
     const cards = await waitForCondition(async () => {
       if ((await page.getByTestId('instances-page').count()) === 0) {
-        return { ok: false, detail: 'instances page not rendered' };
+        return { ok: false, detail: 'instance cards not rendered' };
       }
       const missing = [];
       for (const name of ['app-1', 'app-2', 'app-3']) {
@@ -1053,21 +1031,21 @@ async function main() {
     if (cards.ok) {
       await page.getByTestId('instance-open-thread-app-2').click();
       opened = await waitForCondition(async () => {
-        if ((await page.getByTestId('thread-page').count()) === 0) {
-          return { ok: false, detail: 'thread page not rendered' };
+        if ((await page.getByTestId('drawer-thread').count()) === 0) {
+          return { ok: false, detail: 'thread drawer not rendered' };
         }
         const value = await page.getByTestId('thread-instance').inputValue();
         return { ok: value === 'app-2', detail: `thread-instance=${value}` };
       });
     }
     check(
-      'instances: three cards show live metrics and open the thread lab at app-2',
+      'instances: three cards show live metrics and open the thread drawer at app-2',
       cards.ok && opened.ok,
       `cards: ${cards.detail}; thread: ${opened.detail}`,
     );
 
     const demoStates = ['NEW', 'RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING', 'TERMINATED'];
-    await expectCondition('instances: thread lab opens with the six-state display', async () => {
+    await expectCondition('instances: thread drawer opens with the six-state display', async () => {
       const threadPage = page.getByTestId('thread-page');
       if ((await threadPage.count()) === 0) {
         return { ok: false, detail: 'thread page not rendered' };
@@ -1108,14 +1086,17 @@ async function main() {
       };
     });
 
-    // ------------------------------------------------- instances: config tab
-    // Read-only checks: validate is a dry run and save/apply/rollback are never
-    // clicked here. The jdk8 shell is either an editor (running) or a greyed
-    // "not running" row; both must be honest about limited observability.
-    await page.getByTestId('instances-tab-config').click();
-    await expectCondition('instances: config tab renders one editor per app instance', async () => {
-      if ((await page.getByTestId('instances-config-page').count()) === 0) {
-        return { ok: false, detail: 'config page not rendered' };
+    // -------------------------------------------- instance config (wizard 03)
+    // Configuration moved out of the retired 实例与 JVM page into the wizard's
+    // step 3; the same editor/testids are used, now next to the cache setup.
+    await page.getByTestId('drawer-close').click();
+    await gotoSection(page, 'wizard');
+    await page.getByTestId('wizard-step-0').click();
+    await page.getByTestId('wizard-node-app-3').check();
+    await page.getByTestId('wizard-step-3').click();
+    await expectCondition('instances: config step renders one editor per app instance', async () => {
+      if ((await page.getByTestId('wizard-config-editor').count()) === 0) {
+        return { ok: false, detail: 'config editor not rendered' };
       }
       const missing = [];
       for (const name of ['app-1', 'app-2', 'app-3']) {
@@ -1258,21 +1239,16 @@ async function main() {
     check('instances: the jdk8 shell offers its own image', shellOk, shellDetail);
 
     // --------------------------------------------------------------- observe
-    // The old 故障与缓存实验 page is now three tabs inside 实时监控与操作.
+    // B5-04g: the monitor page is one sheet plus floating drawers; the old
+    // 监控/实时操作/实验工具 tabs are gone.
     await gotoSection(page, 'observe');
-    await expectCondition('observe: the monitor page opens on the 监控 tab with three tabs', async () => {
+    await expectCondition('observe: the monitor page is one sheet with a floating tool dock', async () => {
       if ((await page.getByTestId('monitor-page').count()) === 0) {
         return { ok: false, detail: 'monitor-page not rendered' };
       }
-      const ids = await page
-        .locator('[data-testid^="monitor-tab-"]')
-        .evaluateAll((nodes) => nodes.map((node) => node.dataset.testid));
-      const expected = ['monitor-tab-monitor', 'monitor-tab-ops', 'monitor-tab-tools'];
-      const current = await page.getByTestId('monitor-tab-monitor').getAttribute('aria-selected');
-      return {
-        ok: ids.length === 3 && expected.every((id, index) => ids[index] === id) && current === 'true',
-        detail: `${ids.join(',')} monitor=${current}`,
-      };
+      const tabs = await page.locator('[data-testid^="monitor-tab-"]').count();
+      const dock = await page.locator('.monitor-dock .dock-btn').count();
+      return { ok: tabs === 0 && dock === 5, detail: `tabs=${tabs} dock=${dock}` };
     });
 
     await expectCondition('observe: one KPI card per catalog key is rendered', async () => {
@@ -1333,12 +1309,19 @@ async function main() {
       }
       return { ok: missing.length === 0, detail: missing.join(',') };
     });
-    // B5-01b/05: the refresh control must stay reachable while the page scrolls
+    await expectCondition('observe: the six charts are laid out in three rows of two', async () => {
+      const rows = await page.locator('[data-testid^="chart-row-"]').count();
+      const perRow = await page.locator('[data-testid="chart-row-0"] .chart-box').count();
+      return { ok: rows === 3 && perRow === 2, detail: `rows=${rows} row0=${perRow}` };
+    });
     // and the JVM chart must be per-instance rather than one summed line.
     await expectCondition('observe: the floating refresh button is pinned to the viewport', async () => {
       const fab = page.getByTestId('monitor-refresh-fab');
       if ((await fab.count()) === 0) return { ok: false, detail: 'fab missing' };
-      const position = await fab.evaluate((el) => getComputedStyle(el).position);
+      const position = await fab.evaluate((el) => {
+        const dock = el.closest('.monitor-dock');
+        return getComputedStyle(dock || el).position;
+      });
       const visible = await fab.isVisible();
       const text = ((await fab.textContent()) || '').replace(/\s+/g, ' ').trim();
       return { ok: visible && position === 'fixed', detail: `position=${position} text=${text}` };
@@ -1362,12 +1345,13 @@ async function main() {
       const maxWidth = await page.locator('.page').first().evaluate((el) => getComputedStyle(el).maxWidth);
       return { ok: maxWidth === 'none', detail: `max-width=${maxWidth}` };
     });
-    await expectCondition('observe: the JVM parameter table lists every app instance', async () => {
+    await expectCondition('observe: the JVM parameter table lists the app instances and the JDK8 shell', async () => {
       if ((await page.getByTestId('jvm-params').count()) === 0) {
         return { ok: false, detail: 'jvm-params missing' };
       }
       const rows = await page.locator('[data-testid^="jvm-params-row-"]').count();
-      return { ok: rows === 3, detail: `rows=${rows}` };
+      const jdk8 = await page.getByTestId('jvm-params-row-seckill-app-jdk8').count();
+      return { ok: rows >= 3 && jdk8 === 1, detail: `rows=${rows} jdk8=${jdk8}` };
     });
     await expectCondition('observe: the k6 progress block renders (无数据 is honest without a run)', async () => {
       const block = page.getByTestId('k6-progress');
@@ -1381,14 +1365,14 @@ async function main() {
         detail: `empty=${empty} run=${runId} bar=${bar}`,
       };
     });
-    await expectCondition('observe: the instance table lists the three app rows', async () => {
-      if ((await page.getByTestId('instance-metrics-table').count()) === 0) {
-        return { ok: false, detail: 'instance table missing' };
+    await expectCondition('observe: the instance cards list the three app rows', async () => {
+      if ((await page.getByTestId('instance-metrics').count()) === 0) {
+        return { ok: false, detail: 'instance cards missing' };
       }
       const names = ['app-1', 'app-2', 'app-3'];
       const missing = [];
       for (const name of names) {
-        if ((await page.locator(`[data-testid="instance-row-${name}"]:visible`).count()) === 0) {
+        if ((await page.locator(`[data-testid="instance-card-${name}"]:visible`).count()) === 0) {
           missing.push(name);
         }
       }
@@ -1502,9 +1486,13 @@ async function main() {
       await page.getByTestId('topology-tooltip-close').click();
     }
 
-    // --------------------------------------------- observe → 实时操作 (ops)
-    await page.getByTestId('monitor-tab-ops').click();
-    await expectCondition('observe: the cache lab opens on the ops tab with a known mode and D10 link', async () => {
+    // --------------------------------------------- wizard 03: cache strategy
+    // Cache mode / L1 / preheat moved to wizard step 3 (per-instance runtime
+    // state), next to the JVM configuration groups.
+    await gotoSection(page, 'wizard');
+    await page.getByTestId('wizard-tab-experiment').click();
+    await page.getByTestId('wizard-step-3').click();
+    await expectCondition('wizard 03: the cache strategy block exposes the per-instance mode and D10 link', async () => {
       if ((await page.getByTestId('cache-page').count()) === 0) {
         return { ok: false, detail: 'cache page not rendered' };
       }
@@ -1531,7 +1519,7 @@ async function main() {
     await expectText(
       page.getByTestId('cache-mode'),
       'null-cache',
-      'observe: cache mode switches to null-cache through the proxy',
+      'wizard 03: cache mode switches to null-cache through the proxy',
     );
 
     await page.getByTestId('cache-mode-select').selectOption('off');
@@ -1539,11 +1527,11 @@ async function main() {
     await expectText(
       page.getByTestId('cache-mode'),
       'off',
-      'observe: cache mode switches back to off through the proxy',
+      'wizard 03: cache mode switches back to off through the proxy',
     );
 
     await page.getByTestId('cache-seed').click();
-    await expectCondition('observe: cache seed returns an id range and row count', async () => {
+    await expectCondition('wizard 03: cache seed returns an id range and row count', async () => {
       const result = page.getByTestId('cache-seed-result');
       if ((await result.count()) === 0) {
         return { ok: false, detail: 'seed result not rendered' };
@@ -1557,22 +1545,22 @@ async function main() {
 
     // B3-01: the L1 switch is independent of the eight defence modes; off
     // clears the instance's entries and the hit ratio reads "不适用".
-    await expectText(page.getByTestId('cache-l1-state'), '启用', 'ops: L1 starts enabled');
+    await expectText(page.getByTestId('cache-l1-state'), '启用', 'wizard 03: L1 starts enabled');
     await page.getByTestId('cache-l1-toggle').click();
     await expectText(
       page.getByTestId('cache-l1-state'),
       '已关闭',
-      'ops: the L1 switch clears the local entries and marks the instance off',
+      'wizard 03: the L1 switch clears the local entries and marks the instance off',
     );
     await page.getByTestId('cache-l1-toggle').click();
     await expectText(
       page.getByTestId('cache-l1-state'),
       '启用',
-      'ops: the L1 switch turns back on for the remaining checks',
+      'wizard 03: the L1 switch turns back on for the remaining checks',
     );
 
     await page.getByTestId('cache-preheat-run').click();
-    await expectCondition('observe: cache preheat reports the manual run it just did', async () => {
+    await expectCondition('wizard 03: cache preheat reports the manual run it just did', async () => {
       const last = page.getByTestId('cache-preheat-last');
       if ((await last.count()) === 0) {
         return { ok: false, detail: 'last run not rendered' };
@@ -1604,7 +1592,11 @@ async function main() {
       }));
     }
     await gotoSection(page, 'observe');
-    await page.getByTestId('monitor-tab-ops').click();
+    await page.getByTestId('dock-faults').click();
+    await waitForCondition(async () => ({
+      ok: await page.getByTestId('drawer-faults').isVisible().catch(() => false),
+      detail: 'fault drawer',
+    }));
 
     // One short container fault proves the badge wiring. freeze is a paused
     // JVM (harmless, auto-resumed by TTL even if stop-all were lost); stop-all
@@ -1638,19 +1630,24 @@ async function main() {
 
       // Refresh the experiment keys (avalanche TTL is 60s, hot key 300s) so the
       // key browser has something real to page through when we get there.
-      await page.getByTestId('monitor-tab-ops').click();
+      await page.getByTestId('drawer-close').click();
+      await gotoSection(page, 'wizard');
+      await page.getByTestId('wizard-tab-experiment').click();
+      await page.getByTestId('wizard-step-3').click();
       await page.getByTestId('cache-seed').click();
       await waitForCondition(async () => {
         const result = page.getByTestId('cache-seed-result');
         return { ok: (await result.count()) > 0, detail: 'seed result' };
       });
-      await page.getByTestId('monitor-tab-tools').click();
-      // B3-02: the SCAN key browser lives in 实验工具 and lists the seeded keys.
-      await expectCondition('tools: the cache key browser lists SCAN keys', async () => {
-        if ((await page.getByTestId('cache-keys-panel').count()) === 0) {
-          return { ok: false, detail: 'key panel not rendered' };
+      await gotoSection(page, 'observe');
+      await page.getByTestId('dock-cache-keys').click();
+      // B3-02: the SCAN key browser is the cache-keys drawer.
+      await expectCondition('tools: the cache key drawer lists SCAN keys', async () => {
+        if ((await page.getByTestId('drawer-cache-keys').count()) === 0) {
+          return { ok: false, detail: 'key drawer not rendered' };
         }
-        await page.getByTestId('cache-keys-load').click();
+        const load = page.getByTestId('cache-keys-load');
+        if (await load.isEnabled()) await load.click();
         return { ok: true, detail: 'load clicked' };
       });
       const keyRows = await waitForCondition(async () => {
@@ -1658,6 +1655,7 @@ async function main() {
         return { ok: rows > 0, detail: `rows=${rows}` };
       });
       check('tools: key browser renders SCAN-paged rows', keyRows.ok, keyRows.detail);
+      await page.getByTestId('drawer-close').click();
 
       const appeared = await waitForCondition(async () => {
         const badge = page.locator('[data-testid="topology-faults-jl-app-2"]:visible').first();
@@ -1671,14 +1669,12 @@ async function main() {
       // stop-all keeps the paused flag by design; reset returns the guide (and
       // the watchdog) to idle before the ledger section.
       await apiPost('/lab/guide/reset');
-      await refreshAnimation(page);
       const cleared = await waitForCondition(async () => {
         const badge = await page.locator('[data-testid="topology-faults-jl-app-2"]:visible').count();
-        const count = ((await page.getByTestId('animation-fault-count').textContent()) || '').trim();
         const actions = unwrap(await apiRequest('/chaos/actions')) || [];
         return {
-          ok: badge === 0 && count === '0' && actions.length === 0,
-          detail: `badge=${badge} count=${count} api=${actions.length}`,
+          ok: badge === 0 && actions.length === 0,
+          detail: `badge=${badge} api=${actions.length}`,
         };
       });
       const healthy = await waitForCondition(async () => {
@@ -1703,44 +1699,28 @@ async function main() {
     }
     check('observe: freeze badge appears on jl-app-2 and stop-all clears it', faultOk, faultDetail);
 
-    // ------------------------------------------- observe → 实验工具 (tools)
-    await expectCondition('observe: the 实验工具 tab opens the thread lab', async () => {
-      if ((await page.getByTestId('thread-page').count()) === 0) {
-        return { ok: false, detail: 'thread page not rendered' };
-      }
-      return { ok: true, detail: 'thread-page' };
-    });
-    await expectCondition('observe: the animation view opens on the live topology', async () => {
-      if ((await page.getByTestId('animation-page').count()) === 0) {
-        return { ok: false, detail: 'animation page not rendered' };
-      }
-      if ((await page.getByTestId('topology-page').count()) === 0) {
-        return { ok: false, detail: 'topology tab not rendered' };
-      }
-      const current = await page.getByTestId('animation-tab-topology').getAttribute('aria-current');
-      const nginx = await page.locator('[data-testid="topology-node-jl-nginx"]:visible').count();
-      const app1 = await page.locator('[data-testid="topology-node-jl-app-1"]:visible').count();
-      return {
-        ok: current === 'page' && nginx > 0 && app1 > 0,
-        detail: `aria-current=${current} nginx=${nginx} app-1=${app1}`,
-      };
+    // ------------------------------------------- floating tools (drawers)
+    await expectCondition('observe: the thread tool opens as a right-hand drawer', async () => {
+      await page.getByTestId('dock-thread').click();
+      const drawer = page.getByTestId('drawer-thread');
+      const visible = (await drawer.count()) > 0 && await drawer.isVisible();
+      const threadPage = await page.getByTestId('thread-page').count();
+      await page.getByTestId('drawer-close').click();
+      return { ok: visible && threadPage === 1, detail: `drawer=${visible} thread=${threadPage}` };
     });
 
-    await page.getByTestId('animation-tab-cache').click();
-    // The tab click starts a refresh that loads the three cache queries; wait
-    // for it to finish so the empty state below is real and not first render.
-    await waitForCondition(async () => ({
-      ok: await page.getByTestId('animation-refresh').isEnabled(),
-      detail: ((await page.getByTestId('animation-refresh').textContent()) || '').trim(),
-    }));
+    // The cache flow board now lives directly on the monitor sheet and is
+    // filtered by the selected instance.
+    await page.getByTestId('cache-flow-panel').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1200);
     await expectCondition('observe: cache flow shows moving data or an explicit idle/empty state', async () => {
       if ((await page.getByTestId('cache-flow').count()) === 0) {
         return { ok: false, detail: 'cache-flow missing' };
       }
-      if ((await page.getByTestId('animation-prom-note').count()) > 0) {
+      if ((await page.getByTestId('cache-flow-error').count()) > 0) {
         return {
           ok: false,
-          detail: ((await page.getByTestId('animation-prom-note').textContent()) || '').trim(),
+          detail: ((await page.getByTestId('cache-flow-error').textContent()) || '').trim(),
         };
       }
       if ((await page.getByTestId('cache-empty').count()) > 0) {
@@ -1766,7 +1746,7 @@ async function main() {
       }
       for (const id of ['l1', 'l2']) {
         const ratio = ((await page.getByTestId(`cache-hit-ratio-${id}`).textContent()) || '').trim();
-        if (ratio !== '无数据' && !ratio.endsWith('%')) {
+        if (ratio !== '无数据' && ratio !== '不适用' && !ratio.endsWith('%')) {
           return { ok: false, detail: `hit ratio ${id} "${ratio}"` };
         }
       }
@@ -1837,9 +1817,9 @@ async function main() {
       // The rAF loop eases speed to zero over ~1s, so poll for the first
       // stable pair instead of assuming the freeze is instant.
       const frozen = await waitForCondition(stillSample, 8000);
-      const syncBefore = ((await page.getByTestId('animation-last-sync').textContent()) || '').trim();
+      const syncBefore = ((await page.getByTestId('cache-flow-data-time').textContent()) || '').trim();
       const polled = await waitForCondition(async () => {
-        const now = ((await page.getByTestId('animation-last-sync').textContent()) || '').trim();
+        const now = ((await page.getByTestId('cache-flow-data-time').textContent()) || '').trim();
         const pressed = await page.getByTestId('animation-toggle').getAttribute('aria-pressed');
         return {
           ok: now !== syncBefore && pressed === 'true',
@@ -1878,8 +1858,7 @@ async function main() {
       await reducedPage.getByTestId('token-input').fill(LAB_TOKEN);
       await reducedPage.getByTestId('connect').click();
       await reducedPage.getByTestId('nav-observe').click();
-      await reducedPage.getByTestId('monitor-tab-tools').click();
-      await reducedPage.getByTestId('animation-tab-cache').click();
+      await reducedPage.getByTestId('cache-flow-panel').scrollIntoViewIfNeeded();
       reducedPaused = await waitForCondition(async () => {
         if ((await reducedPage.getByTestId('cache-reduced-motion').count()) === 0) {
           return { ok: false, detail: 'cache-reduced-motion note missing' };

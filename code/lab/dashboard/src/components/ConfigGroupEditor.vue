@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import InstanceConfigEditor from './InstanceConfigEditor.vue'
 import { describeError, fetchInstanceConfig, fetchInstanceEffective } from '../api'
 
@@ -21,10 +21,16 @@ const props = defineProps({
   nodes: { type: Array, default: () => [] },
   allNodes: { type: Array, default: () => [] },
   config: { type: Object, default: () => ({}) },
-  pairMode: { type: Boolean, default: false }
+  pairMode: { type: Boolean, default: false },
+  showJdk8: { type: Boolean, default: true },
+  jdk8Running: { type: Boolean, default: false },
+  focusInstance: { type: String, default: '' },
+  focusNonce: { type: Number, default: 0 }
 })
 
 const emit = defineEmits(['update:config'])
+
+const root = ref(null)
 
 const STATUS_LABELS = {
   NOT_CONFIGURED: '未配置',
@@ -108,12 +114,25 @@ watch(
   () => loadAll(),
   { immediate: true }
 )
+
+// A monitor card's "JVM 参数" button lands here; scroll the matching column
+// into view instead of leaving the operator to hunt for it.
+watch(
+  () => [props.focusInstance, props.focusNonce],
+  async ([instance]) => {
+    if (!instance) return
+    await nextTick()
+    const target = root.value?.querySelector(`[data-testid="wizard-config-column-${instance}"]`)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <div class="config-editor" data-testid="wizard-config-editor">
+  <div ref="root" class="config-editor" data-testid="wizard-config-editor">
     <p class="hint">
-      这里的配置与「实例与 JVM」页是<strong>同一份实例台账</strong>：保存、应用并重启、重启 JVM、回滚都在下方编辑器完成。
+      这里的配置与监控页的「JVM 参数对照」是<strong>同一份实例台账</strong>：保存、应用并重启、重启 JVM、回滚都在下方编辑器完成。
       未启用节点不参与本实验，不会下发。
     </p>
     <p v-if="loading" class="hint">读取实例配置…</p>
@@ -174,6 +193,7 @@ watch(
     <p v-if="!nodes.length" class="hint">请先在向导第 1 步选择至少一个 Java 节点。</p>
 
     <section
+      v-if="showJdk8"
       class="config-column shell-column"
       data-testid="wizard-config-column-seckill-app-jdk8"
     >
@@ -185,6 +205,11 @@ watch(
         JDK8 外壳不属于 run 的分流节点（run 只跑 app-1/2/3）；这里仅用于配置/对比，
         应用与重启需要 dual-jdk profile 的容器在运行。
       </p>
+      <p
+        v-if="!jdk8Running"
+        class="hint"
+        data-testid="instance-config-jdk8-offline-hint"
+      >容器未运行（dual-jdk profile）：配置可以保存，应用/重启会失败。</p>
       <InstanceConfigEditor
         :token="token"
         instance="seckill-app-jdk8"

@@ -13,15 +13,16 @@ import { compact, niceCeil } from '../timeline'
 const props = defineProps({
   chart: { type: Object, required: true },
   windowStart: { type: Number, default: null },
-  windowEnd: { type: Number, default: null }
+  windowEnd: { type: Number, default: null },
+  height: { type: Number, default: 200 }
 })
 
 const SVG_W = 600
-const SVG_H = 140
 const PAD_L = 54
 const PAD_R = 10
 const PAD_T = 12
 const PAD_B = 22
+const SVG_H = props.height
 
 function clockLabel(stamp) {
   return new Date(stamp * 1000).toLocaleTimeString('zh-CN', { hour12: false })
@@ -84,7 +85,7 @@ const view = computed(() => {
         {{ chart.note ? `${chart.note} · ` : '' }}峰值 {{ view.axis(view.yMax) }}
       </span>
     </div>
-    <svg v-if="view.hasData" :viewBox="`0 0 ${SVG_W} ${SVG_H}`" role="img" :aria-label="chart.title">
+    <svg v-if="view.hasData" :viewBox="`0 0 ${SVG_W} ${SVG_H}`" :style="{ height: `${height}px` }" role="img" :aria-label="chart.title">
       <line
         v-for="tick in view.yTicks"
         :key="`y-${tick.value}`"
@@ -131,7 +132,7 @@ const view = computed(() => {
 }
 
 .chart-box svg {
-  height: 140px;
+  width: 100%;
 }
 
 .chart-gridline {

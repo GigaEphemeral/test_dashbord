@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import TimelineChart from './TimelineChart.vue'
-import { describeError, queryPromRange } from '../api'
+import { describeError, fetchInstanceConfig, queryPromRange } from '../api'
 import {
   COLORS,
   compact,
@@ -22,6 +22,7 @@ import {
  * line and puts the error in the notice. An absent series is "无数据".
  */
 const props = defineProps({
+  token: { type: String, default: '' },
   active: { type: Boolean, default: false },
   syncTick: { type: Number, default: 0 }
 })
@@ -32,6 +33,11 @@ const REFRESH_SECONDS = Math.max(1, Math.round(
   Number(import.meta.env.VITE_LAB_SYNC_INTERVAL_MS || 5000) / 1000
 ))
 const APP_JOB = import.meta.env.VITE_LAB_PROM_JOB || 'seckill-app'
+const APP_INSTANCES = (import.meta.env.VITE_LAB_APP_INSTANCES || 'app-1,app-2,app-3')
+  .split(',')
+  .map((name) => name.trim())
+  .filter(Boolean)
+const HINT_REFRESH_MS = Number(import.meta.env.VITE_LAB_JVM_HINT_REFRESH_MS || 15000)
 
 const JOB = `job="${APP_JOB}"`
 const requestsTotal = `sum(rate(http_server_requests_seconds_count{${JOB}}[1m]))`
@@ -177,9 +183,47 @@ const windowStart = ref(null)
 const windowEnd = ref(null)
 const lastSync = ref(null)
 const loading = ref(false)
+const jvmHints = ref({})
 
 let inFlight = false
+let hintsInFlight = false
+let hintsLoadedAt = 0
 let disposed = false
+
+/** Compact config hint for legends: "256/512MB · G1 · 200ms". */
+function hintFor(instance) {
+  return jvmHints.value[instance] || ''
+}
+
+function summarizeConfig(view) {
+  const config = view?.config
+  if (!config) return ''
+  const heap = config.xmsMb || config.xmxMb
+    ? `${config.xmsMb ?? '默认'}/${config.xmxMb ?? '默认'}MB`
+    : ''
+  const gc = config.gcCollector || ''
+  const pause = config.maxGcPauseMillis ? `${config.maxGcPauseMillis}ms` : ''
+  return [heap, gc, pause].filter(Boolean).join(' · ')
+}
+
+async function loadJvmHints(force = false) {
+  if (!props.active || !props.token || hintsInFlight || disposed) return
+  if (!force && Date.now() - hintsLoadedAt < HINT_REFRESH_MS) return
+  hintsInFlight = true
+  try {
+    const entries = await Promise.all(APP_INSTANCES.map(async (node) => {
+      try {
+        return [node, summarizeConfig(await fetchInstanceConfig(props.token, node))]
+      } catch {
+        return [node, '']
+      }
+    }))
+    jvmHints.value = Object.fromEntries(entries)
+    hintsLoadedAt = Date.now()
+  } finally {
+    hintsInFlight = false
+  }
+}
 
 const chartErrors = computed(() => {
   const seen = new Set()
@@ -205,9 +249,10 @@ function buildChart(chart) {
       const entries = state.series || []
       const instances = [...new Set(entries.map((entry) => entry.instance))].sort()
       for (const entry of entries) {
+        const hint = hintFor(entry.instance)
         series.push({
           key: `${definition.key}:${entry.key}`,
-          label: entry.name,
+          label: hint ? `${entry.name} · ${hint}` : entry.name,
           color: instanceColor(entry.instance, instances),
           dash: entry.dash || definition.dash || '',
           points: entry.points,
@@ -229,6 +274,15 @@ function buildChart(chart) {
 }
 
 const charts = computed(() => CHARTS.map(buildChart))
+// Two charts per row: 请求/k6, 堆/GC, 线程池/连接池.
+const chartRows = computed(() => {
+  const list = charts.value
+  const rows = []
+  for (let index = 0; index < list.length; index += 2) {
+    rows.push(list.slice(index, index + 2))
+  }
+  return rows
+})
 
 async function refresh() {
   if (!props.active || disposed) return
@@ -275,9 +329,12 @@ async function refresh() {
 }
 
 watch(
-  () => [props.active, props.syncTick],
+  () => [props.active, props.syncTick, props.token],
   ([active]) => {
-    if (active) refresh()
+    if (active) {
+      refresh()
+      loadJvmHints()
+    }
   },
   { immediate: true }
 )
@@ -300,8 +357,8 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="hint">
-      最近 15 分钟：请求 RPS/P95/5xx、k6 VU 与迭代速率、JVM 堆（每实例一条）、
-      GC 次数（每实例 · minor 实线 / major 虚线）、业务线程池与连接池（按实例，实线 active / 虚线排队）。
+      最近 15 分钟，三排布局：请求性能 / k6 负载、JVM 堆 / GC、业务线程池 / 连接池。
+      图例里的 JVM 参数来自实例配置台账（Xms/Xmx · GC · 目标停顿），便于直接比对。
       单个查询失败只影响对应曲线；没有序列时显示无数据，不显示 0。
     </p>
 
@@ -309,22 +366,42 @@ onBeforeUnmount(() => {
       部分查询失败：{{ chartErrors.join('；') }}
     </div>
 
-    <div class="chart-grid">
-      <TimelineChart
-        v-for="chart in charts"
-        :key="chart.id"
-        :chart="chart"
-        :window-start="windowStart"
-        :window-end="windowEnd"
-      />
+    <div class="chart-rows">
+      <div
+        v-for="(row, index) in chartRows"
+        :key="`row-${index}`"
+        class="chart-row"
+        :data-testid="`chart-row-${index}`"
+      >
+        <TimelineChart
+          v-for="chart in row"
+          :key="chart.id"
+          :chart="chart"
+          :window-start="windowStart"
+          :window-end="windowEnd"
+          :height="220"
+        />
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.chart-grid {
+.chart-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chart-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .chart-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

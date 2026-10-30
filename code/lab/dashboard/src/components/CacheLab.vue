@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   describeError,
+  fetchCacheL1,
   fetchCachePreheat,
   fetchCacheState,
   runCachePreheat,
   seedCache,
+  setCacheL1,
   updateCacheMode
 } from '../api'
 
@@ -30,36 +32,7 @@ const GRAFANA_URL = (import.meta.env.VITE_LAB_GRAFANA_URL || 'http://127.0.0.1:3
 const GRAFANA_D10 = `${GRAFANA_URL}/d/ha-d10`
 
 // The L1 switch is B3-01's own per-instance contract (GET/POST /lab/cache/l1).
-// It stays local to this component instead of widening the shared api.js.
-const CACHE_BASE = '/lab-api/chaos/app'
-
-function l1Url(instanceName) {
-  return `${CACHE_BASE}/${encodeURIComponent(instanceName)}/lab/cache/l1`
-}
-
-async function readL1Response(response) {
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    throw new Error(payload?.message || `HTTP ${response.status}`)
-  }
-  return payload?.data ?? null
-}
-
-async function fetchCacheL1(token, instanceName) {
-  return readL1Response(await fetch(l1Url(instanceName), {
-    headers: { 'X-Lab-Token': token }
-  }))
-}
-
-async function updateCacheL1(token, instanceName, enabled) {
-  return readL1Response(await fetch(l1Url(instanceName), {
-    method: 'POST',
-    headers: { 'X-Lab-Token': token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled })
-  }))
-}
-
-/** Keys are the public contract of CacheDefenseMode; labels are console-only. */
+// Keys are the public contract of CacheDefenseMode; labels are console-only.
 const MODES = [
   { key: 'off', label: 'off · 无防护' },
   { key: 'null-cache', label: 'null-cache · 空值缓存' },
@@ -282,7 +255,7 @@ async function toggleL1() {
   busy.value = 'l1'
   const target = !l1Enabled.value
   try {
-    const reply = await updateCacheL1(props.token, instance.value, target)
+    const reply = await setCacheL1(props.token, instance.value, target)
     l1State.value = reply
     if (state.value) {
       state.value = { ...state.value, l1Enabled: reply?.enabled ?? target }

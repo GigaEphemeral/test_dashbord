@@ -48,11 +48,9 @@ const healthTone = computed(() => {
 })
 
 const quickLinks = [
-  { id: 'wizard', label: '场景向导', hint: '逐步注入故障并观察' },
-  { id: 'bench', label: 'Benchmark', hint: '背景流量、容器与日志' },
-  { id: 'observe', label: '实时监控', hint: '拓扑与质量徽标 KPI' },
-  { id: 'faults', label: '故障与缓存实验', hint: '缓存防护与动画' },
-  { id: 'runs', label: '实验记录', hint: '台账、预检查与操作' }
+  { id: 'wizard', label: '场景向导', hint: '目标、变量与配置、k6、预检查' },
+  { id: 'observe', label: '实时监控与操作', hint: '时间轴、实例卡片、缓存流动、拓扑' },
+  { id: 'runs', label: '实验记录', hint: '台账、报告、归档与删除' }
 ]
 </script>
 
@@ -96,7 +94,7 @@ const quickLinks = [
           <code v-for="item in faults" :key="item.id">{{ item.action }} · {{ item.target }} · {{ item.status }}</code>
         </p>
         <p v-else class="hint">当前没有跟踪中的故障动作。</p>
-        <button type="button" class="btn ghost" @click="emit('navigate', 'faults')">去故障实验 →</button>
+        <button type="button" class="btn ghost" @click="emit('navigate', 'observe')">去实时监控 · 故障注入 →</button>
       </article>
 
       <article class="card overview-card">
@@ -145,7 +143,7 @@ const quickLinks = [
     <section class="card overview-quick">
       <div class="card-head">
         <h2>快捷入口</h2>
-        <span class="hint">旧四视图已映射到七个工作区分区</span>
+        <span class="hint">四个工作分区：总览 / 场景向导 / 实时监控与操作 / 实验记录</span>
       </div>
       <div class="quick-grid">
         <button

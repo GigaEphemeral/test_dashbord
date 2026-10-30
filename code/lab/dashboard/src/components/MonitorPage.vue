@@ -1,29 +1,26 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import AnimationLab from './AnimationLab.vue'
-import CacheLab from './CacheLab.vue'
+import CacheFlowPanel from './CacheFlowPanel.vue'
+import CacheKeysPanel from './CacheKeysPanel.vue'
 import ChaosActions from './ChaosActions.vue'
-import InstanceMetricsTable from './InstanceMetricsTable.vue'
+import EnvironmentDrawer from './EnvironmentDrawer.vue'
+import InstanceMetricsPanel from './InstanceMetricsPanel.vue'
 import JvmParamsPanel from './JvmParamsPanel.vue'
 import K6Progress from './K6Progress.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
 import ObservePanel from './ObservePanel.vue'
+import SideDrawer from './SideDrawer.vue'
 import ThreadLab from './ThreadLab.vue'
-import CacheKeysPanel from './CacheKeysPanel.vue'
 import TopologyView from './TopologyView.vue'
 import { describeError, fetchTopology } from '../api'
 
 /**
- * B3-00d "实时监控与操作".
+ * B5-04g monitor sheet.
  *
- * Tabs keep every legacy capability: 监控 (KPI + k6 progress + timelines +
- * instance table + topology), 实时操作 (container faults + cache lab) and
- * 实验工具 (thread lab + animation views). The old FaultsPanel is gone, but no
- * action surface was dropped.
- *
- * B5-01b: the topology block polls GET /lab/topology on every environment sync
- * while the section is active. A failure keeps the last good snapshot (if any)
- * and otherwise falls back to the /containers structure marked "拓扑数据降级".
+ * The page is one continuous observation surface: KPI, k6 progress, timelines,
+ * instance cards, cache flow and topology. Tools that used to live in separate
+ * tabs (container faults, thread lab, cache keys, container logs) open as
+ * right-hand drawers so the live charts stay visible while they are used.
  */
 const props = defineProps({
   token: { type: String, default: '' },
@@ -33,18 +30,11 @@ const props = defineProps({
   containers: { type: Array, default: () => [] },
   faults: { type: Array, default: () => [] },
   toxiproxy: { type: Object, default: null },
-  enabledNodes: { type: Array, default: () => [] }
+  enabledNodes: { type: Array, default: () => [] },
+  traffic: { type: Object, default: null }
 })
 
-defineEmits(['open-thread', 'changed', 'refresh'])
-
-const TABS = [
-  { id: 'monitor', label: '监控', testid: 'monitor-tab-monitor' },
-  { id: 'ops', label: '实时操作', testid: 'monitor-tab-ops' },
-  { id: 'tools', label: '实验工具', testid: 'monitor-tab-tools' }
-]
-
-const tab = ref('monitor')
+defineEmits(['changed', 'refresh', 'traffic', 'open-config', 'refresh-containers'])
 
 const syncAtLabel = computed(() => {
   const value = props.syncAt
@@ -55,6 +45,38 @@ const syncAtLabel = computed(() => {
     : date.toLocaleTimeString('zh-CN', { hour12: false })
 })
 
+const appInstances = computed(() => (props.containers || [])
+  .filter((item) => /^jl-app-\d+$/.test(item.name))
+  .map((item) => item.name.replace(/^jl-/, ''))
+  .sort())
+
+const jvmInstances = computed(() => {
+  const list = [...appInstances.value]
+  if ((props.containers || []).some((item) => item.name === 'jl-seckill-app-jdk8')) {
+    list.push('seckill-app-jdk8')
+  }
+  return list
+})
+
+const faultInstances = computed(() => (appInstances.value.length ? appInstances.value : ['app-1', 'app-2', 'app-3']))
+
+const openDrawer = ref('')
+const threadInstance = ref('')
+
+function showDrawer(name) {
+  openDrawer.value = name
+}
+
+function openThread(instance) {
+  threadInstance.value = instance
+  openDrawer.value = 'thread'
+}
+
+function closeDrawer() {
+  openDrawer.value = ''
+}
+
+// ----------------------------------------------------------------- topology
 const topology = ref(null)
 const topologyError = ref('')
 const topologyLoading = ref(false)
@@ -63,14 +85,6 @@ const topologyUpdatedAt = ref('')
 
 let topologyInFlight = false
 let topologyQueued = false
-
-/** Same instance derivation the removed FaultsPanel used. */
-function instancesOf(containers) {
-  return (containers || [])
-    .filter((item) => /^jl-app-\d+$/.test(item.name))
-    .map((item) => item.name.replace(/^jl-/, ''))
-    .sort()
-}
 
 function topologyEnabledParam() {
   return (props.enabledNodes || [])
@@ -96,8 +110,6 @@ async function refreshTopology() {
     topologyUpdatedAt.value = snapshot?.generatedAt || new Date().toISOString()
     topologyError.value = ''
   } catch (err) {
-    // Keep the last successful contract snapshot; only a page with no snapshot
-    // falls back to the containers view. Never blank the topology block.
     topologyError.value = `拓扑 DEGRADED（GET /lab/topology）：${describeError(err)}`
   } finally {
     topologyInFlight = false
@@ -125,121 +137,180 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="monitor-page" data-testid="monitor-page">
-    <nav class="tabs" role="tablist" aria-label="实时监控与操作">
-      <button
-        v-for="item in TABS"
-        :key="item.id"
-        type="button"
-        role="tab"
-        class="tab"
-        :class="{ active: tab === item.id }"
-        :aria-selected="tab === item.id"
-        :data-testid="item.testid"
-        @click="tab = item.id"
-      >{{ item.label }}</button>
-    </nav>
+    <ObservePanel
+      :token="token"
+      :active="active"
+      :sync-tick="syncTick"
+      :containers="containers"
+      :faults="faults"
+      :toxiproxy="toxiproxy"
+      :show-topology="false"
+    />
 
-    <template v-if="tab === 'monitor'">
-      <ObservePanel
-        :token="token"
-        :active="active"
-        :sync-tick="syncTick"
+    <K6Progress :token="token" :active="active" :sync-tick="syncTick" />
+
+    <MonitorTimeline :token="token" :active="active" :sync-tick="syncTick" />
+
+    <InstanceMetricsPanel
+      :token="token"
+      :active="active"
+      :sync-tick="syncTick"
+      :containers="containers"
+      :faults="faults"
+      :enabled-nodes="enabledNodes"
+      @open-thread="openThread"
+      @open-config="$emit('open-config', $event)"
+    />
+
+    <CacheFlowPanel
+      :token="token"
+      :active="active"
+      :sync-tick="syncTick"
+      :instances="appInstances"
+    />
+
+    <section class="card">
+      <div class="card-head">
+        <h2>拓扑</h2>
+        <div class="bench-actions">
+          <label class="topo-controls" data-testid="topology-sidecar-label">
+            <input v-model="includeSidecars" type="checkbox" data-testid="topology-sidecar-toggle">
+            显示 sidecar
+          </label>
+          <span class="hint">
+            节点/连线来自 <code>GET /lab-api/lab/topology</code>；悬停节点高亮其依赖。
+          </span>
+        </div>
+      </div>
+      <p v-if="topologyError" class="error-banner" role="alert" data-testid="topology-error">
+        {{ topologyError }}
+        <template v-if="topology"> · 保留上次成功快照（{{ topologyUpdatedAt }}）</template>
+        <template v-else> · 已回退到 <code>/lab-api/containers</code> 拓扑数据降级</template>
+        <template v-if="topologyLoading"> · 重试中…</template>
+      </p>
+      <TopologyView
+        :topology="topology"
+        :include-sidecars="includeSidecars"
         :containers="containers"
         :faults="faults"
         :toxiproxy="toxiproxy"
-        :show-topology="false"
-      />
-
-      <K6Progress :token="token" :active="active" :sync-tick="syncTick" />
-
-      <JvmParamsPanel
-        :token="token"
-        :instances="instancesOf(containers)"
-        :active="active"
-        :sync-tick="syncTick"
-      />
-
-      <MonitorTimeline :active="active" :sync-tick="syncTick" />
-
-      <InstanceMetricsTable
-        :token="token"
-        :active="active"
-        :sync-tick="syncTick"
-        :containers="containers"
         :enabled-nodes="enabledNodes"
       />
+    </section>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>拓扑</h2>
-          <div class="bench-actions">
-            <label class="topo-controls" data-testid="topology-sidecar-label">
-              <input v-model="includeSidecars" type="checkbox" data-testid="topology-sidecar-toggle">
-              显示 sidecar
-            </label>
-            <span class="hint">
-              节点/连线来自 <code>GET /lab-api/lab/topology</code>；失败时回退到 containers 并标注“拓扑数据降级”
-            </span>
-          </div>
-        </div>
-        <p v-if="topologyError" class="error-banner" role="alert" data-testid="topology-error">
-          {{ topologyError }}
-          <template v-if="topology"> · 保留上次成功快照（{{ topologyUpdatedAt }}）</template>
-          <template v-else> · 已回退到 <code>/lab-api/containers</code> 拓扑数据降级</template>
-          <template v-if="topologyLoading"> · 重试中…</template>
-        </p>
-        <TopologyView
-          :topology="topology"
-          :include-sidecars="includeSidecars"
-          :containers="containers"
-          :faults="faults"
-          :toxiproxy="toxiproxy"
-          :enabled-nodes="enabledNodes"
-        />
-      </section>
-    </template>
+    <JvmParamsPanel
+      :token="token"
+      :instances="jvmInstances"
+      :active="active"
+      :sync-tick="syncTick"
+    />
 
-    <template v-else-if="tab === 'ops'">
+    <nav class="monitor-dock" aria-label="实时工具">
+      <button
+        type="button"
+        class="dock-btn"
+        data-testid="dock-faults"
+        :disabled="!active || !token"
+        title="容器故障注入（TTL 自动回滚）"
+        @click="showDrawer('faults')"
+      >故障注入</button>
+      <button
+        type="button"
+        class="dock-btn"
+        data-testid="dock-thread"
+        :disabled="!active || !token"
+        title="线程故障、单线程生命周期与线程快照"
+        @click="showDrawer('thread')"
+      >线程工具</button>
+      <button
+        type="button"
+        class="dock-btn"
+        data-testid="dock-cache-keys"
+        :disabled="!active || !token"
+        title="Redis 缓存键分页浏览与单键详情"
+        @click="showDrawer('cache')"
+      >缓存键</button>
+      <button
+        type="button"
+        class="dock-btn"
+        data-testid="dock-logs"
+        :disabled="!active || !token"
+        title="容器清单、日志与背景流量"
+        @click="showDrawer('env')"
+      >容器日志</button>
+      <button
+        type="button"
+        class="dock-btn dock-refresh"
+        data-testid="monitor-refresh-fab"
+        :disabled="!active || !token"
+        :title="`立即刷新实时监控数据（上次同步 ${syncAtLabel}）`"
+        aria-label="立即刷新实时监控数据"
+        @click="$emit('refresh')"
+      >
+        <span class="dock-icon" aria-hidden="true">⟳</span>
+        <span class="dock-time">{{ syncAtLabel }}</span>
+      </button>
+    </nav>
+
+    <SideDrawer
+      :open="openDrawer === 'faults'"
+      title="故障注入"
+      hint="容器 kill / freeze 带 TTL 自动回滚；202 表示待确认，面板会轮询到终态。"
+      testid="drawer-faults"
+      width="min(620px, 94vw)"
+      @close="closeDrawer"
+    >
       <ChaosActions
         :token="token"
-        :active="active"
-        :instances="instancesOf(containers).length ? instancesOf(containers) : ['app-1', 'app-2', 'app-3']"
+        :active="active && openDrawer === 'faults'"
+        :instances="faultInstances"
         :faults="faults"
         @changed="$emit('changed')"
       />
-      <CacheLab :token="token" :active="active" />
-    </template>
+    </SideDrawer>
 
-    <template v-else>
-      <!-- Both labs poll their own state; the page only owns the open-thread hop. -->
+    <SideDrawer
+      :open="openDrawer === 'thread'"
+      title="线程工具"
+      hint="注入线程故障、推进单线程生命周期、抓取线程/堆快照；只影响所选实例。"
+      testid="drawer-thread"
+      @close="closeDrawer"
+    >
       <ThreadLab
         :token="token"
-        :active="active"
-        @open-thread="$emit('open-thread', $event)"
+        :active="active && openDrawer === 'thread'"
+        :focus-instance="threadInstance"
       />
-      <AnimationLab
-        :token="token"
-        :active="active"
-        @open-thread="$emit('open-thread', $event)"
-      />
-      <CacheKeysPanel :token="token" :active="active" />
-    </template>
+    </SideDrawer>
 
-    <!-- Always reachable while the page is long: one click refreshes every
-         child block through the global sync tick. -->
-    <button
-      type="button"
-      class="monitor-fab"
-      data-testid="monitor-refresh-fab"
-      :disabled="!active || !token"
-      :title="`立即刷新实时监控数据（上次同步 ${syncAtLabel}）`"
-      aria-label="立即刷新实时监控数据"
-      @click="$emit('refresh')"
+    <SideDrawer
+      :open="openDrawer === 'cache'"
+      title="缓存键浏览"
+      hint="Redis SCAN 分页、单键 L1/L2 详情与实验缓存重置；按实例隔离。"
+      testid="drawer-cache-keys"
+      @close="closeDrawer"
     >
-      <span class="monitor-fab-icon" aria-hidden="true">⟳</span>
-      <span class="monitor-fab-text">刷新</span>
-      <span class="monitor-fab-time">{{ syncAtLabel }}</span>
-    </button>
+      <CacheKeysPanel :token="token" :active="active && openDrawer === 'cache'" />
+    </SideDrawer>
+
+    <SideDrawer
+      :open="openDrawer === 'env'"
+      title="容器日志与环境"
+      hint="容器清单、只读日志与背景流量；正式 k6 由向导创建 run。"
+      testid="drawer-env"
+      width="min(980px, 96vw)"
+      @close="closeDrawer"
+    >
+      <EnvironmentDrawer
+        :token="token"
+        :active="active && openDrawer === 'env'"
+        :containers="containers"
+        :traffic="traffic"
+        @refresh-containers="$emit('refresh-containers')"
+        @traffic="$emit('traffic', $event)"
+        @changed="$emit('changed')"
+      />
+    </SideDrawer>
   </div>
 </template>
 
@@ -250,45 +321,57 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.monitor-fab {
+.monitor-dock {
   position: fixed;
-  right: 22px;
-  bottom: 22px;
+  right: 20px;
+  bottom: 20px;
   z-index: 60;
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  border: 1px solid rgba(56, 211, 159, 0.5);
-  background: rgba(13, 20, 27, 0.92);
-  color: var(--accent);
+  align-items: flex-end;
+}
+
+.dock-btn {
+  min-width: 92px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 211, 159, 0.35);
+  background: rgba(13, 20, 27, 0.94);
+  color: var(--text);
+  font-size: 0.82rem;
   font-weight: 600;
-  font-size: 0.85rem;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
   cursor: pointer;
 }
 
-.monitor-fab:hover:not(:disabled) {
-  background: rgba(22, 34, 45, 0.96);
+.dock-btn:hover:not(:disabled) {
   border-color: var(--accent);
+  color: var(--accent);
 }
 
-.monitor-fab:disabled {
-  opacity: 0.5;
+.dock-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.monitor-fab-icon {
+.dock-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+}
+
+.dock-icon {
   font-size: 1rem;
   line-height: 1;
 }
 
-.monitor-fab-time {
+.dock-time {
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 400;
 }
 </style>

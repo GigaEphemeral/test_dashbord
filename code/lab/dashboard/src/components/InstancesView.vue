@@ -11,17 +11,22 @@ import {
   sortContainers
 } from '../labModel'
 
+/**
+ * Read-only instance cards embedded in the monitor page. Configuration lives in
+ * the wizard's step 3; the cards only show live values and open the thread or
+ * JVM-parameter tool. Missing series are "无数据", never 0.
+ */
 const props = defineProps({
   containers: { type: Array, default: () => [] },
   faults: { type: Array, default: () => [] },
-  /** name (app-1…) -> { cpu, heapBytes, reqRate, p99Seconds, threads } or nulls. */
+  /** name (app-1…) -> { cpu, heapBytes, reqRate, latencySeconds, threads, … }. */
   metrics: { type: Object, default: () => ({}) },
   promNote: { type: String, default: '' },
   /** Enabled Java nodes of the newest run; empty means "all configured". */
   enabledNodes: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['open-thread'])
+const emit = defineEmits(['open-thread', 'open-config'])
 
 const enabledSet = computed(() => (props.enabledNodes.length ? new Set(props.enabledNodes) : null))
 
@@ -61,20 +66,14 @@ function healthClass(health) {
   if (health === 'starting') return 'warn'
   return 'muted'
 }
+
+function integerText(value) {
+  return Number.isFinite(value) ? String(Math.round(value)) : '无数据'
+}
 </script>
 
 <template>
-  <section class="instances-page" data-testid="instances-page">
-    <p class="hint">
-      每张卡片对应一个 <code>jl-app-*</code> 容器；数值来自 Prometheus（5s 轮询），
-      抓不到序列时显示「无数据」而不是 0。
-    </p>
-
-    <div class="notice info" data-testid="instances-b4-note">
-      实例/JVM 配置在「配置组」标签页维护（校验 / 仅保存 / 应用并重启 / 回滚）；本页卡片只读。
-      未启用节点置灰显示「未启用」，不参与实验。Caffeine 过期/刷新按秒配置，0=不启用；关闭 L1 时清空本地条目并显示「不适用」。
-    </div>
-
+  <div class="instances-page" data-testid="instances-page">
     <div v-if="promNote" class="notice" role="status" data-testid="instances-prom-note">{{ promNote }}</div>
 
     <div v-if="!cards.length" class="empty" data-testid="instances-empty">
@@ -130,12 +129,12 @@ function healthClass(health) {
             <span class="metric-note">rate[1m]</span>
           </div>
           <div class="metric">
-            <span class="metric-label">P99</span>
+            <span class="metric-label">P95</span>
             <strong
               class="metric-value"
-              :class="{ missing: !Number.isFinite(card.p99Seconds) }"
-              :data-testid="`instance-p99-${card.name}`"
-            >{{ formatMillis(card.p99Seconds) }}</strong>
+              :class="{ missing: !Number.isFinite(card.latencySeconds) }"
+              :data-testid="`instance-latency-${card.name}`"
+            >{{ formatMillis(card.latencySeconds) }}</strong>
             <span class="metric-note">http_server_requests</span>
           </div>
           <div class="metric">
@@ -144,13 +143,31 @@ function healthClass(health) {
               class="metric-value"
               :class="{ missing: !Number.isFinite(card.threads) }"
               :data-testid="`instance-threads-${card.name}`"
-            >{{ Number.isFinite(card.threads) ? Math.round(card.threads) : '无数据' }}</strong>
+            >{{ integerText(card.threads) }}</strong>
             <span class="metric-note">jvm_threads_live_threads</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">业务池</span>
+            <strong
+              class="metric-value"
+              :class="{ missing: !Number.isFinite(card.poolActive) }"
+              :data-testid="`instance-pool-${card.name}`"
+            >{{ integerText(card.poolActive) }}<span class="metric-sub"> / {{ integerText(card.poolQueued) }}</span></strong>
+            <span class="metric-note">active / queue</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">拒绝</span>
+            <strong
+              class="metric-value"
+              :class="{ missing: !Number.isFinite(card.rejected) }"
+              :data-testid="`instance-rejected-${card.name}`"
+            >{{ integerText(card.rejected) }}</strong>
+            <span class="metric-note">5 分钟增量</span>
           </div>
         </div>
 
         <footer class="instance-foot">
-          <span v-if="!card.enabled" class="chip" :data-testid="`instance-disabled-note-${card.name}`">未启用 · 完整参数在向导第 3 步</span>
+          <span v-if="!card.enabled" class="chip" :data-testid="`instance-disabled-note-${card.name}`">未启用 · 不参与本次实验</span>
           <span v-else-if="card.faults.length" class="instance-faults">
             <span
               v-for="fault in card.faults"
@@ -160,13 +177,20 @@ function healthClass(health) {
             >{{ fault.action }} · {{ fault.status }}</span>
           </span>
           <span v-else class="instance-clean">无活动故障</span>
-          <button
-            type="button"
-            class="btn ghost"
-            :data-testid="`instance-open-thread-${card.name}`"
-            :disabled="!card.enabled"
-            @click="emit('open-thread', card.name)"
-          >线程实验室 →</button>
+          <span class="instance-actions">
+            <button
+              type="button"
+              class="btn ghost"
+              :data-testid="`instance-open-thread-${card.name}`"
+              @click="emit('open-thread', card.name)"
+            >线程工具</button>
+            <button
+              type="button"
+              class="btn ghost"
+              :data-testid="`instance-open-config-${card.name}`"
+              @click="emit('open-config', card.name)"
+            >JVM 参数</button>
+          </span>
         </footer>
       </article>
     </div>
@@ -174,11 +198,7 @@ function healthClass(health) {
     <p v-if="missingMetrics" class="hint">
       {{ missingMetrics }} 个实例没有 CPU / 速率序列：应用可能刚启动，或 Prometheus 尚未完成第一次抓取。
     </p>
-    <p class="hint">
-      线程卡片里的「线程实验室 →」会把该实例带到线程页（同一实例下拉），不会注入任何故障。
-      JVM/线程池/Caffeine/GC 日志参数在「配置组」标签页维护；本页不提供应用或重启。
-    </p>
-  </section>
+  </div>
 </template>
 
 <style scoped>
@@ -188,5 +208,15 @@ function healthClass(health) {
 }
 .instance-card.off .metric-value {
   color: var(--text-muted);
+}
+.instance-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.metric-sub {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 400;
 }
 </style>

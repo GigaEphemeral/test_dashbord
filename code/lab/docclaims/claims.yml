@@ -617,17 +617,17 @@
   expect: true
   last_verified: 2026-10-29
 
-- id: b3-console-six-sections
+- id: b5-04g-console-four-sections
   polarity: positive
   doc:
-    - doc/process/Stage2/step-S2-B3-00a-interaction-alignment-implementation.md
-  statement: "B3-00c：控制台收敛为 6 个一级分区（无 nav-faults），故障与缓存能力并入实时监控与操作的实时操作/实验工具标签"
+    - doc/process/Stage2/step-S2-B5-04g-ui-optimization.md
+  statement: "B5-04g：侧边导航收敛为 4 个分区（总览/场景向导/实时监控与操作/实验记录）；实例配置并入向导第 3 步，实例卡片与缓存流动在监控单页，故障/线程/缓存键/日志改右侧抽屉"
   verify:
     kind: shell
-    command: "grep -q \"id: 'observe'\" code/lab/dashboard/src/App.vue && ! grep -q \"id: 'faults'\" code/lab/dashboard/src/App.vue && grep -q monitor-tab-tools code/lab/scripts/console-smoke.mjs"
+    command: "grep -q \"id: 'overview'\" code/lab/dashboard/src/App.vue && grep -q \"id: 'wizard'\" code/lab/dashboard/src/App.vue && grep -q \"id: 'observe'\" code/lab/dashboard/src/App.vue && grep -q \"id: 'runs'\" code/lab/dashboard/src/App.vue && ! grep -q \"id: 'instances'\" code/lab/dashboard/src/App.vue && ! grep -q \"id: 'bench'\" code/lab/dashboard/src/App.vue && test -f code/lab/dashboard/src/components/InstanceMetricsPanel.vue && test -f code/lab/dashboard/src/components/CacheFlowPanel.vue && test -f code/lab/dashboard/src/components/SideDrawer.vue && grep -q dock-faults code/lab/dashboard/src/components/MonitorPage.vue && grep -q dock-cache-keys code/lab/dashboard/src/components/MonitorPage.vue"
     timeout_ms: 15000
   expect: true
-  last_verified: 2026-10-29
+  last_verified: 2026-10-30
 
 - id: b3-l1-switch
   polarity: positive
@@ -754,7 +754,7 @@
   statement: "B4-04：实例页配置组支持校验/仅保存/应用并重启/回滚、目标 vs 生效、稳定期与 GC 日志查看"
   verify:
     kind: shell
-    command: "test -f code/lab/dashboard/src/components/InstanceConfigEditor.vue && test -f code/lab/dashboard/src/components/InstanceGcLogViewer.vue && grep -q instances-tab-config code/lab/dashboard/src/components/InstancesPanel.vue && grep -q applyInstanceConfig code/lab/dashboard/src/api.js"
+    command: "test -f code/lab/dashboard/src/components/InstanceConfigEditor.vue && test -f code/lab/dashboard/src/components/InstanceGcLogViewer.vue && grep -q wizard-config-column code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q applyInstanceConfig code/lab/dashboard/src/api.js"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
@@ -1051,7 +1051,7 @@
   statement: "控制台可用性：整站全宽；jdk8 配置常驻可编辑；堆转储默认路径自动填充；向导 JVM 配置按节点并排；线程池图含 pool max 参考；参数对照 5s 刷新"
   verify:
     kind: shell
-    command: "grep -q 'max-width: none' code/lab/dashboard/src/style.css && grep -q 'instance-config-jdk8-offline-hint' code/lab/dashboard/src/components/InstanceConfigGroup.vue && grep -q 'onHeapDumpChange' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'executor_pool_max_threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'REFRESH_MIN_MS = 5000' code/lab/dashboard/src/components/JvmParamsPanel.vue"
+    command: "grep -q 'max-width: none' code/lab/dashboard/src/style.css && grep -q 'instance-config-jdk8-offline-hint' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'onHeapDumpChange' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'executor_pool_max_threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'REFRESH_MIN_MS = 5000' code/lab/dashboard/src/components/JvmParamsPanel.vue"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30

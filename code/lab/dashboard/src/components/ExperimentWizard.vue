@@ -1,5 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import CacheABPanel from './CacheABPanel.vue'
+import CacheLab from './CacheLab.vue'
 import ScenarioWizard from './ScenarioWizard.vue'
 import ConfigGroupEditor from './ConfigGroupEditor.vue'
 import K6ParamsForm from './K6ParamsForm.vue'
@@ -23,7 +25,11 @@ const props = defineProps({
   state: { type: Object, default: null },
   busy: { type: String, default: '' },
   containers: { type: Array, default: () => [] },
-  latestRun: { type: Object, default: null }
+  latestRun: { type: Object, default: null },
+  /** Monitor cards deep-link to step 3; nonce makes repeated clicks re-apply. */
+  focusStep: { type: Number, default: 0 },
+  focusInstance: { type: String, default: '' },
+  focusNonce: { type: Number, default: 0 }
 })
 const emit = defineEmits(['start', 'step', 'skip', 'pause', 'resume', 'reset', 'refresh', 'started', 'navigate'])
 
@@ -53,6 +59,22 @@ const tab = ref('experiment')
 const step = ref(0)
 const nodeNotice = ref('')
 const showSidecars = ref(false)
+
+watch(
+  () => [props.focusStep, props.focusNonce],
+  ([target]) => {
+    const index = Number(target)
+    if (Number.isFinite(index) && index >= 0) step.value = Math.min(7, index)
+  },
+  { immediate: true }
+)
+
+// JDK 8 is a separate Boot 2.7 shell, never one of the app slots: app-1..3 run
+// the Boot 3 / JDK 21 application (cache lab, toggles, thread lab). The shell can
+// still be configured (heap/GC/flags) and rebuilt for the JDK comparison.
+const jdk8Container = computed(() => props.containers
+  .find((container) => container.name === 'jl-seckill-app-jdk8') || null)
+const jdk8Enabled = ref(true)
 
 const JAVA_CONTAINER = /^jl-app-\d+$/
 const SENTINEL_CONTAINER = /^jl-sentinel-\d+$/
@@ -361,6 +383,35 @@ async function startExperiment() {
   }
 }
 
+async function step6Action() {
+  if (startedRunId.value) {
+    emit('navigate', 'observe')
+    return
+  }
+  if (!draftRun.value) {
+    await createDraft()
+    return
+  }
+  if (!precheck.value || precheck.value.verdict === 'BLOCKED') {
+    await runPrecheck()
+    return
+  }
+  await startExperiment()
+}
+
+const step6Label = computed(() => {
+  if (startedRunId.value) return '去实时监控 →'
+  if (!draftRun.value) return creating.value ? '预检并创建草稿…' : '预检并创建草稿'
+  if (!precheck.value) return prechecking.value ? '预检中…' : '运行预检查'
+  if (precheck.value.verdict === 'BLOCKED') return '预检查阻断 · 重新预检'
+  return starting.value ? '启动中…' : '启动实验'
+})
+
+const step6Disabled = computed(() => (
+  !startedRunId.value
+  && (creating.value || prechecking.value || starting.value || !scenario.value)
+))
+
 const CONFLICT_TEXT = {
   '40901': '状态冲突（40901）：run 已不是 DRAFT，可能已被启动、停止或结束；请重新创建草稿。',
   '40902': '环境锁被占用（40902）：另一个 run 持有写锁；先停止它或等待其结束。',
@@ -531,6 +582,27 @@ function goStep(index) {
           <li v-if="!chaosProxy" class="notice warn">网络故障不可用：chaos-proxy 未启用。</li>
           <li v-if="showSidecars" class="notice info">exporter / sidecar 只在拓扑显示，不参与实验与故障目标。</li>
         </ul>
+
+        <div class="jdk8-gate" data-testid="wizard-jdk8-gate">
+          <label class="check-row">
+            <input v-model="jdk8Enabled" type="checkbox" data-testid="wizard-jdk8-shell" />
+            在「变量与配置组」中配置 JDK8 对照外壳
+          </label>
+          <p class="hint">
+            app-1/2/3 固定 JDK 21：它们是带缓存实验室、开关和线程实验室的 Boot 3 应用，不能替换为 JDK 8 镜像。
+            JDK 8 是独立的 <code>seckill-app-jdk8</code> 外壳（Boot 2.7，只覆盖读路径 / Actuator / 快照），
+            不加入本次 run 的分流节点，只用于堆/GC/启动耗时的对照。
+          </p>
+          <p class="hint">
+            外壳状态：
+            <span
+              class="badge"
+              :class="jdk8Container?.state === 'running' ? 'ok' : 'muted'"
+              data-testid="wizard-jdk8-state"
+            >{{ jdk8Container ? `${jdk8Container.state} · ${jdk8Container.health}` : '未运行（dual-jdk profile）' }}</span>
+            配置/应用/重启仍可在第 3 步完成；容器未运行时应用会失败并提示。
+          </p>
+        </div>
       </section>
 
       <!-- 1 实验目标 -->
@@ -609,7 +681,23 @@ function goStep(index) {
           :nodes="selectedNodes"
           :all-nodes="javaNodes"
           :pair-mode="pairMode"
+          :show-jdk8="jdk8Enabled"
+          :jdk8-running="Boolean(jdk8Container && jdk8Container.state === 'running')"
+          :focus-instance="focusInstance"
+          :focus-nonce="focusNonce"
         />
+
+        <div class="cache-setup">
+          <div class="panel-head">
+            <h3>缓存与防御策略（按实例，实时生效）</h3>
+            <span class="hint">写入所选 JVM 实例的运行时状态，不需要重启</span>
+          </div>
+          <p class="hint">
+            防御模式、L1 开关与预热都只作用于当前选中的实例：同一份代码下可让一个节点无防护、另一个开布隆或空值缓存，
+            用于受保护/未保护实例的对照。切换会立刻改变该实例的缓存路径，指标随之变化。
+          </p>
+          <CacheLab :token="token" :active="tab === 'experiment' && step === 3" />
+        </div>
       </section>
 
       <!-- 4 流量与执行配置 -->
@@ -656,19 +744,10 @@ function goStep(index) {
           <span v-if="precheck" class="chip" :class="verdictClass(precheck.verdict)">预检查 {{ precheck.verdict }}</span>
         </div>
 
-        <div class="rowline" style="margin-top: 10px">
-          <button type="button" class="btn" data-testid="wizard-create" :disabled="creating || !scenario" @click="createDraft">
-            {{ creating ? '创建中…' : '创建草稿并预检查' }}
-          </button>
-          <button
-            type="button"
-            class="btn primary"
-            data-testid="wizard-start"
-            :disabled="!canStart"
-            @click="startExperiment"
-          >{{ starting ? '启动中…' : '启动实验' }}</button>
-          <span class="hint">启动使用一次性幂等键；成功后本页不再重复发起。</span>
-        </div>
+        <p class="hint" style="margin-top: 10px">
+          使用右下角的「预检/启动实验」：第一次点击创建草稿并预检查，通过后再点击启动；
+          启动成功后自动跳转实时监控。启动使用一次性幂等键，本页不会重复发起。
+        </p>
 
         <p v-if="formError" class="notice danger" role="alert" data-testid="wizard-form-error">{{ formError }}</p>
 
@@ -683,7 +762,7 @@ function goStep(index) {
             >{{ prechecking ? '预检查中…' : '重新预检查' }}</button>
             <span v-if="draftRun" class="hint">草稿 {{ draftRun.runId }} · 预检查只读，不改 run 状态。</span>
           </div>
-          <div v-if="!draftRun" class="empty">先「创建草稿并预检查」；预检查报告会逐项列出证据。</div>
+          <div v-if="!draftRun" class="empty">点击右下角的「预检并创建草稿」；预检查报告会逐项列出证据。</div>
           <div v-else-if="!precheck" class="notice info">草稿已创建（{{ draftRun.runId }}），等待预检查结果。</div>
           <template v-else>
             <div class="precheck-head">
@@ -767,13 +846,37 @@ function goStep(index) {
           </div>
         </template>
         <p class="notice info" style="margin-top: 10px">单次结果，未重复验证；B5 提供重复实验的中位数与离散程度。</p>
+
+        <div class="ab-setup">
+          <div class="panel-head">
+            <h3>缓存 A/B 公平对照</h3>
+            <span class="hint">自动跑 A（L1 开+预热）/ B（L1 关+清空）并对比同一批指标</span>
+          </div>
+          <CacheABPanel
+            :token="token"
+            :instances="selectedNodes.length ? selectedNodes : ['app-1', 'app-2', 'app-3']"
+            :active="tab === 'experiment' && step === 7"
+          />
+        </div>
       </section>
 
       <div class="wizard-nav">
         <button type="button" class="btn ghost" data-testid="wizard-prev" :disabled="step === 0" @click="goStep(step - 1)">上一步</button>
         <div class="rowline">
           <span class="hint">{{ STEPS[step].title }} · {{ step + 1 }}/8</span>
-          <button type="button" class="btn primary" data-testid="wizard-next" :disabled="step === 7" @click="goStep(step + 1)">下一步</button>
+          <template v-if="step === 6">
+            <span class="hint" data-testid="wizard-step6-hint">预检不可跳过：BLOCKED 时修复环境后重新预检</span>
+            <span data-testid="wizard-step6-cta">
+              <button
+                type="button"
+                class="btn primary"
+                :data-testid="startedRunId ? 'wizard-cta-observe' : (!draftRun ? 'wizard-create' : 'wizard-start')"
+                :disabled="step6Disabled"
+                @click="step6Action"
+              >{{ step6Label }}</button>
+            </span>
+          </template>
+          <button v-else type="button" class="btn primary" data-testid="wizard-next" :disabled="step === 7" @click="goStep(step + 1)">下一步</button>
         </div>
       </div>
     </template>
@@ -906,5 +1009,35 @@ function goStep(index) {
 }
 .chip.info {
   color: var(--text);
+}
+
+.jdk8-gate {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+
+.jdk8-gate .hint {
+  margin: 6px 0 0;
+}
+
+.cache-setup,
+.ab-setup {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.cache-setup h3,
+.ab-setup h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.wizard-nav .rowline {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 </style>

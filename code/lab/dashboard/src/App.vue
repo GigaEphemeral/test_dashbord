@@ -1,8 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import BenchmarkPanel from './components/BenchmarkPanel.vue'
 import ExperimentWizard from './components/ExperimentWizard.vue'
-import InstancesPanel from './components/InstancesPanel.vue'
 import MonitorPage from './components/MonitorPage.vue'
 import OverviewPanel from './components/OverviewPanel.vue'
 import RunLedger from './components/RunLedger.vue'
@@ -15,7 +13,6 @@ import {
   fetchGuideState,
   fetchHealth,
   fetchLedgerStatus,
-  fetchLogs,
   fetchRuns,
   fetchToxiproxyState,
   fetchTrafficState,
@@ -26,23 +23,19 @@ import {
 } from './api'
 
 const TOKEN_STORAGE_KEY = 'ha-lab-token'
-const DEFAULT_TAIL = 200
 const SYNC_INTERVAL_MS = Number(import.meta.env.VITE_LAB_SYNC_INTERVAL_MS || 5000)
 const SUMMARY_RUN_LIMIT = Number(import.meta.env.VITE_LAB_LEDGER_SUMMARY_LIMIT || 5)
 const GRAFANA_URL = (import.meta.env.VITE_LAB_GRAFANA_URL || 'http://127.0.0.1:3000')
   .replace(/\/+$/, '')
 
-// Order is the operator workflow. testids follow nav-<section>; the old
-// nav-console/nav-thread/nav-cache/nav-animation ids are gone with the rewrite.
-// B3-00: six sections. The old faults page is now the 实时操作 / 实验工具 tabs
-// of 实时监控与操作; planned faults live in the wizard timeline.
+// B5-04g: four sections. Instance configuration lives in wizard step 3 and the
+// instance cards live on the monitor sheet; Benchmark became the environment
+// drawer (container logs + background traffic).
 const SECTIONS = [
   { id: 'overview', label: '总览', hint: '环境、容器池、故障、台账摘要' },
-  { id: 'wizard', label: '场景向导', hint: '基础配置、目标、k6 参数与故障时间线' },
-  { id: 'instances', label: '实例与 JVM', hint: '实例卡片、配置组与线程实验室' },
-  { id: 'bench', label: 'Benchmark', hint: '场景库、背景流量、容器清单与日志' },
-  { id: 'observe', label: '实时监控与操作', hint: '时间轴、k6 进度、拓扑与实时操作' },
-  { id: 'runs', label: '实验记录', hint: '台账、报告对比、归档与删除' }
+  { id: 'wizard', label: '场景向导', hint: '目标、变量与配置、k6、故障时间线与预检查' },
+  { id: 'observe', label: '实时监控与操作', hint: '时间轴、实例卡片、缓存流动、拓扑与悬浮工具' },
+  { id: 'runs', label: '实验记录', hint: '台账、报告、归档与删除' }
 ]
 
 // Enabled Java nodes of the newest run; empty means "all configured", which
@@ -56,12 +49,8 @@ const section = ref('overview')
 
 const healthState = ref('checking')
 const containers = ref([])
-const selected = ref('')
-const tail = ref(DEFAULT_TAIL)
-const logs = ref('')
-const error = ref('')
 const loadingContainers = ref(false)
-const loadingLogs = ref(false)
+const error = ref('')
 
 const scenarios = ref([])
 const guide = ref(null)
@@ -76,9 +65,10 @@ const ledgerStatus = ref(null)
 const ledgerError = ref('')
 const latestRun = ref(null)
 
-// Instance handed to the thread lab by an instance card / animation view.
-const threadInstance = ref('')
-const threadNonce = ref(0)
+// Instance handed to wizard step 3 by a monitor card's "JVM 参数" button.
+const wizardStep = ref(0)
+const wizardFocusInstance = ref('')
+const wizardNonce = ref(0)
 
 watch(token, (value) => {
   localStorage.setItem(TOKEN_STORAGE_KEY, value)
@@ -136,41 +126,12 @@ async function checkHealth() {
   }
 }
 
-async function refreshLogs() {
-  if (!selected.value) return
-  const value = Number(tail.value)
-  if (!Number.isInteger(value) || value < 1 || value > 1000) {
-    error.value = 'tail 必须是 1–1000 之间的整数。'
-    return
-  }
-  error.value = ''
-  loadingLogs.value = true
-  try {
-    logs.value = await fetchLogs(token.value.trim(), selected.value, value)
-  } catch (err) {
-    logs.value = ''
-    error.value = describeError(err)
-  } finally {
-    loadingLogs.value = false
-  }
-}
-
 async function refreshContainers() {
   loadingContainers.value = true
   try {
-    const list = await fetchContainers(token.value.trim())
-    containers.value = list
-    if (!list.some((item) => item.name === selected.value)) {
-      selected.value = list.find((item) => item.name === 'jl-app-1')?.name || list[0]?.name || ''
-    }
-    if (selected.value) {
-      await refreshLogs()
-    } else {
-      logs.value = ''
-    }
+    containers.value = await fetchContainers(token.value.trim())
   } catch (err) {
     containers.value = []
-    logs.value = ''
     error.value = describeError(err)
   } finally {
     loadingContainers.value = false
@@ -203,11 +164,6 @@ async function syncEnvironment() {
     faults.value = actions || []
     traffic.value = trafficState
     containers.value = list || []
-    if (!containers.value.some((item) => item.name === selected.value)) {
-      selected.value = containers.value.find((item) => item.name === 'jl-app-1')?.name
-        || containers.value[0]?.name
-        || ''
-    }
     await refreshToxiproxyQuiet()
     healthState.value = 'up'
   } catch (err) {
@@ -289,24 +245,17 @@ async function clearFaults() {
   }
 }
 
-function selectContainer(name) {
-  selected.value = name
-  refreshLogs()
-}
-
-function setTail(value) {
-  tail.value = value
-}
-
-/** Instance cards and the animation view link into the thread lab. */
-function openThread(instance) {
-  threadInstance.value = instance
-  threadNonce.value += 1
-  section.value = 'instances'
-}
-
 function navigate(id) {
+  if (id === 'wizard') wizardStep.value = 0
   section.value = id
+}
+
+/** A monitor instance card deep-links into the wizard's configuration step. */
+function openInstanceConfig(instance) {
+  wizardFocusInstance.value = instance
+  wizardNonce.value += 1
+  wizardStep.value = 3
+  section.value = 'wizard'
 }
 
 /** A started experiment jumps straight to the live view. */
@@ -371,7 +320,7 @@ onBeforeUnmount(stopPolling)
         <div class="brand-mark">HA</div>
         <div>
           <h1>HA Lab · 实验工作区</h1>
-          <p class="subtitle">侧边导航 · 总览 / 向导 / 实例 / Benchmark / 监控与操作 / 实验记录</p>
+          <p class="subtitle">侧边导航 · 总览 / 场景向导 / 实时监控与操作 / 实验记录</p>
         </div>
       </div>
       <div class="topbar-meta">
@@ -444,6 +393,9 @@ onBeforeUnmount(stopPolling)
           :busy="busy"
           :containers="containers"
           :latest-run="latestRun"
+          :focus-step="wizardStep"
+          :focus-instance="wizardFocusInstance"
+          :focus-nonce="wizardNonce"
           @start="(id) => callGuide('start', id)"
           @step="() => callGuide('step')"
           @skip="() => callGuide('skip')"
@@ -453,38 +405,6 @@ onBeforeUnmount(stopPolling)
           @refresh="syncEnvironment"
           @started="onRunStarted"
           @navigate="navigate"
-        />
-
-        <InstancesPanel
-          v-else-if="section === 'instances'"
-          :token="token.trim()"
-          :active="section === 'instances'"
-          :sync-tick="syncTick"
-          :focus-instance="threadInstance"
-          :focus-nonce="threadNonce"
-          :containers="containers"
-          :faults="faults"
-        />
-
-        <BenchmarkPanel
-          v-else-if="section === 'bench'"
-          :token="token.trim()"
-          :active="section === 'bench'"
-          :sync-tick="syncTick"
-          :containers="containers"
-          :selected="selected"
-          :tail="tail"
-          :logs="logs"
-          :loading-containers="loadingContainers"
-          :loading-logs="loadingLogs"
-          :traffic="traffic"
-          :busy="busy"
-          @refresh-containers="refreshContainers"
-          @select-container="selectContainer"
-          @refresh-logs="refreshLogs"
-          @update:tail="setTail"
-          @traffic="callTraffic"
-          @changed="syncEnvironment"
         />
 
         <MonitorPage
@@ -497,9 +417,12 @@ onBeforeUnmount(stopPolling)
           :faults="faults"
           :toxiproxy="toxiproxy"
           :enabled-nodes="enabledNodes"
-          @open-thread="openThread"
+          :traffic="traffic"
+          @open-config="openInstanceConfig"
           @refresh="globalSync"
           @changed="syncEnvironment"
+          @traffic="callTraffic"
+          @refresh-containers="refreshContainers"
         />
 
         <RunLedger

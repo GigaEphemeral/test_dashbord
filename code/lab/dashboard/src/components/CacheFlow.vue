@@ -6,7 +6,11 @@ const props = defineProps({
   /** { l1:{total,hit,miss,hitRatio,present}, l2:{…}, fallbacks:{total,reasons,present}, available } */
   cache: { type: Object, default: () => ({}) },
   paused: { type: Boolean, default: false },
-  reducedMotion: { type: Boolean, default: false }
+  reducedMotion: { type: Boolean, default: false },
+  /** false = Caffeine bypassed and cleared; null = unknown (state not loaded). */
+  l1Enabled: { type: Boolean, default: null },
+  mode: { type: String, default: '' },
+  instance: { type: String, default: '' }
 })
 
 const emit = defineEmits(['toggle-pause'])
@@ -30,22 +34,25 @@ const fallbackShare = computed(() => {
   return Number.isFinite(total) && total > 0 && Number.isFinite(db) ? db / total : null
 })
 
+const l1Off = computed(() => props.l1Enabled === false)
+const entryRate = computed(() => (l1Off.value ? l2.value.total : l1.value.total))
+
 const lanes = computed(() => [
   {
     id: 'l1',
     title: '入口 → L1',
     tone: 'accent',
-    rate: l1.value.total,
-    note: '全部缓存查询',
-    hint: '进入 Caffeine 的每秒查询数'
+    rate: l1Off.value ? null : l1.value.total,
+    note: l1Off.value ? 'L1 已关闭：本段旁路，不计数' : '全部缓存查询',
+    hint: l1Off.value ? 'L1 关闭时请求直接进入 L2' : '进入 Caffeine 的每秒查询数'
   },
   {
     id: 'l2',
     title: 'L1 → L2',
     tone: 'amber',
-    rate: l1.value.miss,
-    note: '仅 L1 未命中',
-    hint: '只有 L1 未命中的请求下探到 Redis'
+    rate: l1Off.value ? l2.value.total : l1.value.miss,
+    note: l1Off.value ? 'L1 关闭：全部查询直达 Redis' : '仅 L1 未命中',
+    hint: '只有 L1 未命中的请求下探到 Redis；L1 关闭时全部下探'
   },
   {
     id: 'db',
@@ -173,6 +180,14 @@ onBeforeUnmount(() => {
     <div class="card-head">
       <h2>缓存流动 <span class="count">L1 → L2 → DB</span></h2>
       <div class="cache-head-actions">
+        <span v-if="instance" class="badge muted" data-testid="cache-flow-instance">{{ instance }}</span>
+        <span v-if="mode" class="badge" :class="mode === 'off' ? 'ok' : 'warn'" data-testid="cache-flow-mode">{{ mode }}</span>
+        <span
+          v-if="l1Enabled !== null"
+          class="badge"
+          :class="l1Enabled ? 'ok' : 'muted'"
+          data-testid="cache-flow-l1"
+        >L1 {{ l1Enabled ? '启用' : '已关闭' }}</span>
         <span class="pill" :class="paused ? 'paused' : 'running'" data-testid="cache-motion-state">
           {{ paused ? '动画暂停' : '动画播放中' }}
         </span>
@@ -188,7 +203,12 @@ onBeforeUnmount(() => {
 
     <p class="hint">
       粒子速度与该段每秒速率成正比（Prometheus <code>rate(...[1m])</code>）；数据每 5s 更新，速度平滑过渡。
-      没有粒子 = 该段当前没有流量，不是渲染失败。
+      没有粒子 = 该段当前没有流量，不是渲染失败。指标按当前实例的 <code>instance</code> 标签过滤。
+    </p>
+
+    <p v-if="l1Off" class="notice info" data-testid="cache-flow-l1-off">
+      L1 已关闭并清空本地条目：入口流量直接打到 Redis（L2），L1 命中率显示“不适用”。
+      对比性能差异时看 L2 查询速率与 DB 回源速率，而不是 L1 曲线。
     </p>
 
     <div v-if="!available" class="empty" data-testid="cache-empty">
@@ -201,9 +221,9 @@ onBeforeUnmount(() => {
         <div class="flow-stage">
           <span class="stage-kicker">入口</span>
           <strong class="stage-title">GET /api/products/{id}</strong>
-          <span class="stage-sub">只读商品查询</span>
-          <span class="stage-metric" data-testid="cache-total-l1">{{ formatRate(l1.total) }}</span>
-          <span class="stage-note">L1 查询速率</span>
+          <span class="stage-sub">{{ l1Off ? '只读商品查询 · L1 旁路' : '只读商品查询' }}</span>
+          <span class="stage-metric" data-testid="cache-total-l1">{{ formatRate(entryRate) }}</span>
+          <span class="stage-note">{{ l1Off ? '缓存查询速率（直达 L2）' : 'L1 查询速率' }}</span>
         </div>
 
         <div class="flow-lane" :class="[toneClass('accent'), { idle: laneIdle(lanes[0]) }]" data-testid="cache-lane-l1">
@@ -220,15 +240,15 @@ onBeforeUnmount(() => {
         <div class="flow-stage">
           <span class="stage-kicker">L1</span>
           <strong class="stage-title">Caffeine</strong>
-          <span class="stage-sub">进程内 · 60s 过期</span>
+          <span class="stage-sub">{{ l1Off ? '已关闭 · 本地条目已清空' : '进程内 · 60s 过期' }}</span>
           <div class="ratio">
             <span class="ratio-label">命中率</span>
-            <span class="ratio-value" data-testid="cache-hit-ratio-l1">{{ formatPercent(l1.hitRatio) }}</span>
+            <span class="ratio-value" data-testid="cache-hit-ratio-l1">{{ l1Off ? '不适用' : formatPercent(l1.hitRatio) }}</span>
           </div>
           <div class="ratio-bar" aria-hidden="true">
-            <span :style="{ width: `${Number.isFinite(l1.hitRatio) ? Math.min(100, l1.hitRatio * 100) : 0}%` }"></span>
+            <span :style="{ width: `${!l1Off && Number.isFinite(l1.hitRatio) ? Math.min(100, l1.hitRatio * 100) : 0}%` }"></span>
           </div>
-          <span class="stage-note">命中 {{ formatRate(l1.hit) }} · 未命中 {{ formatRate(l1.miss) }}</span>
+          <span class="stage-note">{{ l1Off ? 'L1 旁路：未命中统计不适用' : `命中 ${formatRate(l1.hit)} · 未命中 ${formatRate(l1.miss)}` }}</span>
         </div>
 
         <div class="flow-lane" :class="[toneClass('amber'), { idle: laneIdle(lanes[1]) }]" data-testid="cache-lane-l2">

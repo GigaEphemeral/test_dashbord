@@ -2830,3 +2830,88 @@ h2 {
   z-index: 30;
   white-space: normal;
 }
+
+/* --------------------------------------------------------- tool drawers */
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 12, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.side-drawer {
+  position: relative;
+  height: 100%;
+  max-width: 96vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--panel-border);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.55);
+  animation: drawer-in 180ms ease;
+}
+
+.side-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.side-drawer-head h2 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.side-drawer-head .hint {
+  margin: 4px 0 0;
+}
+
+.side-drawer-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 18px 28px;
+}
+
+.drawer-close {
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px 10px;
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(28px); opacity: 0.55; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Instance card footer actions stay on one line even with two buttons. */
+.instance-foot {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Drawer reflow: the tool panels were designed for the full page width. */
+.side-drawer .thread-grid,
+.side-drawer .cache-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.side-drawer .lifecycle-track {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.side-drawer .lifecycle-chip {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+}
