@@ -25,6 +25,12 @@ const INSTANCES = (import.meta.env.VITE_LAB_APP_INSTANCES || 'app-1,app-2,app-3'
   .split(',')
   .map((name) => name.trim())
   .filter(Boolean)
+// app-3 runs the Boot 2.7 / Java 8 business peer. Its container-level faults
+// (kill/freeze) work, but the /lab/thread fault endpoints are not implemented
+// there yet, so this page must say so instead of surfacing a raw 404.
+const JDK8_INSTANCE = import.meta.env.VITE_LAB_JDK8_INSTANCE || 'app-3'
+const jdk8Selected = computed(() => instance.value === JDK8_INSTANCE)
+const jdk8Notice = '该实例是 JDK8 业务槽位：暂不提供线程实验室（/lab/thread）。容器级故障（kill / freeze）仍可在「故障注入」页使用。'
 const MODES = ['deadlock', 'stuck', 'cpu-burn', 'heap-leak', 'oom', 'thread-leak', 'starvation']
 const DEMO_STATES = ['NEW', 'RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING', 'TERMINATED']
 
@@ -64,8 +70,19 @@ function startPolling() {
   }, SYNC_INTERVAL_MS)
 }
 
+function blockedByJdk8() {
+  if (!jdk8Selected.value) return false
+  error.value = jdk8Notice
+  return true
+}
+
 async function refresh({ quiet = false } = {}) {
   if (!props.active || !props.token || pollInFlight) return
+  if (blockedByJdk8()) {
+    faults.value = []
+    lifecycle.value = null
+    return
+  }
   pollInFlight = true
   if (!quiet) busy.value = 'refresh'
   error.value = ''
@@ -89,6 +106,7 @@ async function inject() {
     error.value = '请先在上方填写访问令牌。'
     return
   }
+  if (blockedByJdk8()) return
   const ttl = Number(form.ttlSeconds)
   if (form.hold === 'auto' && (!Number.isInteger(ttl) || ttl < 1 || ttl > 600)) {
     error.value = 'TTL 必须是 1–600 之间的整数秒。'
@@ -110,6 +128,7 @@ async function inject() {
 }
 
 async function faultAction(mode, action) {
+  if (blockedByJdk8()) return
   error.value = ''
   busy.value = `${action}-${mode}`
   try {
@@ -123,6 +142,7 @@ async function faultAction(mode, action) {
 }
 
 async function stopAll() {
+  if (blockedByJdk8()) return
   error.value = ''
   busy.value = 'stop-all'
   try {
@@ -136,6 +156,7 @@ async function stopAll() {
 }
 
 async function lifecycleAction(action) {
+  if (blockedByJdk8()) return
   error.value = ''
   busy.value = `lifecycle-${action}`
   try {
@@ -148,6 +169,7 @@ async function lifecycleAction(action) {
 }
 
 async function takeSnapshot() {
+  if (blockedByJdk8()) return
   error.value = ''
   busy.value = 'snapshot'
   try {

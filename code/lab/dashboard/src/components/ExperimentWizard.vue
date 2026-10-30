@@ -69,12 +69,6 @@ watch(
   { immediate: true }
 )
 
-// JDK 8 is a separate Boot 2.7 shell, never one of the app slots: app-1..3 run
-// the Boot 3 / JDK 21 application (cache lab, toggles, thread lab). The shell can
-// still be configured (heap/GC/flags) and rebuilt for the JDK comparison.
-const jdk8Container = computed(() => props.containers
-  .find((container) => container.name === 'jl-seckill-app-jdk8') || null)
-const jdk8Enabled = ref(true)
 
 const JAVA_CONTAINER = /^jl-app-\d+$/
 const SENTINEL_CONTAINER = /^jl-sentinel-\d+$/
@@ -584,23 +578,9 @@ function goStep(index) {
         </ul>
 
         <div class="jdk8-gate" data-testid="wizard-jdk8-gate">
-          <label class="check-row">
-            <input v-model="jdk8Enabled" type="checkbox" data-testid="wizard-jdk8-shell" />
-            在「变量与配置组」中配置 JDK8 对照外壳
-          </label>
           <p class="hint">
-            app-1/2/3 固定 JDK 21：它们是带缓存实验室、开关和线程实验室的 Boot 3 应用，不能替换为 JDK 8 镜像。
-            JDK 8 是独立的 <code>seckill-app-jdk8</code> 外壳（Boot 2.7，只覆盖读路径 / Actuator / 快照），
-            不加入本次 run 的分流节点，只用于堆/GC/启动耗时的对照。
-          </p>
-          <p class="hint">
-            外壳状态：
-            <span
-              class="badge"
-              :class="jdk8Container?.state === 'running' ? 'ok' : 'muted'"
-              data-testid="wizard-jdk8-state"
-            >{{ jdk8Container ? `${jdk8Container.state} · ${jdk8Container.health}` : '未运行（dual-jdk profile）' }}</span>
-            配置/应用/重启仍可在第 3 步完成；容器未运行时应用会失败并提示。
+            <strong>三个业务实例：</strong>app-1 / app-2 使用 JDK 21，app-3 使用 JDK 8；三者同路由、同 MySQL/Redis，
+            都由 Nginx 分流并参与本次 run。JDK 8 槽位的堆/GC/参数在第 3 步配置。
           </p>
         </div>
       </section>
@@ -681,8 +661,6 @@ function goStep(index) {
           :nodes="selectedNodes"
           :all-nodes="javaNodes"
           :pair-mode="pairMode"
-          :show-jdk8="jdk8Enabled"
-          :jdk8-running="Boolean(jdk8Container && jdk8Container.state === 'running')"
           :focus-instance="focusInstance"
           :focus-nonce="focusNonce"
         />

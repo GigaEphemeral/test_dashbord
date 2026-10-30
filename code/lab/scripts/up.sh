@@ -16,7 +16,7 @@ Usage: up.sh [--profile dev|ha|chaos-proxy|dual-jdk]
 Start the java-learn-lab infrastructure stack.
 
 Profiles:
-  dev   Nginx, three app instances, MySQL, Redis, RabbitMQ, exporters,
+  dev   Nginx, three app instances (app-1/2 JDK21, app-3 JDK8), MySQL, Redis, RabbitMQ, exporters,
         Prometheus, Grafana, Tempo, OTel Collector and cAdvisor (default)
   ha    the dev stack plus the Redis Sentinel topology from compose.ha.yml
         (1 master + 2 replicas + 3 Sentinels + 1 exporter per data node,
@@ -354,6 +354,7 @@ echo "  MySQL (dev)   : 127.0.0.1:3306 (db: ${MYSQL_DATABASE:-seckill}, user: ${
 echo "  Redis (dev)   : 127.0.0.1:6379"
 echo "  Grafana       : http://127.0.0.1:3000 (user: ${GRAFANA_ADMIN_USER:-admin}, pass: ${GRAFANA_ADMIN_PASSWORD:-admin})"
 echo "  Traffic       : jl-traffic is created but stopped; start it from the console or with 'docker start jl-traffic'"
+echo "  App tier      : jl-app-1/2 (JDK 21) + jl-app-3 (JDK 8), one Nginx upstream and one run node list"
 echo
 echo "Prometheus, Tempo, OTel Collector, cAdvisor and chaos-controller are internal to jl-net."
 echo "Verify with: bash $SCRIPT_DIR/verify.sh"

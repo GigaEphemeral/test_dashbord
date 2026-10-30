@@ -590,7 +590,7 @@ async function main() {
     );
 
     await page.getByTestId('wizard-step-3').click();
-    await expectCondition('wizard: app-3 is excluded from the config group editor', async () => {
+    await expectCondition('wizard: an unchecked app-3 is excluded from the config group editor', async () => {
       const row = page.getByTestId('wizard-config-row-app-3');
       if ((await row.count()) === 0) {
         return { ok: false, detail: 'app-3 row missing' };
@@ -605,7 +605,7 @@ async function main() {
           && text.includes('未启用')
           && text.includes('未启用节点不参与本实验')
           && appColumns === 2
-          && shellColumn === 1
+          && shellColumn === 0
           && app3Column === 0,
         detail: `rows=${rows} appColumns=${appColumns} shell=${shellColumn} app3Column=${app3Column}`,
       };
@@ -1201,42 +1201,37 @@ async function main() {
       return { ok: contentCount === 0, detail: `state=${state}; content nodes=${contentCount}` };
     });
 
-    const jdk8Row = page.getByTestId('instance-config-jdk8-unavailable');
-    const jdk8Editor = page.getByTestId('instance-config-editor-seckill-app-jdk8');
-    let jdk8 = { ok: false, detail: 'neither greyed row nor editor rendered' };
-    if ((await jdk8Row.count()) > 0) {
-      const text = ((await jdk8Row.textContent()) || '').trim();
-      const applyCount = await page.getByTestId('instance-config-apply-seckill-app-jdk8').count();
+    const jdk8Editor = page.getByTestId('instance-config-editor-app-3');
+    let jdk8 = { ok: false, detail: 'app-3 editor not rendered' };
+    if ((await jdk8Editor.count()) > 0) {
+      const badge = ((await page.getByTestId('instance-config-observability-app-3').textContent()) || '').trim();
+      // app-3 is the JDK 8 business slot: it serves /lab/pool and /lab/config,
+      // so it keeps the same controlled-rebuild flow and full readback.
+      const applyExists = (await page.getByTestId('instance-config-apply-app-3').count()) === 1;
       jdk8 = {
-        ok: text.includes('容器未运行（dual-jdk profile）') && text.includes('LIMITED-OBSERVABILITY') && applyCount === 0,
-        detail: `row; apply buttons=${applyCount}`,
+        ok: badge.includes('FULL-OBSERVABILITY') && applyExists,
+        detail: `editor; badge=${badge}; applyExists=${applyExists}`,
       };
-    } else if ((await jdk8Editor.count()) > 0) {
-      const badge = ((await page.getByTestId('instance-config-observability-seckill-app-jdk8').textContent()) || '').trim();
-      // The jdk8 shell shares the controlled-rebuild flow (B4-04 contract), so
-      // its apply button must exist; this smoke is read-only and never clicks.
-      const applyExists = (await page.getByTestId('instance-config-apply-seckill-app-jdk8').count()) === 1;
-      jdk8 = { ok: badge.includes('LIMITED-OBSERVABILITY') && applyExists, detail: `editor; badge=${badge}; applyExists=${applyExists}` };
     }
-    check('instances: jdk8 shell is LIMITED-OBSERVABILITY or an explicit not-running row', jdk8.ok, jdk8.detail);
+    check('instances: app-3 (JDK8 slot) is FULL-OBSERVABILITY with the rebuild flow', jdk8.ok, jdk8.detail);
 
     const appImageOptions = await page.getByTestId('instance-config-image-select-app-1')
       .locator('option').evaluateAll((nodes) => nodes.map((node) => node.value));
     check(
-      'instances: app instances only offer the jdk21 image',
+      'instances: app-1/app-2 only offer the jdk21 image',
       !appImageOptions.includes('jdk8') && appImageOptions.includes('jdk21'),
       appImageOptions.join(','),
     );
-    const shellSelect = page.getByTestId('instance-config-image-select-seckill-app-jdk8');
-    let shellOk = true;
-    let shellDetail = 'shell editor absent (dual-jdk profile off)';
-    if ((await shellSelect.count()) > 0) {
-      const options = await shellSelect.locator('option')
+    const slotSelect = page.getByTestId('instance-config-image-select-app-3');
+    let slotOk = false;
+    let slotDetail = 'app-3 editor absent';
+    if ((await slotSelect.count()) > 0) {
+      const options = await slotSelect.locator('option')
         .evaluateAll((nodes) => nodes.map((node) => node.value));
-      shellOk = options.includes('jdk8') && !options.includes('jdk21');
-      shellDetail = options.join(',');
+      slotOk = options.includes('jdk8') && !options.includes('jdk21');
+      slotDetail = options.join(',');
     }
-    check('instances: the jdk8 shell offers its own image', shellOk, shellDetail);
+    check('instances: the app-3 JDK8 slot offers only the jdk8 image', slotOk, slotDetail);
 
     // --------------------------------------------------------------- observe
     // B5-04g: the monitor page is one sheet plus floating drawers; the old
@@ -1350,13 +1345,13 @@ async function main() {
       const maxWidth = await page.locator('.page').first().evaluate((el) => getComputedStyle(el).maxWidth);
       return { ok: maxWidth === 'none', detail: `max-width=${maxWidth}` };
     });
-    await expectCondition('observe: the JVM parameter table lists the app instances and the JDK8 shell', async () => {
+    await expectCondition('observe: the JVM parameter table lists all three app slots', async () => {
       if ((await page.getByTestId('jvm-params').count()) === 0) {
         return { ok: false, detail: 'jvm-params missing' };
       }
       const rows = await page.locator('[data-testid^="jvm-params-row-"]').count();
-      const jdk8 = await page.getByTestId('jvm-params-row-seckill-app-jdk8').count();
-      return { ok: rows >= 3 && jdk8 === 1, detail: `rows=${rows} jdk8=${jdk8}` };
+      const app3 = await page.getByTestId('jvm-params-row-app-3').count();
+      return { ok: rows >= 3 && app3 === 1, detail: `rows=${rows} app3=${app3}` };
     });
     await expectCondition('observe: the k6 progress block renders (无数据 is honest without a run)', async () => {
       const block = page.getByTestId('k6-progress');

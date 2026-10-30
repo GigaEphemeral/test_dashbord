@@ -152,18 +152,20 @@ const eventsLoading = ref(false)
 
 const emit = defineEmits(['changed'])
 
+const JDK8_INSTANCE = import.meta.env.VITE_LAB_JDK8_INSTANCE || 'app-3'
 const rules = computed(() => ({
-  jdk8Shell: props.instance === 'seckill-app-jdk8',
-  appInstance: /^app-\d+$/.test(props.instance)
+  jdk8Shell: props.instance === JDK8_INSTANCE,
+  appInstance: /^app-\d+$/.test(props.instance) && props.instance !== JDK8_INSTANCE
 }))
 
 const jdk8Selected = computed(() => (
   form.value.imageTag === 'jdk8' || form.value.jdkVersion === '8'
 ))
 const jdk8Rejected = computed(() => rules.value.appInstance && jdk8Selected.value)
+// app-3 is a full business slot now (it serves /lab/pool and /lab/config);
+// only the server's verdict or an explicit prop can mark it limited.
 const limited = computed(() => (
   props.limitedObservability
-  || rules.value.jdk8Shell
   || effective.value?.observability === 'LIMITED-OBSERVABILITY'
 ))
 
@@ -246,10 +248,10 @@ const warnings = computed(() => {
     list.push('实测 128m 会 Metaspace OOM，建议留空使用 JVM 默认或 ≥192m')
   }
   if (jdk8Rejected.value) {
-    list.push('JDK8 是独立外壳实例：app-1/2/3 必须使用 jdk21 镜像。')
+    list.push('只有 app-3 JDK8 槽位可以使用 jdk8 镜像；app-1/app-2 固定 jdk21。')
   }
   if (rules.value.jdk8Shell) {
-    list.push('JDK8 外壳标记 LIMITED-OBSERVABILITY：应用级热回读不可用，以 GC 日志/JMX 兜底。')
+    list.push('app-3 是 JDK8 业务槽位：与 app-1/app-2 同路由、同 MySQL/Redis，可直接参与分流与压测。')
   }
   return [...new Set(list.filter(Boolean))]
 })
@@ -271,7 +273,7 @@ const progressText = computed(() => {
 
 const jdk8Hint = computed(() => (
   jdk8Rejected.value
-    ? 'JDK8 是独立外壳实例：app-1/2/3 只能使用 jdk21 镜像；服务端也会拒绝应用。'
+    ? '只有 app-3 JDK8 槽位可以使用 jdk8 镜像；app-1/app-2 固定 jdk21。'
     : ''
 ))
 
@@ -472,7 +474,7 @@ async function load() {
 
 function guardJdk8() {
   if (!jdk8Rejected.value) return false
-  error.value = 'JDK8 是独立外壳实例：app-1/2/3 只能使用 jdk21 镜像。'
+  error.value = '只有 JDK8 槽位可以使用 jdk8 镜像；app-1/app-2 固定 jdk21。'
   return true
 }
 
@@ -591,10 +593,10 @@ watch(() => props.active, (active) => {
       <div class="instance-badges">
         <span class="badge" :class="statusTone" :data-testid="`instance-config-status-${instance}`">{{ statusText }}</span>
         <span
-          v-if="limited"
-          class="badge warn"
+          class="badge"
+          :class="limited ? 'warn' : 'ok'"
           :data-testid="`instance-config-observability-${instance}`"
-        >LIMITED-OBSERVABILITY</span>
+        >{{ limited ? 'LIMITED-OBSERVABILITY' : 'FULL-OBSERVABILITY' }}</span>
         <span
           v-if="view?.revision"
           class="chip"
@@ -682,7 +684,7 @@ watch(() => props.active, (active) => {
         <div class="subhead">堆 / 运行时</div>
         <div class="field-row">
           <div class="field">
-            <label data-tip="只能选 8 或 21；app-1/2/3 必须使用 JDK 21，JDK8 是独立外壳实例。">
+            <label data-tip="app-1/app-2 固定 JDK 21；app-3 是 JDK 8 槽位。">
               JDK 版本 <span class="key">jdkVersion</span>
             </label>
             <select
@@ -693,12 +695,12 @@ watch(() => props.active, (active) => {
             >
               <option value="">未设置</option>
               <option v-if="!rules.jdk8Shell" value="21">21</option>
-              <option v-if="rules.jdk8Shell" value="8">8（独立外壳）</option>
+              <option v-if="rules.jdk8Shell" value="8">8（JDK8 槽位）</option>
             </select>
             <div class="help">
               {{ rules.jdk8Shell
                 ? '外壳固定 JDK 8；app-1/2/3 在「实例与 JVM」页与这里都只提供 JDK 21。'
-                : 'app-1/2/3 固定 JDK 21；JDK 8 是独立的 seckill-app-jdk8 外壳。' }}
+                : 'app-1/app-2 固定 JDK 21；app-3 是 JDK 8 槽位。' }}
             </div>
           </div>
           <div class="field">
@@ -716,7 +718,7 @@ watch(() => props.active, (active) => {
               <option v-if="rules.jdk8Shell" value="jdk8">jdk8</option>
             </select>
             <div class="help">{{ rules.jdk8Shell
-              ? 'JDK8 外壳使用 jdk8 镜像；app-1/2/3 固定 jdk21。'
+              ? 'JDK8 槽位使用 jdk8 镜像；app-1/app-2 固定 jdk21。'
               : 'app-1/2/3 固定 jdk21；JDK8 对照请到「实例与 JVM」页或本页下方外壳列配置。' }}</div>
           </div>
           <div v-for="field in HEAP_FIELDS.slice(0, 4)" :key="field.key" class="field">
@@ -992,7 +994,7 @@ watch(() => props.active, (active) => {
         type="button"
         class="btn"
         :disabled="!canApply"
-        :title="rules.jdk8Shell ? 'JDK8 外壳走同一受控重建：池回读 SKIPPED、指标用 seckill-app-jdk8 job、GC 日志按轮转命名' : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
+        :title="rules.jdk8Shell ? 'JDK8 槽位走同一受控重建：池回读 SKIPPED、指标用 seckill-app job、GC 日志按轮转命名' : (jdk8Rejected ? 'app 实例拒绝 jdk8' : '重建容器并使用已保存的配置')"
         :data-testid="`instance-config-apply-${instance}`"
         @click="ask('apply')"
       >应用并重启</button>
@@ -1000,7 +1002,7 @@ watch(() => props.active, (active) => {
         type="button"
         class="btn ghost"
         :disabled="!canRollback"
-        :title="rules.jdk8Shell ? 'JDK8 外壳走同一受控重建（使用上一版配置）' : '使用上一版配置重建容器'"
+        :title="rules.jdk8Shell ? 'JDK8 槽位走同一受控重建（使用上一版配置）' : '使用上一版配置重建容器'"
         :data-testid="`instance-config-rollback-${instance}`"
         @click="ask('rollback')"
       >回滚</button>
@@ -1012,7 +1014,7 @@ watch(() => props.active, (active) => {
         :data-testid="`instance-config-restart-${instance}`"
         @click="ask('restart')"
       >重启 JVM</button>
-      <span v-if="rules.jdk8Shell" class="hint">JDK8 外壳实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
+      <span v-if="rules.jdk8Shell" class="hint">JDK8 槽位实例：LIMITED-OBSERVABILITY（池回读 SKIPPED，GC 日志轮转命名）；应用/回滚与其他实例走同一受控重建。</span>
       <span v-else-if="!view?.config" class="hint">先「仅保存」为 DRAFT，才能应用。</span>
       <span v-else-if="status !== 'APPLIED'" class="hint">「重启 JVM」仅在配置已 APPLIED 时可用；当前为 {{ statusText }}。</span>
     </div>

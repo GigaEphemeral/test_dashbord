@@ -92,6 +92,14 @@
 > 报告环境段不再回退；实例页新增诊断事件；分流 job/URI/读取上限外置；Grafana fallback 统一 admin。
 > 真机 smoke run 环境段 `missing=[]`。交接 `step-S2-B5-04d-env-capture-and-cleanup.md`。
 
+> **B5-05 P1 基线（2026-10-30，app-3 = JDK8 业务槽位）**：app-3 由 Boot 2.7 外壳承接全部业务
+> （login / 两级缓存商品读 / orders / 异步 seckill，共享 exchange/queue 与同一 Lua），compose 以 mysql profile
+> 接入共享库；app-3 变为 FULL-OBSERVABILITY（/lab/pool、/lab/config、/lab/cache 回读）。默认 2×21+1×8，
+> `dual-jdk` 仅保留 D7 对照壳。闸门：jdk8 **350/0**、控制器 **892/0**、smoke 7/7、verify **108 PASS / 1 WARN / 0 FAIL**
+> （Sentinel 2+2 后少一条 per-sentinel 断言）、console-smoke **158/0**、claims **91/0**。真机：9+9 次 Nginx 探测
+> orders/seckill 全 2xx；app-3 的 `orders_created_total`、`cache_l1_requests_total` 与 app-1/2 同 job/label。
+> 交接 `step-S2-B5-05e-app3-jdk8-parity.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -601,6 +609,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-30 | v2.11：B5-05 P1 翻转——app-3 成为 JDK8 业务槽位（业务/缓存/回读全对齐，2×21+1×8），外壳仅保留 D7；verify 基线 108/1（Sentinel 2+2 少一条断言）、claims 91 |
 | 2026-10-27 | v1.0 初版：B0–B5 步骤分解、闸门基线、A01–A32 映射、8 项待确认 |
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |
 | 2026-10-28 | v1.2：3 项遗留全部确认——内置 10,000 商品替换商品 1/20 演示基线（B3-02）、库存区间 0–500、台账库 `lab_ledger` 与 10 表清单定稿（B1-01/方案 §10.5）；§9 改为 11 项确认结论、无遗留 |

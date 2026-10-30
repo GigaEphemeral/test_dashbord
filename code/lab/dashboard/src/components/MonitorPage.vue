@@ -50,13 +50,8 @@ const appInstances = computed(() => (props.containers || [])
   .map((item) => item.name.replace(/^jl-/, ''))
   .sort())
 
-const jvmInstances = computed(() => {
-  const list = [...appInstances.value]
-  if ((props.containers || []).some((item) => item.name === 'jl-seckill-app-jdk8')) {
-    list.push('seckill-app-jdk8')
-  }
-  return list
-})
+// app-3 is the JDK8 business peer, already part of appInstances.
+const jvmInstances = computed(() => [...appInstances.value])
 
 const faultInstances = computed(() => (appInstances.value.length ? appInstances.value : ['app-1', 'app-2', 'app-3']))
 

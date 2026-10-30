@@ -22,8 +22,6 @@ const props = defineProps({
   allNodes: { type: Array, default: () => [] },
   config: { type: Object, default: () => ({}) },
   pairMode: { type: Boolean, default: false },
-  showJdk8: { type: Boolean, default: true },
-  jdk8Running: { type: Boolean, default: false },
   focusInstance: { type: String, default: '' },
   focusNonce: { type: Number, default: 0 }
 })
@@ -187,39 +185,12 @@ watch(
           :token="token"
           :instance="node"
           :active="true"
-          :limited-observability="node === 'seckill-app-jdk8'"
           @changed="loadAll"
         />
       </section>
     </div>
     <p v-if="!nodes.length" class="hint">请先在向导第 1 步选择至少一个 Java 节点。</p>
 
-    <section
-      v-if="showJdk8"
-      class="config-column shell-column"
-      data-testid="wizard-config-column-seckill-app-jdk8"
-    >
-      <h4>
-        <code>seckill-app-jdk8</code> · JDK8 外壳
-        <span class="chip">独立实例 · 不参与本次 run 节点</span>
-      </h4>
-      <p class="hint">
-        JDK8 外壳不属于 run 的分流节点（run 只跑 app-1/2/3）；这里仅用于配置/对比，
-        应用与重启需要 dual-jdk profile 的容器在运行。
-      </p>
-      <p
-        v-if="!jdk8Running"
-        class="hint"
-        data-testid="instance-config-jdk8-offline-hint"
-      >容器未运行（dual-jdk profile）：配置可以保存，应用/重启会失败。</p>
-      <InstanceConfigEditor
-        :token="token"
-        instance="seckill-app-jdk8"
-        :active="true"
-        limited-observability
-        @changed="loadAll"
-      />
-    </section>
   </div>
 </template>
 

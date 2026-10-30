@@ -764,10 +764,10 @@
   doc:
     - doc/process/Stage2/stage2-开发测试与验收计划.md
     - doc/process/Stage2/step-S2-B4-04-instance-ui.md
-  statement: "B4-04：seckill-app-jdk8 以 LIMITED-OBSERVABILITY 纳入受控重建（pool SKIPPED、独立 Prometheus job、GC 轮转文件回读）"
+  statement: "B4-04/B5-05：JDK8 独立外壳（jdk8-mode=shell）仍以 LIMITED-OBSERVABILITY 纳入受控重建（pool SKIPPED、独立 Prometheus job、GC 轮转文件回读）；app-slot 模式下的 app-3 是 FULL-OBSERVABILITY 业务槽位"
   verify:
     kind: shell
-    command: "grep -q seckill-app-jdk8 code/services/chaos-controller/src/main/resources/application.yml && grep -q jdk8-prometheus-job code/services/chaos-controller/src/main/resources/application.yml && grep -q 'current' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceLogsService.java && grep -q LIMITED-OBSERVABILITY code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigService.java"
+    command: "grep -q 'jdk8-mode' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'jdk8-prometheus-job' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'current' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceLogsService.java && grep -q 'LIMITED-OBSERVABILITY' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigService.java && grep -q 'isJdk8AppSlotMode' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigService.java"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-29
@@ -1048,10 +1048,10 @@
   polarity: positive
   doc:
     - doc/process/Stage2/step-S2-B5-04e-console-usability.md
-  statement: "控制台可用性：整站全宽；jdk8 配置常驻可编辑；堆转储默认路径自动填充；向导 JVM 配置按节点并排；线程池图含 pool max 参考；参数对照 5s 刷新"
+  statement: "控制台可用性：整站全宽；app-3（JDK8 槽位）在向导中与 app-1/2 并排常驻可编辑；堆转储默认路径自动填充；线程池图含 pool max 参考；参数对照 5s 刷新"
   verify:
     kind: shell
-    command: "grep -q 'max-width: none' code/lab/dashboard/src/style.css && grep -q 'instance-config-jdk8-offline-hint' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'onHeapDumpChange' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'executor_pool_max_threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'REFRESH_MIN_MS = 5000' code/lab/dashboard/src/components/JvmParamsPanel.vue"
+    command: "grep -q 'max-width: none' code/lab/dashboard/src/style.css && grep -q 'instance-config-editor-' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'onHeapDumpChange' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'executor_pool_max_threads' code/lab/dashboard/src/components/MonitorTimeline.vue && grep -q 'REFRESH_MIN_MS = 5000' code/lab/dashboard/src/components/JvmParamsPanel.vue"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
@@ -1096,10 +1096,10 @@
   polarity: positive
   doc:
     - doc/process/Stage2/step-S2-B5-04e-console-usability.md
-  statement: "向导第 3 步 app 实例只提供 JDK21/jdk21，JDK8 以外壳独立列配置（不参与 run 节点）"
+  statement: "向导第 3 步三个业务槽位并排配置：app-1/app-2 只提供 JDK21，app-3 只提供 JDK8，独立外壳列已移除且 app-3 参与 run 节点"
   verify:
     kind: shell
-    command: "grep -q 'wizard-config-column-seckill-app-jdk8' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'rules.jdk8Shell' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'app-1/2/3 固定 JDK 21' code/lab/dashboard/src/components/InstanceConfigEditor.vue"
+    command: "grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'rules.value.jdk8Shell' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'app-1/app-2 固定 JDK 21' code/lab/dashboard/src/components/InstanceConfigEditor.vue && ! grep -q 'wizard-config-column-seckill-app-jdk8' code/lab/dashboard/src/components/ConfigGroupEditor.vue"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
@@ -1111,6 +1111,17 @@
   verify:
     kind: shell
     command: "grep -q 'jdk8-mode' code/services/chaos-controller/src/main/resources/application.yml && grep -q 'isJdk8AppSlotMode' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceConfigProperties.java && grep -q 'mixedImageContainer' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/precheck/RunPrecheckService.java && grep -q 'APP3_DOCKERFILE' code/lab/docker/compose.base.yml && grep -q 'configured JDK 8 slot' code/services/chaos-controller/src/main/java/com/javalearn/lab/chaos/instance/InstanceRebuildService.java"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+- id: b5-05-app3-business-parity
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-05e-app3-jdk8-parity.md
+  statement: "B5-05 P1：app-3 以 JDK8 承接 /api/orders 与异步 seckill（共享 exchange/queue、同一 Lua 脚本），以 mysql profile 接入共享库，并像 JDK21 一样提供两级缓存、/lab/cache、/lab/pool 与 /lab/config 回读"
+  verify:
+    kind: shell
+    command: "grep -q 'SeckillAdmissionService' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/admission/app/SeckillAdmissionService.java && grep -q 'seckill_stock.lua' code/services/seckill-app-jdk8/src/main/resources/application.yml && grep -q 'class LabCacheController' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/lab/api/LabCacheController.java && grep -q 'TwoLevelCache' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/catalog/cache/TwoLevelCache.java && grep -q 'APP_PROFILE' code/lab/docker/compose.base.yml"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30

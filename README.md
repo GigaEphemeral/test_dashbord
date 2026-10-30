@@ -2,7 +2,7 @@
 
 一套可以在本机 Docker 上完整跑起来的 **制造故障 → 观察症状 → 执行处理 → 对比效果** 教学实验室。
 
-- 三实例秒杀应用（JDK 21 ×3，另有 JDK 8 对照外壳），Nginx 轮询分流
+- 三实例秒杀应用（app-1/app-2 为 JDK 21，app-3 为 JDK 8；另有可选 JDK 8 对照外壳），Nginx 轮询分流
 - MySQL 单机 + InnoDB Cluster（3 节点 + Router）、Redis 单机 + Sentinel 主从
 - Prometheus / Grafana / Tempo / OTel / cAdvisor 观测栈
 - Vue 控制台：场景向导、k6 压测、故障注入、实时监控、实验台账、单次报告导出
@@ -18,7 +18,7 @@
 |---|---|
 | 操作系统 | Windows 10 + Docker Desktop（WSL2 后端） |
 | 内存 | Docker ≥ 12GB；常驻 dev 栈约 5GB，叠加 ha / db-ha 约 9–10GB |
-| JDK | PATH 上 JDK 21；Maven 实际运行在 JDK 25；JDK 8 只有 JRE（容器内运行） |
+| JDK | PATH 上 JDK 21；Maven 实际运行在 JDK 25；app-3/JDK 8 以 `--release 8` 编译、在容器内 `eclipse-temurin:8-jdk-alpine` 运行 |
 | Maven | 3.9.x，仓库根 `code/pom.xml` |
 | Node | 20+（控制台构建；本机 v24） |
 | 端口 | 8080（控制台/Nginx）、3000（Grafana，仅 127.0.0.1）、15672（RabbitMQ，仅 127.0.0.1）、6446/6447（MySQL Router，仅 127.0.0.1） |
@@ -52,9 +52,11 @@ bash code/lab/scripts/db-ha-up.sh                 # MySQL InnoDB Cluster + Route
 bash code/lab/scripts/down.sh                     # 停止；数据卷保留
 ```
 
-> **JDK 8 口径（P0，2026-10-30）**：默认仍是 3×JDK21 + 可选 `dual-jdk` 外壳。控制面已支持
-> `LAB_INSTANCE_JDK8_MODE=app-slot`（app-3 = JDK8 业务槽位，2×21+1×8），但需要 P1 的 JDK8
-> 完整业务镜像就绪后才切换；切换变量见 `doc/process/Stage2/step-S2-B5-05-app3-jdk8-p0.md`。
+> **JDK 8 口径（2026-10-30，P1 完成）**：默认就是 **2×JDK21 + 1×JDK8**——app-1/app-2 使用
+> JDK 21 外壳，app-3 使用 JDK 8 业务外壳；三者同 Nginx 上游、同 MySQL/Redis/RabbitMQ，都承接
+> 登录、商品读（两级缓存）、下单与异步秒杀。`dual-jdk` 额外加的是 **D7 对照外壳**
+> `jl-seckill-app-jdk8`，不参与分流，仅用于同机对比。app-3 的业务/缓存/回读一致性见
+> `doc/process/Stage2/step-S2-B5-05e-app3-jdk8-parity.md`。
 
 ### 控制器离线重建（Maven Central 不可达时）
 
@@ -69,13 +71,28 @@ docker compose -f compose.base.yml -f compose.dev.yml --env-file .env \
   up -d --force-recreate chaos-controller
 ```
 
+app-3 的 JDK 8 镜像同样走离线路径（`compose build` 在容器内拉不到 Maven Central 时）：
+
+```bash
+cd code && mvn -pl services/seckill-app-jdk8 -am -DskipTests package
+docker build -f code/services/seckill-app-jdk8/Dockerfile.runtime \
+  -t java-learn-lab/seckill-app:jdk8 code/services/seckill-app-jdk8
+cd code/lab/docker
+docker compose -f compose.base.yml -f compose.dev.yml up -d --no-deps --force-recreate app-3
+```
+
+`Dockerfile.runtime` 从 `java-learn-lab/seckill-app:jdk21` 复制同一版本的 OTel agent
+（`OTEL_SOURCE_IMAGE` 可覆盖），因此两个运行时的 agent 版本不会漂移。
+
 控制台改动只需在主树 `cd code/lab/dashboard && npm run build`（Nginx 直接挂载 `dist/`）。
 
 ## 3. 使用流程
 
-1. **场景向导 · 变量与配置组**：app-1/2/3 的堆/GC/业务池/Caffeine，`校验 → 仅保存 → 应用并重启`；
-   已应用后可点「重启 JVM」（配置不变）；回滚使用上一版配置。JDK 8 是独立的 `seckill-app-jdk8`
-   外壳（不参与 run 分流），在同一页可配置其堆/GC/参数。缓存防御模式、L1 开关与预热也在这里按实例设置。
+1. **场景向导 · 变量与配置组**：app-1/app-2（JDK 21）与 app-3（JDK 8）的堆/GC/业务池/Caffeine，
+   `校验 → 仅保存 → 应用并重启`；已应用后可点「重启 JVM」（配置不变）；回滚使用上一版配置。
+   app-3 与 app-1/2 同列并排、同样参与 run 分流；仅其 JDK 版本与镜像固定为 8/jdk8。
+   `dual-jdk` 的对照外壳 `seckill-app-jdk8` 不在实例台账内，只用于 D7 同机对比。
+   缓存防御模式、L1 开关与预热也在这里按实例设置。
 2. **场景向导**：选择节点与目标 → JVM 配置（三列并排对比）→ k6 参数 → 故障时间线 → 预检查 → 启动。
 3. **实时监控与操作**：四排时间轴（请求/k6、JVM 堆/GC、线程池/连接池、Redis/MySQL 数据层，图例带 JVM 参数）、k6 进度、
    实例卡片、按实例隔离的缓存流动、分层连线拓扑；故障注入/线程工具/缓存键/容器日志为右下角悬浮抽屉。
