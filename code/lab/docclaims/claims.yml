@@ -1096,10 +1096,10 @@
   polarity: positive
   doc:
     - doc/process/Stage2/step-S2-B5-04e-console-usability.md
-  statement: "向导第 3 步三个业务槽位并排配置：app-1/app-2 只提供 JDK21，app-3 只提供 JDK8，独立外壳列已移除且 app-3 参与 run 节点"
+  statement: "向导第 3 步三个业务槽位并排配置：JDK8 槽位（默认 app-3）只提供 JDK8，其余 app 槽位只提供 JDK21，独立外壳列已移除且槽位参与 run 节点"
   verify:
     kind: shell
-    command: "grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'rules.value.jdk8Shell' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'app-1/app-2 固定 JDK 21' code/lab/dashboard/src/components/InstanceConfigEditor.vue && ! grep -q 'wizard-config-column-seckill-app-jdk8' code/lab/dashboard/src/components/ConfigGroupEditor.vue"
+    command: "grep -q 'wizard-config-column-' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'rules.value.jdk8Shell' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'JDK8_INSTANCE' code/lab/dashboard/src/components/InstanceConfigEditor.vue && ! grep -q 'wizard-config-column-seckill-app-jdk8' code/lab/dashboard/src/components/ConfigGroupEditor.vue"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30

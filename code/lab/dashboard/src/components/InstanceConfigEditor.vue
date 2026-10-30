@@ -248,10 +248,10 @@ const warnings = computed(() => {
     list.push('实测 128m 会 Metaspace OOM，建议留空使用 JVM 默认或 ≥192m')
   }
   if (jdk8Rejected.value) {
-    list.push('只有 app-3 JDK8 槽位可以使用 jdk8 镜像；app-1/app-2 固定 jdk21。')
+    list.push(`只有 ${JDK8_INSTANCE} JDK8 槽位可以使用 jdk8 镜像；其余 app 槽位固定 jdk21。`)
   }
   if (rules.value.jdk8Shell) {
-    list.push('app-3 是 JDK8 业务槽位：与 app-1/app-2 同路由、同 MySQL/Redis，可直接参与分流与压测。')
+    list.push(`${JDK8_INSTANCE} 是 JDK8 业务槽位：与其他 app 槽位同路由、同 MySQL/Redis，可直接参与分流与压测。`)
   }
   return [...new Set(list.filter(Boolean))]
 })
@@ -273,7 +273,7 @@ const progressText = computed(() => {
 
 const jdk8Hint = computed(() => (
   jdk8Rejected.value
-    ? '只有 app-3 JDK8 槽位可以使用 jdk8 镜像；app-1/app-2 固定 jdk21。'
+    ? `只有 ${JDK8_INSTANCE} JDK8 槽位可以使用 jdk8 镜像；其余 app 槽位固定 jdk21。`
     : ''
 ))
 
@@ -684,7 +684,7 @@ watch(() => props.active, (active) => {
         <div class="subhead">堆 / 运行时</div>
         <div class="field-row">
           <div class="field">
-            <label data-tip="app-1/app-2 固定 JDK 21；app-3 是 JDK 8 槽位。">
+            <label :data-tip="`除 ${JDK8_INSTANCE} 外的 app 槽位固定 JDK 21；${JDK8_INSTANCE} 是 JDK 8 槽位。`">
               JDK 版本 <span class="key">jdkVersion</span>
             </label>
             <select
@@ -700,7 +700,7 @@ watch(() => props.active, (active) => {
             <div class="help">
               {{ rules.jdk8Shell
                 ? 'JDK8 槽位固定 JDK 8；app-1/app-2 只提供 JDK 21。'
-                : 'app-1/app-2 固定 JDK 21；app-3 是 JDK 8 槽位。' }}
+                : `除 ${JDK8_INSTANCE} 外的 app 槽位固定 JDK 21；${JDK8_INSTANCE} 是 JDK 8 槽位。` }}
             </div>
           </div>
           <div class="field">
