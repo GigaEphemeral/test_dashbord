@@ -362,9 +362,6 @@ services:
       dockerfile: ${APP3_DOCKERFILE:-services/seckill-app-jdk8/Dockerfile}
       args:
         OTEL_AGENT_VERSION: ${OTEL_AGENT_VERSION:-2.10.0}
-        # The offline runtime image copies the agent from an image that already
-        # carries it (this host cannot reach Maven Central inside a build).
-        OTEL_SOURCE_IMAGE: ${OTEL_SOURCE_IMAGE:-java-learn-lab/seckill-app:jdk21}
     container_name: jl-app-3
     volumes:
       - ../../../doc/process/Stage1/snapshot-analysis-template.md:/app/doc/process/Stage1/snapshot-analysis-template.md:ro
