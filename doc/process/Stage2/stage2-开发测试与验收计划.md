@@ -100,6 +100,11 @@
 > orders/seckill 全 2xx；app-3 的 `orders_created_total`、`cache_l1_requests_total` 与 app-1/2 同 job/label。
 > 交接 `step-S2-B5-05e-app3-jdk8-parity.md`。
 
+> **B5-06 指标预算基线（2026-10-30）**：Prometheus 只抓有消费者的指标——删除 `prometheus`/`tempo` 自抓取 job，
+> 6 个 exporter 改 keep-list，app/controller 显式 drop；真机 series **19,550 → 5,988（-69.4%）**。
+> 闸门：promtool SUCCESS、verify **110/1/0**、console-smoke **159/0**、claims **92/0**。
+> 交接 `step-S2-B5-06-metric-budget.md`。
+
 规约要点（每一步都适用）：
 
 1. **配置外置**：新增路径/超时/TTL/池大小/端口/键前缀一律进 `application.yml` + `@ConfigurationProperties`、
@@ -609,6 +614,7 @@ B4 收口交接：`step-S2-B4-00-closure.md`。
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-30 | v2.12：B5-06 指标预算——Prometheus 抓取层按消费者裁剪（19,550→5,988 series），删除 prometheus/tempo 自抓取，claims 92 |
 | 2026-10-30 | v2.11：B5-05 P1 翻转——app-3 成为 JDK8 业务槽位（业务/缓存/回读全对齐，2×21+1×8），外壳仅保留 D7；verify 基线 110/1（三个实例各一条 cache 断言；Sentinel 2+2 少一条）；审核修复 3 项（登录令牌落 Redis 为 Critical）、claims 91 |
 | 2026-10-27 | v1.0 初版：B0–B5 步骤分解、闸门基线、A01–A32 映射、8 项待确认 |
 | 2026-10-27 | v1.1：8 项确认结论落位（B0-08 最小闭环、B1-01 MySQL 台账、B1-05 侧边导航重构、B2-01/04 stress/soak 与 bandwidth 入 Future、B3-02/03 内置商品与 C/D 执行场、B4-02/04 tag-id 核对与 JDK8 LIMITED-OBSERVABILITY）；§9 改为确认结论 + 3 项遗留待确认 |

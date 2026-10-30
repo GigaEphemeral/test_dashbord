@@ -1,5 +1,18 @@
 # Prometheus 3.x configuration for the local HA lab.
 # Targets are compose-network service names; only Grafana is published on the host.
+#
+# Metric budget (2026-10-30 cleanup): every job here is trimmed to what a panel,
+# the console API, a script or the metric dictionary (doc/process/Stage2/指标字典.md)
+# actually reads. The full exporter payload is still available with `curl` on the
+# exporter itself; re-adding a family only means deleting its keep/drop rule.
+# Before this pass the scrape side carried ~19.5k series; after it ~5.6k.
+#
+# Not scraped on purpose:
+#   - Prometheus itself: no panel or alert reads prometheus_* internals.
+#   - Tempo: nothing panels tempo_*; its /metrics was also the slowest target
+#     (51-118s under load). Traces are still queried through Tempo's HTTP API.
+#   - Sentinel: speaks RESP, no /metrics; master/replica facts come from the data
+#     node exporters plus sentinel-status.sh.
 
 global:
   scrape_interval: 5s
@@ -7,11 +20,8 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
-  - job_name: prometheus
-    static_configs:
-      - targets: ["localhost:9090"]
-
-  # The three JDK 21 app instances expose Micrometer/Actuator metrics directly.
+  # app-1/app-2 run the JDK 21 shell; app-3 runs the JDK 8 business shell in the
+  # same upstream (B5-05 P1). One job keeps the instance labels aligned.
   - job_name: seckill-app
     metrics_path: /actuator/prometheus
     scrape_interval: 5s
@@ -21,17 +31,31 @@ scrape_configs:
       # The Prometheus Java client rejects OpenMetrics-reserved suffixes such as
       # _created in meter names. Micrometer's orders_created_total counter is
       # therefore scraped as orders_total; alias it back at scrape time so D4
-      # dashboards can use the documented business metric name.
+      # dashboards can use the documented business metric name. (Micrometer 1.9
+      # on app-3 already exports orders_created_total; the rule is a no-op there.)
       - source_labels: [__name__]
         regex: orders_total
         target_label: __name__
         replacement: orders_created_total
+      # Unused Micrometer built-ins and duplicate families. None of these is read
+      # by a Grafana panel, the console API, k6, the scripts or the metric
+      # dictionary; keeping them only inflates the WAL (312 series before).
+      #   - Tomcat: only threads_busy/threads_* and connections_* are paneled
+      #     (the dictionary's 5 keys); cache/servlet/global/sessions are not.
+      #   - per-command HTTP/JDBC/Spring-Data timers duplicate the pooled gauges.
+      #   - system/process/disk/logback are host/process noise, not lab signals.
+      #   - thread_lab_demo_* extras: D6 reads state/transitions/injected/reverted.
+      #   - app-side rabbitmq producer counters: D4 reads the broker exporter.
+      - source_labels: [__name__]
+        regex: "application_started_time_seconds|cache_l1_caffeine_evictions_total|cache_l1_caffeine_hit_ratio|cache_l1_caffeine_requests_total|disk_free_bytes|disk_total_bytes|executor_idle_seconds_count|executor_idle_seconds_max|executor_idle_seconds_sum|executor_seconds_count|executor_seconds_max|executor_seconds_sum|hikaricp_connections_creation_seconds_count|hikaricp_connections_creation_seconds_max|hikaricp_connections_creation_seconds_sum|jdbc_connections_active|jdbc_connections_idle|jdbc_connections_max|jdbc_connections_min|jvm_classes_loaded_classes|jvm_classes_unloaded_classes_total|jvm_compilation_time_ms_total|jvm_gc_concurrent_phase_time_seconds_count|jvm_gc_concurrent_phase_time_seconds_max|jvm_gc_concurrent_phase_time_seconds_sum|jvm_memory_usage_after_gc|jvm_memory_usage_after_gc_percent|jvm_threads_started_threads_total|logback_events_total|process_cpu_time_ns_total|process_files_max_files|process_files_open_files|rabbitmq_acknowledged_published_total|rabbitmq_acknowledged_total|rabbitmq_consumed_total|rabbitmq_failed_to_publish_total|rabbitmq_not_acknowledged_published_total|rabbitmq_published_total|rabbitmq_rejected_total|rabbitmq_requeued_total|rabbitmq_unrouted_published_total|resilience4j_circuitbreaker_buffered_calls|resilience4j_circuitbreaker_slow_calls|scrape_duration_seconds|scrape_samples_post_metric_relabeling|scrape_samples_scraped|scrape_series_added|spring_data_repository_invocations_seconds_count|spring_data_repository_invocations_seconds_max|spring_data_repository_invocations_seconds_sum|spring_rabbitmq_listener_seconds_count|spring_rabbitmq_listener_seconds_max|spring_rabbitmq_listener_seconds_sum|system_cpu_count|system_cpu_usage|system_load_average_1m|thread_lab_demo_freezes_total|thread_lab_demo_frozen|thread_lab_demo_resets_total|thread_lab_demo_resumes_total|thread_lab_demo_snapshot_requests_total|thread_lab_demo_starts_total|thread_lab_demo_steps_total|tomcat_cache_access_total|tomcat_cache_hit_total|tomcat_connections_keepalive_current_connections|tomcat_global_error_total|tomcat_global_received_bytes_total|tomcat_global_request_max_seconds|tomcat_global_request_seconds_count|tomcat_global_request_seconds_sum|tomcat_global_sent_bytes_total|tomcat_servlet_error_total|tomcat_servlet_request_max_seconds|tomcat_servlet_request_seconds_count|tomcat_servlet_request_seconds_sum|tomcat_sessions_active_current_sessions|tomcat_sessions_active_max_sessions|tomcat_sessions_alive_max_seconds|tomcat_sessions_created_sessions_total|tomcat_sessions_expired_sessions_total|tomcat_sessions_rejected_sessions_total"
+        action: drop
 
   # D7 dual-JDK comparison: the Java 8 shell (compose profile "dual-jdk").
-  # The job name is load-bearing twice over: it matches the seckill-app.* regex
-  # behind D1/D2/D4's $instance variable (so the instance also appears in those
-  # JVM panels), and D7 filters on this exact job + the app label. With the
-  # profile stopped the target is simply down, like the db-ha exporters.
+  # app-3 is already a JDK 8 business peer, but this opt-in shell stays outside
+  # the Nginx upstream so a comparison run never has to touch live traffic.
+  # The job name matches the seckill-app.* regex behind D1/D2/D4's $instance
+  # variable and D7 filters on this exact job + the app label. With the profile
+  # stopped the target is simply down, like the db-ha exporters.
   - job_name: seckill-app-jdk8
     metrics_path: /actuator/prometheus
     scrape_interval: 5s
@@ -41,24 +65,52 @@ scrape_configs:
   - job_name: nginx-exporter
     static_configs:
       - targets: ["nginx-exporter:9113"]
+    metric_relabel_configs:
+      # nginx_* is the product (connections/http/server requests/up); the
+      # exporter's own Go runtime metrics are unused.
+      - source_labels: [__name__]
+        regex: nginx_.*
+        action: keep
 
   - job_name: redis-exporter
     static_configs:
       - targets: ["redis-exporter:9121"]
+    metric_relabel_configs:
+      # Panel/API/dictionary set only. Per-command latency/duration families were
+      # ~90% of this exporter's payload and nobody queries them (the lab's P99 is
+      # measured at the app/HTTP layer). redis_db_keys and redis_instance_info
+      # stay because the B5-04b metric dictionary binds to them.
+      - source_labels: [__name__]
+        regex: "redis_(up|memory_used_bytes|memory_max_bytes|connected_clients|connected_slaves|commands_processed_total|db_keys|instance_info|uptime_in_seconds|keyspace_hits_total|keyspace_misses_total|evicted_keys_total|master_repl_offset)"
+        action: keep
 
   - job_name: mysqld-exporter
     static_configs:
       - targets: ["mysqld-exporter:9104"]
+    metric_relabel_configs:
+      # Used set: D3 (connections), D10 (questions), run timelines (queries,
+      # threads_running), the dictionary's lock/deadlock/slow-query rows, and
+      # mysql_up. The exporter's command/info_schema/perf_schema catalogs are
+      # hundreds of series with no consumer.
+      - source_labels: [__name__]
+        regex: "mysql_(up|global_status_(deadlocks|innodb_row_lock_current_waits|innodb_row_lock_time_avg|innodb_row_lock_waits|queries|questions|slow_queries|table_locks_waited|threads_connected|threads_running))"
+        action: keep
 
   - job_name: rabbitmq
     static_configs:
       - targets: ["rabbitmq:15692"]
+    metric_relabel_configs:
+      # Global broker identity + the aggregate delivered counter D4 reads. The
+      # Erlang allocator/msacc families alone were 1.7k series.
+      - source_labels: [__name__]
+        regex: "rabbitmq_(up|channels|connections|queues|queue_.*)"
+        action: keep
 
   # Per-queue metrics (Task 18). The default plugin endpoint aggregates every
   # queue and carries no queue label, so D4's backlog panels bind to the
   # detailed endpoint and alias rabbitmq_detailed_queue_* back to the documented
-  # rabbitmq_queue_* family. The aggregate job above is kept for cluster-wide
-  # counters such as rabbitmq_queue_messages_delivered_total.
+  # rabbitmq_queue_* family. The aggregate job above is kept for the delivered
+  # counter and broker identity.
   - job_name: rabbitmq-queue
     metrics_path: /metrics/detailed
     params:
@@ -71,6 +123,10 @@ scrape_configs:
         regex: rabbitmq_detailed_(queue_.*)
         target_label: __name__
         replacement: rabbitmq_$1
+      # Keep only the aliased queue family; build/identity/telemetry are unused.
+      - source_labels: [__name__]
+        regex: rabbitmq_queue_.*
+        action: keep
 
   # cAdvisor serves a large payload and is slow on the first scrape in Docker
   # Desktop/WSL2, so it gets a longer interval/timeout than the global 5s default.
@@ -79,15 +135,13 @@ scrape_configs:
     scrape_timeout: 10s
     static_configs:
       - targets: ["cadvisor:8080"]
-
-  # Tempo's /metrics is expensive under compaction and took 51-118s during a
-  # load run, which timed out the global 5s scrape and logged i/o timeouts on
-  # both sides. Nothing panels Tempo's own metrics, so scrape it slowly.
-  - job_name: tempo
-    scrape_interval: 60s
-    scrape_timeout: 20s
-    static_configs:
-      - targets: ["tempo:3200"]
+    metric_relabel_configs:
+      # D3 uses CPU, working set and network; last_seen/oom/start are kept for
+      # presence and OOM evidence (metric dictionary). The filesystem/blkio/
+      # tasks families were ~1.5k series and no panel reads them.
+      - source_labels: [__name__]
+        regex: "container_(cpu_usage_seconds_total|memory_working_set_bytes|network_receive_bytes_total|network_transmit_bytes_total|last_seen|oom_events_total|start_time_seconds)|cadvisor_version_info"
+        action: keep
 
   # Lab controller: token-protected container list + logs (no host port).
   - job_name: chaos-controller
@@ -95,6 +149,12 @@ scrape_configs:
     scrape_interval: 5s
     static_configs:
       - targets: ["chaos-controller:8081"]
+    metric_relabel_configs:
+      # The controller's own process/host noise; chaos_*, mysql_cluster_*,
+      # jvm_* and HTTP series stay because the controller code and D11 bind to them.
+      - source_labels: [__name__]
+        regex: "application_started_time_seconds|disk_free_bytes|disk_total_bytes|hikaricp_connections_creation_seconds_count|hikaricp_connections_creation_seconds_max|hikaricp_connections_creation_seconds_sum|jdbc_connections_active|jdbc_connections_idle|jdbc_connections_max|jdbc_connections_min|jvm_classes_loaded_classes|jvm_classes_unloaded_classes_total|jvm_compilation_time_ms_total|jvm_memory_usage_after_gc|jvm_threads_started_threads_total|logback_events_total|process_cpu_time_ns_total|process_files_max_files|process_files_open_files|scrape_duration_seconds|scrape_samples_post_metric_relabeling|scrape_samples_scraped|scrape_series_added|system_cpu_count|system_cpu_usage|system_load_average_1m|tomcat_sessions_active_current_sessions|tomcat_sessions_active_max_sessions|tomcat_sessions_alive_max_seconds|tomcat_sessions_created_sessions_total|tomcat_sessions_expired_sessions_total|tomcat_sessions_rejected_sessions_total"
+        action: drop
 
   # db-ha tier: one job, three labelled targets so D11 can group by member.
   # Targets are down (not an error) whenever the db-ha profile is off.
@@ -109,25 +169,24 @@ scrape_configs:
       - targets: ["mysql-3-exporter:9104"]
         labels:
           member: mysql-3
+    metric_relabel_configs:
+      # Same keep-set as the dev exporter: D11 uses mysql_up, the run timelines
+      # use the global_status counters.
+      - source_labels: [__name__]
+        regex: "mysql_(up|global_status_(deadlocks|innodb_row_lock_current_waits|innodb_row_lock_time_avg|innodb_row_lock_waits|queries|questions|slow_queries|table_locks_waited|threads_connected|threads_running))"
+        action: keep
 
-  # ha tier (Redis): one exporter per Sentinel data node, mirroring the
-  # mysqld-exporter-ha job above. Each exporter is addressed by its fixed compose
-  # service name on jl-net plus redis_exporter's built-in 9121 (compose.ha.yml only
-  # `expose`s it, publishes no host port), so there is nothing operational to
-  # parameterise: exactly like the db-ha job the targets stay literal (Prometheus v3
-  # does not interpolate ${VAR} in this file). The `node` label (redis-1/2/3) is a
-  # low-cardinality per-node identity in the same class as `instance`, aligned with
-  # the standalone `redis-exporter` job's口径; because this is its OWN job the
-  # existing panels that bind `job="redis-exporter"` (D3 memory, D11 up/clients/
-  # slaves, all documented as dev-single) keep matching only the single dev node and
-  # never fan out to four targets. With the ha profile off the three targets simply
-  # report down (not an error), same as the db-ha exporters.
-  # Sentinel itself is intentionally NOT scraped: compose.ha.yml:309-312 ships no
-  # sentinel-exporter sidecar on purpose and Sentinel speaks RESP, not an HTTP
-  # /metrics endpoint. Master/replica evidence therefore comes from the data-node
-  # exporters themselves (redis_instance_info{role=…}, redis_connected_slaves,
-  # redis_master_link_up); the Sentinel quorum view stays on sentinel-status.sh.
-  # See step-S2-B0-07-ha-exporters-scrape.md for the wiring rationale.
+  # ha tier (Redis): one exporter per Sentinel data node. Each exporter is
+  # addressed by its fixed compose service name on jl-net plus redis_exporter's
+  # built-in 9121 (compose.ha.yml only `expose`s it, publishes no host port), so
+  # there is nothing operational to parameterise. The `node` label (redis-1/2)
+  # is a low-cardinality per-node identity in the same class as `instance`, and
+  # because this is its OWN job the panels that bind `job="redis-exporter"` keep
+  # matching only the dev node and never fan out to the ha targets.
+  # With the ha profile off the two targets simply report down (not an error).
+  # Sentinel itself is intentionally NOT scraped: it speaks RESP, not HTTP.
+  # Master/replica evidence comes from redis_instance_info{role}, redis_up and
+  # redis_connected_slaves; the quorum view stays on sentinel-status.sh.
   - job_name: redis-exporter-ha
     static_configs:
       - targets: ["redis-1-exporter:9121"]
@@ -136,3 +195,8 @@ scrape_configs:
       - targets: ["redis-2-exporter:9121"]
         labels:
           node: redis-2
+    metric_relabel_configs:
+      # Same keep-set as the dev exporter (see above).
+      - source_labels: [__name__]
+        regex: "redis_(up|memory_used_bytes|memory_max_bytes|connected_clients|connected_slaves|commands_processed_total|db_keys|instance_info|uptime_in_seconds|keyspace_hits_total|keyspace_misses_total|evicted_keys_total|master_repl_offset)"
+        action: keep

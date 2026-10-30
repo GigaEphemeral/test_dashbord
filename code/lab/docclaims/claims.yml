@@ -1125,6 +1125,17 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: metric-scrape-budget
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-06-metric-budget.md
+  statement: "B5-06：Prometheus 只抓有消费者的指标——删除 prometheus/tempo 自抓取 job，exporter 用 keep-list、app/controller 用显式 drop；真机 series 19550→5988"
+  verify:
+    kind: shell
+    command: "grep -q '2026-10-30 cleanup' code/lab/docker/prometheus/prometheus.yml && ! grep -q 'job_name: prometheus' code/lab/docker/prometheus/prometheus.yml && ! grep -q 'job_name: tempo' code/lab/docker/prometheus/prometheus.yml && grep -q 'regex: nginx_.*' code/lab/docker/prometheus/prometheus.yml && grep -q 'action: keep' code/lab/docker/prometheus/prometheus.yml && grep -q 'action: drop' code/lab/docker/prometheus/prometheus.yml && grep -q 'prometheus.yml' doc/process/Stage2/指标字典.md"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 - id: jvm-save-apply-ux
   polarity: positive
   doc:
