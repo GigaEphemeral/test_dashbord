@@ -19,6 +19,42 @@ spring:
     properties:
       hibernate.jdbc.time_zone: ${JPA_JDBC_TIME_ZONE:UTC}
 
+  # Redis backs the async seckill stock/idempotency/request stores and the
+  # Redisson per-product lock. Boot 2.7 uses spring.redis.* (Boot 3 moved it to
+  # spring.data.redis.*); the env var NAMES match the JDK 21 peers, so one
+  # compose environment works for all three instances. Connections are lazy, so
+  # a Redis outage degrades the async path instead of preventing startup.
+  # The sentinel.* subtree is deliberately NOT declared here: Boot 2.7 builds a
+  # RedisSentinelConfiguration as soon as any spring.redis.sentinel key exists,
+  # and an empty master name aborts EVERY startup (demo included). Sentinel mode
+  # therefore requires the standard SPRING_REDIS_SENTINEL_MASTER / _NODES /
+  # _PASSWORD environment variables, exactly like the JDK 21 shell requires its
+  # SPRING_DATA_REDIS_SENTINEL_* pair.
+  redis:
+    host: ${REDIS_HOST:redis}
+    port: ${REDIS_PORT:6379}
+    database: ${REDIS_DATABASE:0}
+    password: ${REDIS_PASSWORD:}
+
+  # Async seckill order queue: the same exchange/queue/routing key the JDK 21
+  # instances use, so all three business slots share one admission stream. The
+  # listener starts with the context in the mysql profile; the demo profile
+  # disables auto-startup because it boots without a broker.
+  rabbitmq:
+    host: ${RABBITMQ_HOST:rabbitmq}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:true}
+        concurrency: ${RABBITMQ_CONSUMER_CONCURRENCY:2}
+        max-concurrency: ${RABBITMQ_CONSUMER_MAX_CONCURRENCY:4}
+        prefetch: ${RABBITMQ_CONSUMER_PREFETCH:20}
+        # A failed seckill message is compensated and marked FAILED; never
+        # requeue it in an infinite loop.
+        default-requeue-rejected: false
+
   # demo/mysql override these per profile below; the locations stay external so
   # an operator can point at another seed script without a rebuild.
   sql:
@@ -60,6 +96,106 @@ server:
 # for both runtimes. Nginx does not proxy /lab/**, only in-network callers reach
 # it (the chaos-controller narrow proxy exposes it to the console).
 app:
+  # Redis client mode switch (design §3.3), identical to the JDK 21 shell:
+  # standalone = the single-node lab Redis (spring.redis.host/port), sentinel =
+  # discover the master BY NAME through spring.redis.sentinel.* (supplied only
+  # by the environment, never defaulted here). ONE env var moves both the
+  # Lettuce (StringRedisTemplate) and Redisson stacks; any other value fails
+  # startup. The JDK 21-only Sentinel discovery-log reporter is not ported, so
+  # its REDIS_DISCOVERY_REPORT_* knobs are deliberately absent here: this module
+  # declares no tuning value without a consumer (工程规约 §1).
+  redis:
+    mode: ${REDIS_MODE:standalone}
+
+  # Runtime experiment toggles (Task 17), seeded exactly like the JDK 21 shell.
+  # Per-instance, in-memory and mutable there through POST /lab/toggles; the
+  # async admission here reads the same seeds so the three instances start in
+  # the same protection state. mq is seeded by the async startup switch so the
+  # old env var still works when LAB_TOGGLE_MQ is not set.
+  toggles:
+    lock: ${LAB_TOGGLE_LOCK:true}
+    idempotency: ${LAB_TOGGLE_IDEMPOTENCY:true}
+    mq: ${LAB_TOGGLE_MQ:${SECKILL_ASYNC_ENABLED:true}}
+    ratelimit: ${LAB_TOGGLE_RATELIMIT:true}
+    circuitbreaker: ${LAB_TOGGLE_CIRCUITBREAKER:true}
+    cache: ${LAB_TOGGLE_CACHE:true}
+
+  # B4-01 bounded business executor (design §4.4/§16.5): the controlled,
+  # bounded hop between the Rabbit listener and the seckill order consumer.
+  # Every value is a startup parameter, so a change requires the controlled
+  # restart and is read back by the console with the same names and defaults as
+  # the JDK 21 peers.
+  business-pool:
+    core-pool-size: ${BUSINESS_POOL_CORE_SIZE:4}
+    max-pool-size: ${BUSINESS_POOL_MAX_SIZE:8}
+    queue-capacity: ${BUSINESS_POOL_QUEUE_CAPACITY:50}
+    keep-alive-seconds: ${BUSINESS_POOL_KEEP_ALIVE_SECONDS:60}
+    # AbortPolicy | CallerRunsPolicy | DiscardPolicy | DiscardOldestPolicy.
+    rejection-policy: ${BUSINESS_POOL_REJECTION_POLICY:AbortPolicy}
+    # Prefix of the worker thread names, visible in thread dumps.
+    thread-name-prefix: ${BUSINESS_POOL_THREAD_NAME_PREFIX:business-pool}
+
+  # Async seckill admission. Every path, timeout, TTL, key prefix,
+  # queue/exchange name, pacing delay and pool size is externalized here with
+  # the SAME env var names and defaults as the JDK 21 shell, so the three
+  # instances read one configuration contract. The Redis keys are shared on
+  # purpose: stock, idempotency and request state belong to the product, not to
+  # one instance.
+  seckill:
+    async-enabled: ${SECKILL_ASYNC_ENABLED:true}
+    lock:
+      key-prefix: ${SECKILL_LOCK_KEY_PREFIX:lock:seckill:}
+      wait-ms: ${SECKILL_LOCK_WAIT_MS:500}
+      lease-ms: ${SECKILL_LOCK_LEASE_MS:3000}
+    stock:
+      key-prefix: ${SECKILL_STOCK_KEY_PREFIX:seckill:stock:}
+      seed-on-startup: ${SECKILL_STOCK_SEED_ON_STARTUP:true}
+      lua-path: ${SECKILL_STOCK_LUA_PATH:lua/seckill_stock.lua}
+    request:
+      key-prefix: ${SECKILL_REQUEST_KEY_PREFIX:seckill:request:}
+      ttl-seconds: ${SECKILL_REQUEST_TTL_SECONDS:1800}
+    idempotency:
+      key-prefix: ${SECKILL_IDEMPOTENCY_KEY_PREFIX:seckill:idem:}
+      ttl-seconds: ${SECKILL_IDEMPOTENCY_TTL_SECONDS:1800}
+    mq:
+      exchange: ${SECKILL_MQ_EXCHANGE:seckill.order.exchange}
+      queue: ${SECKILL_MQ_QUEUE:seckill.order.queue}
+      routing-key: ${SECKILL_MQ_ROUTING_KEY:seckill.order.requested}
+      # Canonical __TypeId__ written by this runtime. It is the JDK 21 class
+      # name on purpose: the three instances share one queue, so app-3 must
+      # publish a type id the JDK 21 peers can resolve (and it consumes by the
+      # listener's inferred type, so the reverse direction works too).
+      type-id: ${SECKILL_MQ_TYPE_ID:com.javalearn.lab.seckill.admission.domain.SeckillOrderMessage}
+    consumer:
+      delay-ms: ${SECKILL_CONSUMER_DELAY_MS:20}
+    redisson:
+      connect-timeout-ms: ${SECKILL_REDISSON_CONNECT_TIMEOUT_MS:3000}
+      timeout-ms: ${SECKILL_REDISSON_TIMEOUT_MS:3000}
+      retry-attempts: ${SECKILL_REDISSON_RETRY_ATTEMPTS:3}
+      retry-interval-ms: ${SECKILL_REDISSON_RETRY_INTERVAL_MS:1000}
+      connection-minimum-idle-size: ${SECKILL_REDISSON_MIN_IDLE:2}
+      connection-pool-size: ${SECKILL_REDISSON_POOL_SIZE:8}
+      # No Redis connection at startup: a Redis outage must not block boot
+      # (Task 14 health/degradation contract).
+      lazy-initialization: ${SECKILL_REDISSON_LAZY_INIT:true}
+      # --- Sentinel-mode knobs. Defaults fall back to the generic keys above,
+      # so standalone behaviour and the existing env overrides are unchanged. ---
+      idle-connection-timeout-ms: ${SECKILL_REDISSON_IDLE_CONNECTION_TIMEOUT_MS:10000}
+      scan-interval-ms: ${SECKILL_REDISSON_SCAN_INTERVAL_MS:1000}
+      # MASTER = reads/writes all go to the discovered master (strongly
+      # consistent demo semantics); switch to MASTER_SLAVE/SLAVE for the
+      # read-scaling variant without a code change.
+      read-mode: ${SECKILL_REDISSON_READ_MODE:MASTER}
+      master-connection-minimum-idle-size: ${SECKILL_REDISSON_MASTER_MIN_IDLE:${SECKILL_REDISSON_MIN_IDLE:2}}
+      master-connection-pool-size: ${SECKILL_REDISSON_MASTER_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
+      slave-connection-minimum-idle-size: ${SECKILL_REDISSON_SLAVE_MIN_IDLE:${SECKILL_REDISSON_MIN_IDLE:2}}
+      slave-connection-pool-size: ${SECKILL_REDISSON_SLAVE_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
+      subscription-connection-pool-size: ${SECKILL_REDISSON_SUBSCRIPTION_POOL_SIZE:${SECKILL_REDISSON_POOL_SIZE:8}}
+
+  login:
+    # Mock login parity with the JDK 21 shell; no Redis token store is needed
+    # because the lab does not enforce the bearer token yet.
+    token-ttl-seconds: ${LOGIN_TOKEN_TTL_SECONDS:3600}
   lab:
     token: ${LAB_TOKEN:lab-token}
     snapshot:
@@ -112,6 +248,34 @@ info:
     shell: ${INFO_SHELL:seckill-app-jdk8}
     purpose: ${INFO_PURPOSE:D7 dual-JDK comparison, EOL teaching-only}
 
+# Resilience4j (Task 17), same instance names and values as the JDK 21 shell.
+# The Boot 2 starter (resilience4j-spring-boot2 1.7.1) binds these instances into
+# the registries; the admission service resolves and executes them manually so
+# the runtime toggles can skip protection. Only BusinessException (sold out,
+# lock timeout) is ignored: the plain BizException 50301 that wraps Redis/MQ/
+# stock/publish faults IS counted, so a real infrastructure outage accumulates
+# the failure rate and opens the circuit.
+resilience4j:
+  ratelimiter:
+    instances:
+      seckill:
+        limit-for-period: ${SECKILL_RATE_LIMIT_PER_PERIOD:50}
+        limit-refresh-period: ${SECKILL_RATE_LIMIT_REFRESH:1s}
+        timeout-duration: ${SECKILL_RATE_LIMIT_TIMEOUT:0}
+  circuitbreaker:
+    instances:
+      seckillBackend:
+        sliding-window-size: ${SECKILL_CB_WINDOW:10}
+        failure-rate-threshold: ${SECKILL_CB_FAILURE_RATE:50}
+        wait-duration-in-open-state: ${SECKILL_CB_WAIT:10s}
+        permitted-number-of-calls-in-half-open-state: ${SECKILL_CB_HALF_OPEN:3}
+        # Resilience4j's default (100) can never be reached inside a 10-call
+        # window, so the circuit would never open. Five calls are enough to
+        # calculate an honest rate and keep the demo observable.
+        minimum-number-of-calls: ${SECKILL_CB_MIN_CALLS:5}
+        ignore-exceptions:
+          - com.javalearn.lab.common.BusinessException
+
 management:
   # Boot 2.7 keeps the info.* -> /actuator/info contributor OFF by default
   # (verified in the autoconfiguration report); turn it on so the endpoint
@@ -130,11 +294,23 @@ management:
         enabled: ${HEALTH_PROBES_ENABLED:true}
       group:
         # Same group name the JDK 21 shell exposes for the container gate
-        # (/actuator/health/app), so a later compose service can reuse it
-        # unchanged. This shell has no Redis/L2 contributor, so the gate is the
-        # database plus the framework ping indicator.
+        # (/actuator/health/app), so the compose healthcheck is shared unchanged.
+        # The gate stays the database plus the framework ping indicator: Redis
+        # and RabbitMQ are best-effort (Redis outage -> async path degrades,
+        # broker outage -> only the async admission is affected) and must never
+        # mark a business instance unhealthy. The root /actuator/health still
+        # reports both honestly in the mysql profile.
         app:
           include: ${HEALTH_GROUP_APP_INCLUDE:db,ping}
+  health:
+    # An OPEN circuit or an empty rate-limiter budget is a lab result, not an
+    # application failure: keep it out of /actuator/health (and the container
+    # gate), otherwise Docker would mark a deliberately degraded instance
+    # unhealthy and Nginx would drop it mid-experiment.
+    circuitbreakers:
+      enabled: ${HEALTH_CIRCUITBREAKERS_ENABLED:false}
+    ratelimiters:
+      enabled: ${HEALTH_RATELIMITERS_ENABLED:false}
   metrics:
     tags:
       # Mirrors the common tags platform-observability adds to the JDK 21 shell
@@ -149,8 +325,13 @@ management:
       # platform-observability's EnvironmentPostProcessor; declared here instead).
       percentiles-histogram:
         http.server.requests: ${HTTP_METRIC_PERCENTILES_HISTOGRAM:true}
+        # D4 order-accept SLO (Task 18): the seckill admission timer is already
+        # named order_accept_seconds, so the same histogram/SLO contract as the
+        # JDK 21 shell applies without changing timer code.
+        order_accept_seconds: true
       slo:
         http.server.requests: ${HTTP_METRIC_SLO_BUCKETS:50ms,100ms,200ms,300ms,500ms,800ms,1s,2s}
+        order_accept_seconds: ${ORDER_ACCEPT_SLO:50ms,100ms,300ms,500ms,1s,2s}
       minimum-expected-value:
         http.server.requests: ${HTTP_METRIC_MIN_EXPECTED:50ms}
       maximum-expected-value:
@@ -171,6 +352,30 @@ spring:
     database-platform: ${JPA_DATABASE_PLATFORM:org.hibernate.dialect.H2Dialect}
     hibernate:
       ddl-auto: ${JPA_DDL_AUTO:none}
+  rabbitmq:
+    listener:
+      simple:
+        # No broker in the demo profile: the listener container must not start
+        # (and RabbitAdmin must not declare the topology) so the context boots
+        # with zero external services. The mysql profile keeps the default true.
+        auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:false}
+
+app:
+  seckill:
+    stock:
+      # No Redis in the demo profile; the mysql/lab profiles seed from
+      # inventory_stock as the JDK 21 shell does.
+      seed-on-startup: ${SECKILL_STOCK_SEED_ON_STARTUP:false}
+
+management:
+  health:
+    # The demo profile has no Redis or broker; disabling the two contributors
+    # keeps root /actuator/health UP without weakening the mysql profile, where
+    # both stay enabled and only the /app container gate excludes Redis.
+    redis:
+      enabled: ${HEALTH_REDIS_ENABLED:false}
+    rabbit:
+      enabled: ${HEALTH_RABBIT_ENABLED:false}
 
 ---
 # mysql profile: the shared lab database (same tables the JDK 21 shell's Flyway

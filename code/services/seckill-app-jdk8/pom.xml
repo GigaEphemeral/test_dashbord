@@ -71,11 +71,40 @@
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
 
-    <!-- Hot read path only: catalog product via JPA. No Flyway/Redis/Caffeine/AMQP
-         in this shell (see step-33 handover, deliberately-left-undone list). -->
+    <!-- Business parity with the JDK 21 peers: the catalog read path, the
+         durable order path and the async seckill admission path. Redis is the
+         stock/idempotency store, RabbitMQ the admission queue and Redisson the
+         per-product lock. Flyway and the cache stack stay in the JDK 21 shell
+         (later steps own them); this shell reuses the Flyway-owned tables. -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!-- 3.52.0 is the verified Java 8 bytecode line of the Redisson client
+         (the Boot 2.7 BOM would otherwise pick an older release). -->
+    <dependency>
+      <groupId>org.redisson</groupId>
+      <artifactId>redisson</artifactId>
+      <version>3.52.0</version>
+    </dependency>
+    <!-- 1.7.1 is the Java 8 / Boot 2 line; 2.x requires Boot 3. -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-spring-boot2</artifactId>
+      <version>1.7.1</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-micrometer</artifactId>
+      <version>1.7.1</version>
     </dependency>
     <!-- Boot 2.7 artifact id (mysql-connector-j is the Boot 3 line); version pinned
          above because the 2.7.18 BOM only manages the new coordinates. -->

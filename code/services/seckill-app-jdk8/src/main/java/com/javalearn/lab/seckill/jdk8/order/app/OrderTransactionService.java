@@ -1,0 +1,87 @@
+package com.javalearn.lab.seckill.jdk8.order.app;
+
+import com.javalearn.lab.seckill.order.api.CreateOrderCommand;
+import com.javalearn.lab.seckill.order.api.OrderService;
+import com.javalearn.lab.seckill.order.domain.Order;
+import com.javalearn.lab.seckill.order.domain.OrderRepository;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.Objects;
+
+/**
+ * Transaction boundary for order creation. Stock reservation and the order
+ * insert share one transaction, so a failed insert (including a concurrent
+ * duplicate idempotency key) rolls the reservation back.
+ *
+ * <p>{@code orders_created_total} is incremented only after a transaction that
+ * really inserted a row commits; an idempotent replay (detected by the
+ * pre-check) records {@code idempotent_reject} instead, but only for the
+ * synchronous {@link OrderRequestSource#SYNC_API} path. Seckill replays stay
+ * counted by {@code seckill_attempts{result="replay"}} and
+ * {@code order_consumer_processed{result="duplicate"}}. A losing duplicate-key
+ * race (which throws before returning) is counted by
+ * {@link OrderApplicationService} once it has resolved to the winning order,
+ * under the same source scope. The pre-check is only a metrics hint;
+ * correctness still comes from the database unique key.</p>
+ *
+ * <p>OpenMetrics reserves the {@code _created} suffix, so the Prometheus Java
+ * client exports the orders family as {@code orders_total} in the raw Actuator
+ * scrape. {@code prometheus.yml} aliases it back to
+ * {@code orders_created_total} at scrape time (same as the JDK 21 shell).</p>
+ */
+public class OrderTransactionService {
+
+    private final OrderService orderService;
+    private final OrderRepository orderRepository;
+    private final OrderMetrics orderMetrics;
+
+    public OrderTransactionService(OrderService orderService,
+                                   OrderRepository orderRepository,
+                                   OrderMetrics orderMetrics) {
+        this.orderService = Objects.requireNonNull(orderService, "orderService");
+        this.orderRepository = Objects.requireNonNull(orderRepository, "orderRepository");
+        this.orderMetrics = Objects.requireNonNull(orderMetrics, "orderMetrics");
+    }
+
+    @Transactional
+    public Order create(CreateOrderCommand command, OrderRequestSource source) {
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(source, "source");
+        boolean replay = command.getIdempotencyKey() != null
+                && orderRepository.findByIdempotencyKey(command.getIdempotencyKey()).isPresent();
+
+        Order order = orderService.create(command);
+        Runnable recorder = recorderFor(source, replay);
+        if (recorder != null) {
+            recordAfterCommit(recorder);
+        }
+        return order;
+    }
+
+    /**
+     * A real insert is always counted; a replay counts
+     * {@code idempotent_reject} only for the synchronous HTTP path. Seckill
+     * replays of an existing order intentionally record nothing here.
+     */
+    private Runnable recorderFor(OrderRequestSource source, boolean replay) {
+        if (replay) {
+            return source == OrderRequestSource.SYNC_API ? orderMetrics::idempotentReject : null;
+        }
+        return orderMetrics::orderCreated;
+    }
+
+    private static void recordAfterCommit(Runnable recorder) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    recorder.run();
+                }
+            });
+        } else {
+            recorder.run();
+        }
+    }
+}
