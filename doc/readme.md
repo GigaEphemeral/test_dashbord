@@ -64,7 +64,7 @@ doc/
 bash code/lab/scripts/up.sh --profile dev
 
 # 2) 自检（默认保留栈运行；约 2–3 分钟）
-bash code/lab/scripts/verify.sh            # 真机基线 109 PASS / 1 WARN / 0 FAIL（2026-10-27）
+bash code/lab/scripts/verify.sh            # 真机基线 110 PASS / 1 WARN / 0 FAIL（2026-10-30）
 
 # 3) 全栈冒烟（会消耗 product 1 与 20 各 1 件）
 bash code/lab/scripts/smoke.sh             # 期望末行 "SMOKE PASSED."（7 项检查）

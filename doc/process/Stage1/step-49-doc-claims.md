@@ -204,6 +204,8 @@ STALE 路径也做了本地验证：临时 `touch` 一个 `ha-d8.json`，`d8-tun
 
 仍然正确、**不要**当成过期修掉的「未实现」：D8 调优面板、`/lab/cache/reset`、缓存实验控制台页、`/lab/cache/**` 窄代理、`SIGSTOP` 主库切换演练。它们已经分别由 negative claim 或本次人工核对确认。
 
+> **2026-10-30 更新**：D8 面板、`/lab/cache/reset`、缓存控制台页与 `/lab/cache/**` 代理均已落地；名单中仍未做的只剩「SIGSTOP 打主库」演练。本表其余行按历史记录保留，不再回改。
+
 ---
 
 # 5. 可选闸门（不改 `verify.sh`）

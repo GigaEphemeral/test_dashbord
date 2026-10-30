@@ -936,7 +936,7 @@ fi
 # 5b. Redis Sentinel topology (compose profile "ha", Task M3-1a).
 # Read-only and profile-gated. Default mode is "auto": the checks run only when the
 # first Sentinel container actually exists, so a plain dev verify prints one SKIP
-# line and its PASS/WARN counts are unchanged (the 97 PASS / 1 WARN baseline).
+# line and its PASS/WARN counts are unchanged (the 110 PASS / 1 WARN / 0 FAIL baseline).
 # REDIS_HA_VERIFY=on requires the topology, =off always skips it. The container lists,
 # ports and per-command timeout are the same keys sentinel-status.sh and compose.ha.yml
 # use, so the topology has a single source of configuration.

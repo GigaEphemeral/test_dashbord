@@ -300,11 +300,11 @@ bash code/lab/scripts/db-ha-down.sh --dry-run
 ## 9. 已知缺陷/边界
 
 1. **默认未接 Router**：`DB_WRITE_URL` / `DB_READ_URL` 默认指单机 MySQL，compose 未注入；`MYSQL_MODE=router` 与 `mysql_cluster_member_state` / `mysql_cluster_primary` 已实现（step-29/30），但真机切换与故障转移未验收。
-2. **故障转移与重加入未演练**：`db-failover` 动作、被踢节点 `clone` 重加入、Router 切主都没有实测；step-25b 明确列为未验证。不要把它写成已支持。
+2. **故障转移与重加入已演练**：Router 切主与被踢节点以 SECONDARY 回归见 step-31（kill 主 → 6446 切主、读 200、TTL 回归）；带压测版本见 step-48 §6。k6 `db-failover` 场景仍按 step-25b 的未验证口径单独登记。
 3. **Router 是单点**：设计 §8.6 接受；生产需多实例 + 前置负载均衡。
 4. **Router 路由健康检查只探 TCP**：容器 healthy 不代表 6446 真的接了可写成员（8.0/8.4 混搭事故就是这样发生的）。真正的门禁是 `db-cluster-status.sh` 的 6447/6446 后端探测。
 5. **6447 只探一轮**：轮询证据弱；要更醒目需要多轮或输出路由名（当前脚本未做）。
-6. **Prometheus 未抓取**：`prometheus/mysql-ha-scrape.yml` 未接进 `prometheus.yml`；`mysql_cluster_*` 指标只存在于脚本注释与总设计，不在运行代码里。
+6. **Prometheus 抓取已接**：`mysqld-exporter-ha` job 内联在 `prometheus.yml`（`c192a0a`），`mysql_cluster_*` 由 controller 的 `MysqlClusterMonitor` 导出，D11 有真机数据；独立 `mysql-ha-scrape.yml` 已删除（`step-30`/`38`）。
 7. **Cluster init 依赖镜像自带 MySQL Shell**：`mysql:8.4.4` 有；换 slim 镜像必须同时改 `MYSQL_HA_INIT_IMAGE`。Router 8.0 与 8.4 服务器混搭会静默失败，镜像必须同代。
 8. **账号密码策略是实验级**：`root@'%'`、应用账号、exporter/monitor 账号共用同一批 `.env` 口令；节点不发布宿主端口，但仍只适合本地实验。
 9. **声明内存高于设计**：2.1GB 是接受值，不是压到 1.8GB 的证明；节点已接近 cgroup 上限。

@@ -5,8 +5,8 @@
 #
 # Why this exists next to up.sh:
 #   * up.sh owns the always-on dev stack (16 containers) and must not grow a
-#     dependency on a ~1.8GB cluster; design §3.1 budgets the cluster for the
-#     hours when the app tier is idle.
+#     dependency on a cluster declared at 2.1GB (~1.87GB measured); design §3.1
+#     budgets the cluster for the hours when the app tier is idle.
 #   * the cluster needs an ordered bootstrap the declarative model cannot express
 #     on its own (nodes healthy -> dba.createCluster -> Router metadata cache),
 #     so each step is a separate `compose up -d` with an explicit bounded wait.
@@ -238,7 +238,7 @@ if [[ "$MEMORY_BUDGET_WARN" != false ]]; then
   running="$(docker ps -q --filter "label=lab=java-learn" | wc -l | tr -d ' ')"
   echo "DB-HA plan: ${#NODES[@]} nodes (mem_limit $(env_default MYSQL_HA_NODE_MEM_LIMIT 640m) each), ${#EXPORTERS[@]} exporters, 1 Router."
   if (( running > 0 )); then
-    printf 'NOTE: %s lab container(s) are already running. The cluster costs roughly 1.8GB on\n' "$running"
+    printf 'NOTE: %s lab container(s) are already running. The cluster is declared at 2.1GB (~1.87GB measured) on\n' "$running"
     echo "      top of them; if Docker Desktop starts swapping, stop the app tier first - the"
     echo "      DB-HA tier does not need it (docker compose ... stop app-1 app-2 app-3)."
   fi

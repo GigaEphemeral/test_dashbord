@@ -15,7 +15,7 @@ D7 面板与 compose/Prometheus/k6 接线已落地（step-41）；D8 与 `tune.s
 | `platform-common` | 编译 `release 8` | `Result` 信封、`BizException`、错误码 |
 | `platform-observability` | Boot 3 / jakarta | 只服务 JDK 21 外壳：公共标签、Actuator 暴露、直方图默认值 |
 | `seckill-app-jdk21` | Temurin 21 / Boot 3.5.16 | 全部业务场景 + 线程实验室 + `/lab/**` |
-| `seckill-app-jdk8` | JRE 8 / Boot 2.7.18 | **只有热读路径**（products + hello + actuator）；EOL，仅本机对比 |
+| `seckill-app-jdk8` | JRE 8 / Boot 2.7.18 | **与 JDK 21 同业务契约**（login / products 两级缓存 / orders / 异步 seckill / cache lab）；app-3 默认即此槽位，独立壳只作 D7 对照；线程实验室未移植 |
 | `chaos-controller` | Temurin 21 / Boot 3.5.16 | 容器编排、向导、背景流量；不代理 `/lab/thread/**` |
 | `seckill-lab` | 编译 `release 8` | 共享实验抽象（当前线程实验室实现仍在 jdk21 外壳内） |
 
@@ -33,7 +33,7 @@ flowchart LR
         OBS["platform-observability<br/>common tags + 暴露默认值"]
     end
     subgraph R8["JDK 8 运行时（Boot 2.7.18，EOL）"]
-        APP8["seckill-app-jdk8<br/>仅 products + hello + actuator"]
+        APP8["seckill-app-jdk8<br/>全业务（app-3 槽位）"]
     end
     CORE --> APP21
     CORE --> APP8
@@ -262,7 +262,7 @@ flowchart TD
 | 测试在 JDK 25 的非受支持路径（交接） | `JDK 25` | `doc/process/Stage1/step-33-jdk8-shell.md:65` | 建议统一 JDK 21 |
 | 启动样本不可直接入表（交接） | `Xmx512m` | `doc/process/Stage1/step-33-jdk8-shell.md:66` | 需同限额 + 多次中位 |
 | k6 登录缺口（交接） | `ensureLogin` | `doc/process/Stage1/step-33-jdk8-shell.md:73` | 三个处置选项 |
-| 各阶段未实现清单（历史） | `M5` | `doc/process/STAGE-01阶段交接-2026-10-26.md:439` | 当时 D6–D8 待办；D6/D7 后已落地，D8 仍缺 |
+| 各阶段未实现清单（历史） | `M5` | `doc/process/STAGE-01阶段交接-2026-10-26.md:439` | 当时 D6–D8 待办；D6/D7/D8 均已落地（2026-10-30 复核） |
 
 ---
 
@@ -372,7 +372,7 @@ D7 面板已存在（`ha-d7`，step-41），第二步可直接看两侧同图对
 - `doc/design/Stage1/details/10-操作台与API.md`：`/lab-api/**` 只到 chaos-controller，JDK 8 不暴露 `/lab/**`。
 - `doc/process/Stage1/step-33-jdk8-shell.md`：JDK 8 外壳交接（含本文件引用的四条 D7 约束）。
 - `doc/design/Stage1/2026-10-26-ha-concurrency-lab-design.md` §10：双 JDK 与调优台原始设计。
-- `doc/process/STAGE-01阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单（历史记录；D6/D7 后已落地，D8 仍缺）。
+- `doc/process/STAGE-01阶段交接-2026-10-26.md`：M5/D6–D8 未实现清单（历史记录；D6/D7/D8 均已落地）。
 
 ---
 

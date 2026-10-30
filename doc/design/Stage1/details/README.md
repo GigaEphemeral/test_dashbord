@@ -70,15 +70,17 @@
 > 已落地的条目以本表为准；本表只登记**代码当前仍然成立**的缺口，全部带证据。
 > 分类：`缺陷`=代码里有坑会误导演示；`未接线`=能力存在但环境变量/抓取没接上；`未做`=能力确实不存在；
 > `未验证`=代码在但真机没跑过；`口径`=不是 bug，是读法容易被误解。
+>
+> **2026-10-30 复核**：下表 7 行已收口（行内标「已收口」），其余条目仍按代码成立；域计数与分类计数保留 Stage2 起点快照。
 
 | 域 | 缺口 | 类别 | 证据 | 对演示的影响 |
 |---|---|---|---|---|
-| 缓存 | 没有 `POST /lab/cache/reset`，1000 个实验键（90000..90999）写完只能等 TTL 或 `reset-lab.sh` | 未做 | `lab/api/LabCacheController.java:34-57` 只有 `mode`(GET/POST)、`seed`、`state` | 讲完一轮缓存实验要复位，得靠重启或清 Redis，控制台缺「一键还原」这一环 |
-| 缓存 | `TwoLevelCache` 的 `L2_TTL=5min`、`KEY_PREFIX` 仍是硬编码常量 | 缺陷 | `catalog/cache/TwoLevelCache.java:51-52` | 违反配置外置规约；改 L2 TTL 要重打镜像 |
+| 缓存 | `POST /lab/cache/reset` | 已收口（2026-10-30 复核） | `LabCacheKeysController` 的 `/lab/cache/reset` + 控制台缓存页已落地，按前缀 SCAN 限额清理 | 不再需要重启或手工清 Redis |
+| 缓存 | `L2_TTL` / `KEY_PREFIX` / clear SCAN 已外置 | 已收口（2026-10-30 复核） | `TwoLevelCacheSettings` + `LabCacheL2Properties`（`LAB_CACHE_L2_*`） | 改 L2 TTL/前缀只需重启，不再重打镜像 |
 | 缓存 | 当前防护模式**不进 Prometheus**，app 侧序列永远没有 `mode` 标签 | 口径（有意） | `step-55` §5-3；D10 靠时间窗 + `k6_cache_lab_mode_switches_total` 对齐 | k6 侧与 app 侧是两条时间轴，读图要先认切换点 |
 | 缓存 | `cache_db_fallbacks_total{reason="miss"}` 与 `{reason="penetration"}` 对同一次查库**双计**，D10 未做扣减 | 口径 | `catalog/cache/TwoLevelCache.java:116-117,158` + `ProductPenetrationDefense.java:43-45` | D10「占比」面板（id=3）的分子分母口径要在讲解时说清 |
 | 缓存 | seed 的 200 个雪崩键共用同一个 TTL（缺陷本身就这么造），app 侧没有 TTL 打散的写入口 | 未做 | `CacheExperimentDataService` 单 TTL 写入；场景侧用 `CACHE_LAB_RESEED_MODES` 绕行 | 必须靠 k6 按 dwell 重 arm；手工演示要自己掐时间点 |
-| 缓存 | `LAB_CACHE_*`（seed TTL、雪崩 jitter、db-fallback permits 等）未写进 compose 与 `.env.example` | 未接线 | `grep -rn LAB_CACHE_ code/lab/docker/compose.base.yml code/lab/docker/.env.example` 为空（只出现在 `ha-d10.json` 文案里） | 有代码默认值所以能跑，但演示前改参数要重建容器并手传 env |
+| 缓存 | `LAB_CACHE_*` 已写进 compose/`.env.example` | 已收口（2026-10-30 复核） | `compose.base.yml` 现有 72 处 `LAB_CACHE_*`（seed/jitter/fallback 等） | 改参数走 `.env` + 重建，不再手传 env |
 | 缓存 | `app.lab.cache.penetration.mode` 键名与实际承载（穿透+击穿+雪崩）不符，未改名 | 口径 | 03 文档与配置键仍用旧名 | 读配置时容易以为只管穿透 |
 | 线程 | `thread_lab_injected_total` 只有 `mode` 标签，没有 `hold` | 未做 | `lab/thread/ThreadLabMetrics.java:37-40` | D6 无法区分 `auto`/`manual` 两种保持方式的注入量 |
 | 线程 | 快照耗时 Timer 没开直方图，没有 `_bucket`，D6 只能给均值/`_max`，**做不了 P95** | 未接线 | `lab/thread/ThreadSnapshotMetrics.java:63-66` 无 `publishPercentileHistogram()`/`sla()` | 面板文案已改成「均值/最大值」，别再按 P95 讲 |
@@ -92,17 +94,17 @@
 | 韧性 | 开关是**每实例内存态**且 chaos-controller 不做广播 | 未做 | `appproxy/AppProxyService.java` 白名单不含 `/lab/toggles`、`/lab/config`；全仓无 broadcast | 三个实例要逐个 `docker exec` 改，演示容易只改一台得出反结论 |
 | 韧性 | 限流只作用在异步秒杀路径；降级 202 不带 requestId | 未做 | `step-17` §4 | 「限流关掉就全绿」只对手动秒杀成立 |
 | 韧性 | toggle 变更无审计日志 | 未做 | `step-17` §4 | 演示后无法回答「谁在什么时候关了什么」 |
-| 观测 | Redis Sentinel 与 `jl-redis-*-exporter` 未纳入抓取 | 未接线 | `prometheus/prometheus.yml` 只有 `redis-exporter`（:45），无 sentinel / HA redis job；但 `ha-d11.json:624` 按有数据写 | D11 的 Redis 面板在 HA 演练时是空的 |
+| 观测 | Redis HA exporter 抓取 | 已收口（2026-10-30 复核） | `redis-exporter-ha` job（redis-1/2，`node` 标签）；Sentinel 本身不暴露 `/metrics` | D11 的 Redis 面板在 HA 下有数据 |
 | 观测 | MySQL Router 自身无指标，只有 6446/6447 探测 | 未做 | `db-cluster-status.sh:70-71,134,240-249`；D11「Router 状态」分组是文本面板 | Router 单点只能用间接证据（`hikaricp_connections_*{pool=write-pool|read-pool}`）讲 |
 | 观测 | 代码注册名 `mysql_cluster_primary_info` 与面板查询名 `mysql_cluster_primary` 不一致（Micrometer 剥 `_info`） | 口径 | `doc/avoid_common_error/02` | 照代码名写 PromQL 会查不到数 |
 | 观测 | 文档断言校验器存在但**未接进 verify/CI** | 未接线 | `grep docclaims code/lab/scripts/verify.sh` 为空 | 「文档说谎」仍靠人工发现（`doc/avoid_common_error/14`） |
 | 观测 | Mermaid 与 `diagrams/` 的 PNG/SVG 无渲染校验，也没有 CI 出图 | 未验证 | `step-42` §4；仓库无 `.github/workflows/` | 图只做过围栏配对与图类型检查，视觉效果未证 |
 | 混沌 | `code/lab/scenarios/` 只有 3 个 JSON（`quick-failover`、`ha-app-failover`、`redis-sentinel-failover`），没有 `mysql-failover` / `db-failover` / `cache-*` | 未做 | 目录实测；k6 侧 `db-failover.js` 是硬编码时间线 | 控制台向导里选不到数据库切换与缓存实验场景 |
 | 混沌 | 控制器重启丢失活跃动作登记（无对账）；暂停态只存内存 | 未做 | `step-21` §4、`step-22b` §4 | 演练中途重建 controller，TTL 看门狗不会接管旧动作 |
-| 混沌 | `/chaos/actions` 不返回 `paused` / `remainingMs`，暂停期间 `expiresAt` 显示已过去的时间 | 缺陷 | `step-22b` §4 | 讲「TTL 冻结」时面板数字看着自相矛盾 |
+| 混沌 | `/chaos/actions` 返回 `paused` / `remainingMs` | 已收口（2026-10-30 复核） | `ChaosActionView` 已带两字段（B2-04a） | 「TTL 冻结」可直接看剩余时间 |
 | 混沌 | `redis-sentinel-failover.json` 硬编码打击 `jl-redis-1` | 缺陷 | `code/lab/scenarios/redis-sentinel-failover.json` | 主不在 redis-1 时演练打在副本上，症状全变；跑前必须 `sentinel-status.sh` 核对 |
 | 混沌 | Toxiproxy 只演练过 `latency`/`timeout`，`bandwidth` 未验证；无对应 k6 场景；重启丢代理且无 keeper；verify 无 Toxiproxy 断言；`--profile dev` 后可能残留 `jl-toxiproxy*` | 未验证/未做 | `ToxicType.java:16-20`；`ls code/lab/k6/scenarios/`；`step-39` §6、`step-43` §4 | 网络故障这一族只有一半能演示 |
-| 混沌 | `CHAOS_APP_PROXY_INSTANCES` 未写进 compose，窄代理实例集合只能用代码默认 `app-1/2/3` | 未接线 | `config/ChaosProperties.java:177`；compose 里 grep 为空 | 想代理第 4 个实例或改端口要改代码重建 controller |
+| 混沌 | `CHAOS_APP_PROXY_INSTANCES` 已进 compose | 已收口（2026-10-30 复核） | `compose.base.yml` 注入 `CHAOS_APP_PROXY_*` | 窄代理实例集合由 `.env` 控制 |
 | 压测 | `soak.js` / `stress.js` 从未按设计时长跑过（30m / 500 VU 阶梯） | 未验证 | `doc/process/Stage1/benchmark/` 无对应归档 | 长稳与拐点结论都是外推，别当实测引用 |
 | 压测 | 没有独立的 Caffeine 预热场景（`caffeine-warmup.js` 不存在） | 未做 | `ls code/lab/k6/scenarios/` | 预热只能靠 `POST /lab/cache/preheat` 手动触发演示 |
 | 压测 | `cache-lab` 的 `db-fallback` dwell 与 `limiter_rejections` 还没有正向真机证据 | 未验证 | `step-56` §5 第 1 条（修 `maxDuration` 前被截断） | D10 的限流面板目前仍是空的 |
@@ -110,20 +112,20 @@
 | 调优 | 只对比过 `-Xmx512m` vs `-Xmx256m`；G1/ZGC 未跑 | 未验证 | `step-51` §5-4 | 别把「JDK21 一定用 G1」当实验结论 |
 | 控制台 | 线程页 Playwright 只读状态，没有生命周期点击/快照断言；快照按钮未真点 | 未验证 | `console-smoke.mjs`（42 条断言无 lifecycle 点击） | 控制台线程页只有 API 级真机证据 |
 | 控制台 | D7（双 JDK 对比）没有控制台入口，只有 Grafana 面板 | 未做 | `dashboard/src/components/` 无对应组件 | 讲 JDK 对比要切到 Grafana |
-| 数据 | router 模式下 `reset-lab.sh` 默认清的是单机 `jl-mysql`，清集群要显式指 `RESET_MYSQL_CONTAINER` | 缺陷 | `code/lab/scripts/reset-lab.sh:45,80` | 演练后「数据已复位」可能是假象 |
+| 数据 | `reset-lab.sh` 按拓扑解析重置目标 | 已收口（2026-10-30 复核） | B0-06 起从当前栈解析；`RESET_MYSQL_CONTAINER` 仍可覆盖 | router 模式下也能清对集群 |
 
 ### 3.3 已落地、但个别文档正文仍在说反话的位置
 
 | 位置 | 旧说法 | 现状 |
 |---|---|---|
-| `details/08:265`、`details/08:375` | D8 调优面板仍缺 | `ha-d8.json` + `tune.sh` 已落地（step-51），`claims.yml` 里 `d8-tuning-panel-exists` 是正向断言 |
-| `details/09:447` | 面板缺 D8 | 同文件 `:236` 已写「D6/D7/D8/D10/D11 均已落地」，`:447` 是残留 |
-| `details/diagrams/README.md:24`、`:123` | D5/D7/D8 仍缺图 / D8 待补 | `ha-d8.json` 存在；`:122` 的 D7 行已翻正，D8 两行未跟着改 |
-| `step-49:204` 的「不要当成过期修掉」保护名单 | 列了 D8 面板、缓存控制台页、`/lab/cache/**` 代理 | 这三项**确实已落地**；名单里真正仍未做的只有 `/lab/cache/reset` 与「SIGSTOP 打主库」演练 |
-| `details/01:438`「仍未落地」 | D8 调优面板、缓存实验控制台页、`/lab/cache/**` 窄代理 | 三项均已落地（step-44/50/51）；该行后半段自己也说「其余旧缺口已合并」，只有这三项没跟着翻正。真正仍未做的只有 `/lab/cache/reset` 与「SIGSTOP 打主库」演练 |
-| `details/05:307`「Prometheus 未抓取」 | `prometheus/mysql-ha-scrape.yml` 未接进 `prometheus.yml` | 该文件**已删除**，`mysqld-exporter-ha` job 已内联在 `prometheus/prometheus.yml:96`（`c192a0a`），D11 有真机数据；`step-30`/`38` 为证据 |
-| `code/lab/scripts/verify.sh:931` 注释 | 「the 97 PASS / 1 WARN baseline」 | 真机基线已漂到 **109 PASS / 1 WARN / 0 FAIL**（2026-10-27；`8173821` 补 D6/D8/D10/D11 置备断言）。注释只影响阅读，不影响结果 |
-| `db-ha-up.sh:241` 内存提示 | 「The cluster costs roughly 1.8GB」 | 声明 2128MiB、实测 ≈1.87GB（`details/05` §内存、设计 §3.1）；脚本按旧口径写 |
+| `details/08:265`、`details/08:375` | D8 调优面板仍缺 | 已回改（2026-10-30）：D8 已落地，正文已翻正 |
+| `details/09:447` | 面板缺 D8 | 已回改（2026-10-30）：现为「面板已齐」 |
+| `details/diagrams/README.md:24`、`:123` | D5/D7/D8 仍缺图 / D8 待补 | 已回改（2026-10-30）：D7/D8 已落地，D5 仍由 Tempo 承担 |
+| `step-49:204` 的「不要当成过期修掉」保护名单 | 列了 D8 面板、缓存控制台页、`/lab/cache/**` 代理 | 历史交接不回改，已加指针（2026-10-30）：仅「SIGSTOP 打主库」仍未做 |
+| `details/01:438`「仍未落地」 | D8 调优面板、缓存实验控制台页、`/lab/cache/**` 窄代理 | 已回改（2026-10-30）：只剩 SIGSTOP 演练，其余均已落地 |
+| `details/05:307`「Prometheus 未抓取」 | `prometheus/mysql-ha-scrape.yml` 未接进 `prometheus.yml` | 已回改（2026-10-30）：job 已内联，D11 有数据 |
+| `code/lab/scripts/verify.sh` 注释 | 旧 baseline 数字 | 已改为 **110 PASS / 1 WARN / 0 FAIL**（2026-10-30，B5-06 三个实例 cache 断言） |
+| `db-ha-up.sh` 内存提示 | 「The cluster costs roughly 1.8GB」 | 已改为「声明 2.1GB / 实测约 1.87GB」（2026-10-30） |
 
 其余 `step-*.md` 里「未做 X」的表述，若 X 已落地，一律以 §3.1/§3.2 为准，不再逐份改写历史交接（历史交接保持原样，只在被引用处加指针）。
 

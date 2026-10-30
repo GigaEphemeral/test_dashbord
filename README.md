@@ -102,9 +102,7 @@ docker compose -f compose.base.yml -f compose.dev.yml up -d --no-deps --force-re
 
 故障注入与线程故障的完整行为、可注入线程和 OOM 限制见 [`doc/process/Stage2/故障注入使用说明.md`](doc/process/Stage2/故障注入使用说明.md)。
 
-离线演示：[`doc/demo.html`](doc/demo.html) —— 真实控制台的**可操作单文件副本**（内联前端 + 录制接口数据）：
-侧边导航、向导步骤、表格与图表、右侧工具抽屉均可交互；数据是 2026-10-30 的快照，写操作返回空成功，
-仅用于 UI 评审与优化，不代表真实后端。
+
 
 常用维护命令：
 
@@ -120,11 +118,11 @@ bash code/lab/scripts/console-smoke.sh       # 控制台端到端冒烟
 
 | 门禁 | 当前基线（2026-10-30） |
 |---|---|
-| 控制器单测 | 887+（`mvn -pl services/chaos-controller -am test`） |
-| console-smoke | 158 |
-| verify.sh | 109 PASS / 1 WARN / 0 FAIL（WARN=cAdvisor 在 containerd 存储下无法枚举容器） |
+| 控制器单测 | 893（`mvn -pl services/chaos-controller -am test`） |
+| console-smoke | 159 |
+| verify.sh | 110 PASS / 1 WARN / 0 FAIL（WARN=cAdvisor 在 containerd 存储下无法枚举容器） |
 | smoke.sh | 7/7 |
-| 文档断言 | 85/85（`bash code/lab/scripts/check-doc-claims.sh`） |
+| 文档断言 | 92/92（`bash code/lab/scripts/check-doc-claims.sh`） |
 | env 接线 | `bash code/lab/scripts/test-chaos-env-wiring.sh` |
 
 ## 5. 常见问题

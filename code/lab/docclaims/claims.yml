@@ -426,7 +426,7 @@
   polarity: negative
   doc:
     - doc/readme.md
-  statement: "使用文档不再写 104 PASS 的旧 verify 基线（真机现为 109 PASS / 1 WARN / 0 FAIL）"
+  statement: "使用文档不再写 104 PASS 的旧 verify 基线（真机现为 110 PASS / 1 WARN / 0 FAIL，2026-10-30）"
   verify:
     kind: grep_count
     path: doc/readme.md
@@ -1047,7 +1047,7 @@
 - id: console-usability-fixes
   polarity: positive
   doc:
-    - doc/process/Stage2/step-S2-B5-04e-console-usability.md
+    - doc/process/Stage2/step-S2-B5-05e-app3-jdk8-parity.md
   statement: "控制台可用性：整站全宽；app-3（JDK8 槽位）在向导中与 app-1/2 并排常驻可编辑；堆转储默认路径自动填充；线程池图含 pool max 参考；参数对照 5s 刷新"
   verify:
     kind: shell
@@ -1095,7 +1095,7 @@
 - id: wizard-jdk8-column
   polarity: positive
   doc:
-    - doc/process/Stage2/step-S2-B5-04e-console-usability.md
+    - doc/process/Stage2/step-S2-B5-05e-app3-jdk8-parity.md
   statement: "向导第 3 步三个业务槽位并排配置：JDK8 槽位（默认 app-3）只提供 JDK8，其余 app 槽位只提供 JDK21，独立外壳列已移除且槽位参与 run 节点"
   verify:
     kind: shell
@@ -1122,6 +1122,28 @@
   verify:
     kind: shell
     command: "grep -q 'SeckillAdmissionService' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/admission/app/SeckillAdmissionService.java && grep -q 'seckill_stock.lua' code/services/seckill-app-jdk8/src/main/resources/application.yml && grep -q 'class LabCacheController' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/lab/api/LabCacheController.java && grep -q 'TwoLevelCache' code/services/seckill-app-jdk8/src/main/java/com/javalearn/lab/seckill/jdk8/catalog/cache/TwoLevelCache.java && grep -q 'APP_PROFILE' code/lab/docker/compose.base.yml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+- id: jdk8-real-redis-cache-it
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-07-test-doc-hygiene.md
+  statement: "jdk8 的 TwoLevelCache 既有 FakeRedis 单测，也有 Testcontainers Redis 7.4.2 的真实 L2 IT（键/TTL/SCAN clear/JSON 往返）"
+  verify:
+    kind: shell
+    command: "test -f code/services/seckill-app-jdk8/src/test/java/com/javalearn/lab/seckill/jdk8/catalog/cache/TwoLevelCacheRedisIT.java && grep -q 'redis:7.4.2-alpine' code/services/seckill-app-jdk8/src/test/java/com/javalearn/lab/seckill/jdk8/support/RedisTestContainer.java && grep -q 'testcontainers' code/services/seckill-app-jdk8/pom.xml && grep -q '\*\*/\*IT.java' code/services/seckill-app-jdk8/pom.xml"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
+- id: demo-html-removed
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-07-test-doc-hygiene.md
+  statement: "离线演示副本 doc/demo.html 已按用户要求删除，README 不再引用"
+  verify:
+    kind: shell
+    command: "test ! -f doc/demo.html && ! grep -q 'doc/demo.html' README.md"
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
