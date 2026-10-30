@@ -95,10 +95,10 @@ bash code/lab/scripts/console-smoke.sh       # 控制台端到端冒烟
 | 门禁 | 当前基线（2026-10-30） |
 |---|---|
 | 控制器单测 | 887+（`mvn -pl services/chaos-controller -am test`） |
-| console-smoke | 161 |
+| console-smoke | 162 |
 | verify.sh | 109 PASS / 1 WARN / 0 FAIL（WARN=cAdvisor 在 containerd 存储下无法枚举容器） |
 | smoke.sh | 7/7 |
-| 文档断言 | 84/84（`bash code/lab/scripts/check-doc-claims.sh`） |
+| 文档断言 | 85/85（`bash code/lab/scripts/check-doc-claims.sh`） |
 | env 接线 | `bash code/lab/scripts/test-chaos-env-wiring.sh` |
 
 ## 5. 常见问题

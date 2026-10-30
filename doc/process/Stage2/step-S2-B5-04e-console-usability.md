@@ -3,7 +3,7 @@
 > 任务：用户反馈 1–6（第 7、8 项后续讨论）
 > 日期：2026-10-30
 > 分支 / HEAD：`feature/stage2-workbench` / `7f30d15`（本步改动本地待提交）
-> 测试：dashboard build 通过；console-smoke **160/0**；claims **83/83**
+> 测试：dashboard build 通过；console-smoke **162/0**；claims **85/85**
 
 # 当前进展
 
@@ -33,6 +33,16 @@
 - 参数对照区分“已保存目标”和“容器回读”，不把草稿当生效值，也不把生效值当草稿。
 - 图表在“全 0”时给出语义提示，避免把空闲误判为无数据。
 
+## 追加：向导 JDK8 交互修正（2026-10-30）
+
+- 现象：在向导第 3 步的 app 列中选择 JDK8，会进入“全部禁用 + 红色提示”的死胡同；
+  用户误以为前端没更新或功能坏了。
+- 修复：
+  - app-1/2/3 的 JDK/镜像下拉**只保留 JDK21/jdk21**（服务端同样拒绝 app 实例用 jdk8）；
+  - 向导第 3 步新增 **JDK8 外壳独立列**（`wizard-config-column-seckill-app-jdk8`），标注“独立实例 · 不参与本次 run 节点”，
+    可直接配置/校验/应用/重启；应用要求 dual-jdk profile 容器在运行。
+- 真机：shell 由 DRAFT 应用为 `APPLIED`（pool-probe 按设计 SKIPPED，其余 9 项 PASS）。
+
 # 存在缺陷项&TODO
 
 | 项 | 说明 |
@@ -51,6 +61,6 @@
 
 ```text
 npm run build -> index-Dyw1HWew.js
-console-smoke -> 160 PASS, 0 FAIL
+console-smoke -> 162 PASS, 0 FAIL
 浏览器核对：.page max-width=none；wizard 三列 app-1/2/3；堆转储开启后路径 = /app/lab-snapshots/heap-app-1.hprof
 ```

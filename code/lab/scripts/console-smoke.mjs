@@ -597,21 +597,23 @@ async function main() {
       }
       const rows = await page.locator('[data-testid^="wizard-config-row-"]').count();
       const text = (await row.textContent()) || '';
-      const columns = await page.locator('[data-testid^="wizard-config-column-"]').count();
+      const appColumns = await page.locator('[data-testid^="wizard-config-column-app-"]').count();
+      const shellColumn = await page.getByTestId('wizard-config-column-seckill-app-jdk8').count();
       const app3Column = await page.getByTestId('wizard-config-column-app-3').count();
       return {
         ok: rows === 3
           && text.includes('未启用')
           && text.includes('未启用节点不参与本实验')
-          && columns === 2
+          && appColumns === 2
+          && shellColumn === 1
           && app3Column === 0,
-        detail: `rows=${rows} columns=${columns} app3Column=${app3Column}`,
+        detail: `rows=${rows} appColumns=${appColumns} shell=${shellColumn} app3Column=${app3Column}`,
       };
     });
     // B5: the three enabled JVMs are shown side by side so parameters can be
     // compared without switching a select.
     await expectCondition('wizard: the enabled JVMs are laid out side by side', async () => {
-      const columns = await page.locator('[data-testid^="wizard-config-column-"]').count();
+      const columns = await page.locator('[data-testid^="wizard-config-column-app-"]').count();
       const firstEditor = await page.getByTestId('instance-config-editor-app-1').count();
       const secondEditor = await page.getByTestId('instance-config-editor-app-2').count();
       return { ok: columns >= 2 && firstEditor >= 1 && secondEditor >= 1,
@@ -1237,22 +1239,23 @@ async function main() {
     }
     check('instances: jdk8 shell is LIMITED-OBSERVABILITY or an explicit not-running row', jdk8.ok, jdk8.detail);
 
-    await page.getByTestId('instance-config-image-select-app-1').selectOption('jdk8');
-    await expectCondition('instances: app instances reject the jdk8 image in the UI', async () => {
-      const hint = page.getByTestId('instance-config-jdk8-hint-app-1');
-      if ((await hint.count()) === 0) {
-        return { ok: false, detail: 'jdk8 hint not rendered' };
-      }
-      const text = ((await hint.textContent()) || '').trim();
-      const applyDisabled = await page.getByTestId('instance-config-apply-app-1').isDisabled();
-      const validateDisabled = await page.getByTestId('instance-config-validate-app-1').isDisabled();
-      return {
-        ok: text.includes('JDK8 是独立外壳实例') && applyDisabled && validateDisabled,
-        detail: `${text}; applyDisabled=${applyDisabled}; validateDisabled=${validateDisabled}`,
-      };
-    });
-    // Restore the local form only; nothing was saved.
-    await page.getByTestId('instance-config-image-select-app-1').selectOption('jdk21');
+    const appImageOptions = await page.getByTestId('instance-config-image-select-app-1')
+      .locator('option').evaluateAll((nodes) => nodes.map((node) => node.value));
+    check(
+      'instances: app instances only offer the jdk21 image',
+      !appImageOptions.includes('jdk8') && appImageOptions.includes('jdk21'),
+      appImageOptions.join(','),
+    );
+    const shellSelect = page.getByTestId('instance-config-image-select-seckill-app-jdk8');
+    let shellOk = true;
+    let shellDetail = 'shell editor absent (dual-jdk profile off)';
+    if ((await shellSelect.count()) > 0) {
+      const options = await shellSelect.locator('option')
+        .evaluateAll((nodes) => nodes.map((node) => node.value));
+      shellOk = options.includes('jdk8') && !options.includes('jdk21');
+      shellDetail = options.join(',');
+    }
+    check('instances: the jdk8 shell offers its own image', shellOk, shellDetail);
 
     // --------------------------------------------------------------- observe
     // The old 故障与缓存实验 page is now three tabs inside 实时监控与操作.

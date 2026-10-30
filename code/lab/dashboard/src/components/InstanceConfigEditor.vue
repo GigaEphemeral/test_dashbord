@@ -674,10 +674,14 @@ watch(() => props.active, (active) => {
               @change="onJdkChange"
             >
               <option value="">未设置</option>
-              <option value="21">21</option>
-              <option value="8">8（独立外壳）</option>
+              <option v-if="!rules.jdk8Shell" value="21">21</option>
+              <option v-if="rules.jdk8Shell" value="8">8（独立外壳）</option>
             </select>
-            <div class="help">必填；8 只用于 seckill-app-jdk8 外壳。</div>
+            <div class="help">
+              {{ rules.jdk8Shell
+                ? '外壳固定 JDK 8；app-1/2/3 在「实例与 JVM」页与这里都只提供 JDK 21。'
+                : 'app-1/2/3 固定 JDK 21；JDK 8 是独立的 seckill-app-jdk8 外壳。' }}
+            </div>
           </div>
           <div class="field">
             <label data-tip="镜像 tag 必须与 JDK 版本一致，并由控制器拼成 java-learn-lab/seckill-app:<tag>。">
@@ -690,10 +694,12 @@ watch(() => props.active, (active) => {
               @change="onImageChange"
             >
               <option value="">未设置</option>
-              <option value="jdk21">jdk21</option>
-              <option value="jdk8">jdk8</option>
+              <option v-if="!rules.jdk8Shell" value="jdk21">jdk21</option>
+              <option v-if="rules.jdk8Shell" value="jdk8">jdk8</option>
             </select>
-            <div class="help">JDK8 是独立外壳实例；app-1/2/3 拒绝 jdk8，服务端同样拒绝应用。</div>
+            <div class="help">{{ rules.jdk8Shell
+              ? 'JDK8 外壳使用 jdk8 镜像；app-1/2/3 固定 jdk21。'
+              : 'app-1/2/3 固定 jdk21；JDK8 对照请到「实例与 JVM」页或本页下方外壳列配置。' }}</div>
           </div>
           <div v-for="field in HEAP_FIELDS.slice(0, 4)" :key="field.key" class="field">
             <label :data-tip="field.tip">

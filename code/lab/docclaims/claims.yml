@@ -1091,3 +1091,15 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+
+- id: wizard-jdk8-column
+  polarity: positive
+  doc:
+    - doc/process/Stage2/step-S2-B5-04e-console-usability.md
+  statement: "向导第 3 步 app 实例只提供 JDK21/jdk21，JDK8 以外壳独立列配置（不参与 run 节点）"
+  verify:
+    kind: shell
+    command: "grep -q 'wizard-config-column-seckill-app-jdk8' code/lab/dashboard/src/components/ConfigGroupEditor.vue && grep -q 'rules.jdk8Shell' code/lab/dashboard/src/components/InstanceConfigEditor.vue && grep -q 'app-1/2/3 固定 JDK 21' code/lab/dashboard/src/components/InstanceConfigEditor.vue"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30

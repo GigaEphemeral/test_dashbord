@@ -172,6 +172,27 @@ watch(
       </section>
     </div>
     <p v-if="!nodes.length" class="hint">请先在向导第 1 步选择至少一个 Java 节点。</p>
+
+    <section
+      class="config-column shell-column"
+      data-testid="wizard-config-column-seckill-app-jdk8"
+    >
+      <h4>
+        <code>seckill-app-jdk8</code> · JDK8 外壳
+        <span class="chip">独立实例 · 不参与本次 run 节点</span>
+      </h4>
+      <p class="hint">
+        JDK8 外壳不属于 run 的分流节点（run 只跑 app-1/2/3）；这里仅用于配置/对比，
+        应用与重启需要 dual-jdk profile 的容器在运行。
+      </p>
+      <InstanceConfigEditor
+        :token="token"
+        instance="seckill-app-jdk8"
+        :active="true"
+        limited-observability
+        @changed="loadAll"
+      />
+    </section>
   </div>
 </template>
 
@@ -193,6 +214,18 @@ watch(
   margin: 0 0 6px;
   font-size: 0.9rem;
   color: var(--text-muted);
+}
+
+.shell-column {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.shell-column h4 .chip {
+  margin-left: 8px;
+  font-size: 0.7rem;
+  font-weight: 400;
 }
 
 .config-table tr.disabled {
