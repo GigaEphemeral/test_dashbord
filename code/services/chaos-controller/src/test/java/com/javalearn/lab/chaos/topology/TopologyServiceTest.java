@@ -95,6 +95,12 @@ class TopologyServiceTest {
 
     @Test
     void keepsTheFullTopologyAndUsesNullForMissingData() {
+        // This fixture reports app-2 on a jdk8 image, which is only a legal
+        // shape in shell mode; app-slot mode keeps the JDK 8 peer inside an
+        // app slot with full observability.
+        instance.setJdk8Mode("shell");
+        instance.setJdk8Instance("seckill-app-jdk8");
+        instance.setNames(List.of("app-1", "app-2", "app-3", "seckill-app-jdk8"));
         TopologyView view = service().snapshot(null, false);
 
         assertThat(view.nodes()).hasSize(23);

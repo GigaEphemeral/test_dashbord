@@ -1,0 +1,37 @@
+# Offline runtime image for the JDK 8 business peer (app-3).
+#
+# The container cannot reach Maven Central on this host (TLS handshake), so the
+# jar is built on the host where Maven Central is reachable:
+#   cd code && mvn -pl services/seckill-app-jdk8 -am -DskipTests package
+#   docker build -f code/services/seckill-app-jdk8/Dockerfile.runtime \
+#     -t java-learn-lab/seckill-app:jdk8 code/services/seckill-app-jdk8
+#
+# The OTel Java agent is copied from the JDK 21 app image instead of being
+# downloaded during the build: both runtimes then export traces with the same
+# agent version and the comparison is not skewed by instrumentation.
+ARG OTEL_SOURCE_IMAGE=java-learn-lab/seckill-app:jdk21
+ARG OTEL_SOURCE_AGENT=/app/otel/opentelemetry-javaagent.jar
+
+FROM ${OTEL_SOURCE_IMAGE} AS otel
+
+FROM eclipse-temurin:8-jdk-alpine
+
+ARG OTEL_SOURCE_AGENT=/app/otel/opentelemetry-javaagent.jar
+
+LABEL org.opencontainers.image.title="java-learn-lab seckill-app (JDK 8 business peer)"
+LABEL org.opencontainers.image.version="0.1.0-SNAPSHOT"
+
+RUN addgroup -S app && adduser -S -G app app
+WORKDIR /app
+COPY --from=otel ${OTEL_SOURCE_AGENT} /app/otel/opentelemetry-javaagent.jar
+COPY target/seckill-app-jdk8-*.jar /app/app.jar
+RUN chown -R app:app /app
+USER app
+EXPOSE 8080
+
+# Same agent/entrypoint shape as the JDK 21 image; the heap stays injected by
+# compose through JAVA_TOOL_OPTIONS (-Xmx512m on all three instances).
+ENTRYPOINT ["java", \
+  "-javaagent:/app/otel/opentelemetry-javaagent.jar", \
+  "-XX:+ExitOnOutOfMemoryError", \
+  "-jar", "/app/app.jar"]

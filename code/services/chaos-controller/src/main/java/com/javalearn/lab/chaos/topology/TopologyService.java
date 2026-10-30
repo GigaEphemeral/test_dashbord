@@ -325,8 +325,9 @@ public class TopologyService {
             }
             if (jdk != null) {
                 jdkVersion = String.valueOf(jdk);
-                observability = jdk == 8 ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
-                if (jdk == 8) {
+                boolean jdk8Shell = jdk == 8 && !instanceProperties.isJdk8AppSlotMode();
+                observability = jdk8Shell ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
+                if (jdk8Shell) {
                     notes.add("JDK 8 shell: JAVA_TOOL_OPTIONS-based readback is limited "
                             + "(LIMITED-OBSERVABILITY)");
                 }

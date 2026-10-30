@@ -122,6 +122,12 @@ class InstanceConfigServiceTest {
 
     @Test
     void jdk8EffectiveReadbackIsLimitedAndCopiesOnlyContainerEnvironment() throws Exception {
+        // Standalone shell mode: the historical separate container, which has
+        // no app-level readback.
+        properties.setJdk8Mode("shell");
+        properties.setJdk8Instance("seckill-app-jdk8");
+        properties.setNames(List.of("app-1", "app-2", "app-3", "seckill-app-jdk8"));
+        properties.validate();
         service.save("seckill-app-jdk8", config("{\"jdkVersion\":8,\"gcCollector\":\"G1\"}"));
         ContainerGateway gateway = mock(ContainerGateway.class);
         when(gateway.inspectLabContainerFacts("jl-seckill-app-jdk8")).thenReturn(Optional.of(
@@ -143,6 +149,22 @@ class InstanceConfigServiceTest {
         verify(gateway, never()).execInContainer(any(), any(), any(), any(), anyInt());
         // Secrets in the container env are never surfaced through this view.
         assertThat(view.toString()).doesNotContain("MYSQL_PASSWORD").doesNotContain("must-not-leak");
+    }
+
+    @Test
+    void appSlotJdk8PeerKeepsFullObservability() throws Exception {
+        service.save("app-3", config("{\"jdkVersion\":8,\"gcCollector\":\"G1\"}"));
+        ContainerGateway gateway = mock(ContainerGateway.class);
+        when(gateway.inspectLabContainerFacts("jl-app-3")).thenReturn(Optional.of(
+                new ContainerFacts("jl-app-3", "java-learn-lab/seckill-app:jdk8", "sha256:jdk8",
+                        Map.of("JAVA_TOOL_OPTIONS", "-Xmx512m", "INSTANCE_ID", "app-3"))));
+        when(gatewayProvider.getIfAvailable()).thenReturn(gateway);
+
+        InstanceViews.EffectiveInstanceView view = service.effective("app-3");
+        assertThat(view.readback()).isEqualTo(InstanceConfigService.READBACK_OK);
+        assertThat(view.observability()).isEqualTo(InstanceConfigService.OBSERVABILITY_FULL);
+        assertThat(view.notes()).noneMatch(note -> note.contains("JDK 8 shell"));
+        assertThat(view.instanceId()).isEqualTo("app-3");
     }
 
     @Test

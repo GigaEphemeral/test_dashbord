@@ -349,22 +349,37 @@ services:
       INSTANCE_ID: app-2
 
   # --- Application tier: three business peers. app-3 is the JDK 8 slot ---
-  # The image/dockerfile stay overridable so the control plane can be prepared
-  # before the JDK 8 business image lands: default jdk21, flip both variables
-  # (APP3_IMAGE/APP3_DOCKERFILE) to run app-3 on jdk8. It is still app-3 in
-  # Nginx, the runner and the ledger; there is no separate shell instance.
+  # app-3 is the third business instance, not a separate shell: it sits in the
+  # same Nginx upstream and the same run node list as app-1/app-2, and serves
+  # the same /api contract from the Spring Boot 2.7 shell. The identity
+  # variables keep the metrics/traces labels aligned with the peers (APP_NAME
+  # seckill-app) while info reports the runtime the comparators read.
   app-3:
     <<: *app-common
-    image: ${APP3_IMAGE:-java-learn-lab/seckill-app:jdk21}
+    image: ${APP3_IMAGE:-java-learn-lab/seckill-app:jdk8}
     build:
       context: ../..
-      dockerfile: ${APP3_DOCKERFILE:-services/seckill-app-jdk21/Dockerfile}
+      dockerfile: ${APP3_DOCKERFILE:-services/seckill-app-jdk8/Dockerfile}
       args:
         OTEL_AGENT_VERSION: ${OTEL_AGENT_VERSION:-2.10.0}
+        # The offline runtime image copies the agent from an image that already
+        # carries it (this host cannot reach Maven Central inside a build).
+        OTEL_SOURCE_IMAGE: ${OTEL_SOURCE_IMAGE:-java-learn-lab/seckill-app:jdk21}
     container_name: jl-app-3
+    volumes:
+      - ../../../doc/process/Stage1/snapshot-analysis-template.md:/app/doc/process/Stage1/snapshot-analysis-template.md:ro
     environment:
       <<: *app-env
       INSTANCE_ID: app-3
+      # The JDK 8 app defaults to the zero-dependency demo/H2 profile; the lab
+      # slot must read the same MySQL rows as the JDK 21 peers.
+      APP_PROFILE: ${APP3_APP_PROFILE:-mysql}
+      APP_NAME: ${APP3_APP_NAME:-seckill-app}
+      INFO_RUNTIME: ${APP3_INFO_RUNTIME:-jdk8}
+      INFO_SHELL: ${APP3_INFO_SHELL:-seckill-app-jdk8}
+      # The Boot 2.7 shell names the snapshot root LAB_SNAPSHOT_DIR
+      # (the JDK 21 shell uses LAB_THREAD_SNAPSHOT_DIR from *app-env).
+      LAB_SNAPSHOT_DIR: ${LAB_SNAPSHOT_DIR:-/app/lab-snapshots}
 
   # --- D7 dual-JDK comparison (design section 10): opt-in Java 8 runtime ---
   # Profile-gated on purpose: the default render stays at 16 services and
@@ -611,7 +626,7 @@ services:
       # plus the RabbitMQ management API for the queue-drain check.
       LAB_RECONCILE_ENABLED: ${LAB_RECONCILE_ENABLED:-true}
       # B4-01 per-instance JVM/GC/pool configuration schema.
-      LAB_INSTANCE_NAMES: ${LAB_INSTANCE_NAMES:-app-1,app-2,app-3,seckill-app-jdk8}
+      LAB_INSTANCE_NAMES: ${LAB_INSTANCE_NAMES:-app-1,app-2,app-3}
       LAB_INSTANCE_CONTAINER_PREFIX: ${LAB_INSTANCE_CONTAINER_PREFIX:-jl-}
       LAB_INSTANCE_MEMORY_LIMIT_MB: ${LAB_INSTANCE_MEMORY_LIMIT_MB:-768}
       LAB_INSTANCE_THREAD_STACK_MB: ${LAB_INSTANCE_THREAD_STACK_MB:-1}
@@ -643,9 +658,9 @@ services:
       LAB_INSTANCE_PROMETHEUS_UP_WAIT_SECONDS: ${LAB_INSTANCE_PROMETHEUS_UP_WAIT_SECONDS:-30}
       LAB_INSTANCE_IMAGE_REPOSITORY: ${LAB_INSTANCE_IMAGE_REPOSITORY:-java-learn-lab/seckill-app}
       LAB_INSTANCE_NGINX_CONTAINER: ${LAB_INSTANCE_NGINX_CONTAINER:-jl-nginx}
-      LAB_INSTANCE_JDK8_MODE: ${LAB_INSTANCE_JDK8_MODE:-shell}
-      LAB_INSTANCE_JDK8_INSTANCE: ${LAB_INSTANCE_JDK8_INSTANCE:-seckill-app-jdk8}
-      LAB_INSTANCE_JDK8_PROMETHEUS_JOB: ${LAB_INSTANCE_JDK8_PROMETHEUS_JOB:-seckill-app-jdk8}
+      LAB_INSTANCE_JDK8_MODE: ${LAB_INSTANCE_JDK8_MODE:-app-slot}
+      LAB_INSTANCE_JDK8_INSTANCE: ${LAB_INSTANCE_JDK8_INSTANCE:-app-3}
+      LAB_INSTANCE_JDK8_PROMETHEUS_JOB: ${LAB_INSTANCE_JDK8_PROMETHEUS_JOB:-seckill-app}
       # B5-01 topology contract (job/label names and the 2s read cache).
       LAB_TOPOLOGY_RATE_WINDOW: ${LAB_TOPOLOGY_RATE_WINDOW:-1m}
       LAB_TOPOLOGY_CLUSTER_NODES: ${LAB_TOPOLOGY_CLUSTER_NODES:-3}
@@ -713,7 +728,7 @@ services:
       LAB_PRECHECK_EXTRA_QUERIES: ${LAB_PRECHECK_EXTRA_QUERIES:-}
       LAB_PRECHECK_MEMORY_RESERVE_MB: ${LAB_PRECHECK_MEMORY_RESERVE_MB:-1024}
       LAB_PRECHECK_EXPECTED_APP_IMAGE_ID: ${LAB_PRECHECK_EXPECTED_APP_IMAGE_ID:-}
-      LAB_PRECHECK_MIXED_IMAGE_CONTAINER: ${LAB_PRECHECK_MIXED_IMAGE_CONTAINER:-}
+      LAB_PRECHECK_MIXED_IMAGE_CONTAINER: ${LAB_PRECHECK_MIXED_IMAGE_CONTAINER:-jl-app-3}
       LAB_PRECHECK_MAX_LISTED_ITEMS: ${LAB_PRECHECK_MAX_LISTED_ITEMS:-10}
       LAB_PRECHECK_CHECK_TIMEOUT_SECONDS: ${LAB_PRECHECK_CHECK_TIMEOUT_SECONDS:-30}
       # Stage2 B2-01b: GET /lab/bench/scenarios reads the same manifest the

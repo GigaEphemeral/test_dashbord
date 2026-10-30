@@ -55,6 +55,8 @@ public class EnvironmentStopAllService {
     static final String THREAD_STOP_ALL_PATH = "/lab/thread/stop-all";
     static final String THREAD_OK = "ok";
     static final String THREAD_FAILED = "failed";
+    /** The instance has no thread lab (JDK 8 slot); nothing to clean up. */
+    static final String THREAD_NOT_APPLICABLE = "not-applicable";
 
     /**
      * Statuses whose container is still alive and therefore needs an explicit
@@ -175,6 +177,13 @@ public class EnvironmentStopAllService {
                     THREAD_STOP_ALL_PATH, null, null);
             if (response != null && response.status() >= 200 && response.status() < 300) {
                 return THREAD_OK;
+            }
+            // A 404 is the JDK 8 slot: the business shell has no /lab/thread
+            // endpoints yet, so there is nothing to stop. Report it separately
+            // instead of a false "failed" on every global stop-all.
+            if (response != null && response.status() == 404) {
+                log.info("stop-all: {} has no thread lab (404); nothing to stop", instance);
+                return THREAD_NOT_APPLICABLE;
             }
             log.warn("stop-all: thread stop-all on {} answered status {}", instance,
                     response == null ? "no response" : response.status());

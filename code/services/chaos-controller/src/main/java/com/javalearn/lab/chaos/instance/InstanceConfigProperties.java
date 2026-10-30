@@ -26,7 +26,7 @@ public class InstanceConfigProperties {
     private static final String GC_LOG_ROOT = "/[A-Za-z0-9._/-]*";
 
     /** Instances this controller owns; anything else is a 404. */
-    private List<String> names = new ArrayList<>(List.of("app-1", "app-2", "app-3", "seckill-app-jdk8"));
+    private List<String> names = new ArrayList<>(List.of("app-1", "app-2", "app-3"));
 
     /** Container name prefix; {@code jl-app-1} for {@code app-1}. */
     private String containerPrefix = "jl-";
@@ -77,17 +77,17 @@ public class InstanceConfigProperties {
     private int eventsMaxEvents = 50;
     private int eventsLineMaxChars = 400;
     /**
-     * B4-04/B5-05: where the JDK 8 runtime lives. {@code shell} keeps the
-     * historical separate {@code seckill-app-jdk8} container; {@code app-slot}
+     * B4-04/B5-05: where the JDK 8 runtime lives. {@code app-slot} (default)
      * makes {@link #jdk8Instance} one of the three business app slots (2x21 +
-     * 1x8) and retires the shell. The default stays {@code shell} until the
-     * JDK 8 business image exists; deploying the app slot only needs env:
-     * LAB_INSTANCE_JDK8_MODE=app-slot, LAB_INSTANCE_NAMES=app-1,app-2,app-3,
-     * LAB_INSTANCE_JDK8_INSTANCE=app-3.
+     * 1x8); the instance keeps FULL-OBSERVABILITY because the business shell
+     * serves /lab/pool, /lab/config and the cache lab. {@code shell} is the
+     * historical separate {@code seckill-app-jdk8} container, which has no
+     * app-level readback (LIMITED-OBSERVABILITY); it is still selectable for
+     * the D7 side-by-side comparison.
      */
-    private String jdk8Mode = "shell";
-    private String jdk8Instance = "seckill-app-jdk8";
-    private String jdk8PrometheusJob = "seckill-app-jdk8";
+    private String jdk8Mode = "app-slot";
+    private String jdk8Instance = "app-3";
+    private String jdk8PrometheusJob = "seckill-app";
 
     /** True when the JDK 8 runtime is one of the three app slots. */
     public boolean isJdk8AppSlotMode() {

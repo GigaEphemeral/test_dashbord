@@ -188,13 +188,16 @@ public class InstanceConfigService {
                     "container facts unavailable for " + container);
         }
         ContainerFacts facts = inspected.get();
+        // Only the standalone shell lacks the app-level readback; the JDK 8
+        // business slot (app-slot mode) answers /lab/pool and /lab/config.
+        boolean limited = jdk != null && jdk == 8 && !properties.isJdk8AppSlotMode();
         String observability = jdk == null ? OBSERVABILITY_UNKNOWN
-                : jdk == 8 ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
-        String readback = jdk != null && jdk == 8 ? READBACK_LIMITED : READBACK_OK;
+                : limited ? OBSERVABILITY_LIMITED : OBSERVABILITY_FULL;
+        String readback = limited ? READBACK_LIMITED : READBACK_OK;
         List<String> notes = new ArrayList<>();
         if (jdk == null) {
             notes.add("no stored jdkVersion; observability class is unknown");
-        } else if (jdk == 8) {
+        } else if (limited) {
             notes.add("JDK 8 shell: app-level hot readback is READBACK_UNAVAILABLE");
         }
         JvmFlags flags = readJvmFlags(gateway, container, jdk);
@@ -283,7 +286,8 @@ public class InstanceConfigService {
             // config with the current rejection as a warning.
             return new InstanceViews.InstanceConfigView(instance, config, stored.status().name(),
                     stored.revision(), List.of(), List.of("stored config no longer validates: "
-                    + e.getMessage()), config.jdkVersion() != null && config.jdkVersion() == 8,
+                    + e.getMessage()), config.jdkVersion() != null && config.jdkVersion() == 8
+                    && !properties.isJdk8AppSlotMode(),
                     0, properties.getMemoryLimitMb(), text(stored.updatedAt()),
                     text(stored.appliedAt()), stored.lastError());
         }

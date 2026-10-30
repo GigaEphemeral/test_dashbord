@@ -237,7 +237,10 @@ public class InstanceConfigValidator {
                 gcLogEnabled, gcLogPath, logFileSize, logFileCount, heapDump, heapDumpPath,
                 tomcatMax, acceptCount, minSpare);
 
-        boolean limited = jdk == 8;
+        // The separate shell has no app-level readback; the in-slot JDK 8
+        // business peer serves /lab/pool and /lab/config exactly like the
+        // JDK 21 slots, so only the shell stays LIMITED-OBSERVABILITY.
+        boolean limited = jdk == 8 && !properties.isJdk8AppSlotMode();
         if (limited) {
             warnings.add("JDK 8 shell is LIMITED-OBSERVABILITY: app-level hot readback is "
                     + "READBACK_UNAVAILABLE; use GC logs/JMX as the fallback");

@@ -195,9 +195,11 @@ class InstanceConfigValidatorTest {
         properties.validate();
         InstanceConfigValidator slotValidator = new InstanceConfigValidator(properties);
 
+        // The in-slot JDK 8 peer serves /lab/pool and /lab/config, so it keeps
+        // full observability; only the standalone shell is LIMITED.
         assertThat(slotValidator.validate("app-3", config("""
                 {"jdkVersion":8,"imageTag":"jdk8"}
-                """)).limitedObservability()).isTrue();
+                """)).limitedObservability()).isFalse();
         assertThatThrownBy(() -> slotValidator.validate("app-2", config("""
                 {"jdkVersion":8,"imageTag":"jdk8"}
                 """)))
@@ -216,6 +218,13 @@ class InstanceConfigValidatorTest {
 
     @Test
     void jdk8RejectsJdk21OnlyFlagsAndMarksLimitedObservability() throws Exception {
+        // The standalone shell mode is still selectable for the D7 comparison.
+        properties.setJdk8Mode("shell");
+        properties.setJdk8Instance("seckill-app-jdk8");
+        properties.setNames(List.of("app-1", "app-2", "app-3", "seckill-app-jdk8"));
+        properties.validate();
+        InstanceConfigValidator validator = new InstanceConfigValidator(properties);
+
         InstanceConfigValidator.ValidationResult result = validator.validate("seckill-app-jdk8", config("""
                 {"jdkVersion":8,"gcCollector":"G1","gcLogEnabled":true}
                 """));

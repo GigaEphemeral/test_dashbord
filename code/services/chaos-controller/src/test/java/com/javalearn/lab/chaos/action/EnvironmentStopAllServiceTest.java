@@ -142,6 +142,18 @@ class EnvironmentStopAllServiceTest {
     }
 
     @Test
+    void anInstanceWithoutThreadLabIsNotApplicableRatherThanFailed() {
+        when(appProxyService.forward(eq("app-3"), anyString(), anyString(), any(), any()))
+                .thenReturn(new ProxyResponse(404, "{\"code\":\"40400\"}"));
+
+        StopAllResult result = service.stopAll();
+
+        assertThat(result.threads()).containsEntry("app-3",
+                EnvironmentStopAllService.THREAD_NOT_APPLICABLE);
+        assertThat(result.threads()).containsEntry("app-1", EnvironmentStopAllService.THREAD_OK);
+    }
+
+    @Test
     void k6StopAndCleanupErrorsAreCountedAndStillBestEffort() {
         when(benchRunExecutor.sweepOrphans()).thenReturn(List.of(
                 new K6ContainerGateway.ContainerSummary("jl-k6-run-a", "cid-a", "run-a",

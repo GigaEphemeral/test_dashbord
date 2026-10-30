@@ -581,7 +581,8 @@ public class InstanceRebuildService {
 
     private void checkPool(String instance, InstanceConfig config,
                            List<InstanceViews.ApplyCheckView> checks, long applyDeadline) {
-        if (config.jdkVersion() != null && config.jdkVersion() == 8) {
+        if (config.jdkVersion() != null && config.jdkVersion() == 8
+                && !properties.isJdk8AppSlotMode()) {
             checks.add(new InstanceViews.ApplyCheckView("pool-probe", CHECK_SKIPPED, 0L,
                     "JDK 8 shell has no /lab/pool readback (LIMITED-OBSERVABILITY)"));
             return;

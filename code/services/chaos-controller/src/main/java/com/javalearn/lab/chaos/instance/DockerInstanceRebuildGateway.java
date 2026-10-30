@@ -196,11 +196,30 @@ public class DockerInstanceRebuildGateway implements InstanceRebuildGateway {
                 .withAttachStdin(false)
                 .withAttachStdout(true)
                 .withAttachStderr(true);
-        if (!snapshot.command().isEmpty()) {
-            create.withCmd(snapshot.command());
+        // An image swap (jdk21 -> jdk8) must use the NEW image's entrypoint/cmd,
+        // not the parked container's. Keeping the old JDK21 entrypoint
+        // (-XX:MaxRAMPercentage=70) makes the JDK8 JVM fail before main.
+        List<String> command = snapshot.command();
+        List<String> entrypoint = snapshot.entrypoint();
+        if (!imageRef.equals(snapshot.imageRef())) {
+            try {
+                var imageConfig = dockerClient.inspectImageCmd(imageRef).exec().getConfig();
+                if (imageConfig != null) {
+                    command = imageConfig.getCmd() == null
+                            ? List.of() : java.util.Arrays.asList(imageConfig.getCmd());
+                    entrypoint = imageConfig.getEntrypoint() == null
+                            ? List.of() : java.util.Arrays.asList(imageConfig.getEntrypoint());
+                }
+            } catch (RuntimeException e) {
+                throw new DockerUnavailableException(
+                        "cannot read entrypoint of new image '" + imageRef + "': " + e.getMessage());
+            }
         }
-        if (!snapshot.entrypoint().isEmpty()) {
-            create.withEntrypoint(snapshot.entrypoint());
+        if (!command.isEmpty()) {
+            create.withCmd(command);
+        }
+        if (!entrypoint.isEmpty()) {
+            create.withEntrypoint(entrypoint);
         }
         if (snapshot.workingDir() != null && !snapshot.workingDir().isBlank()) {
             create.withWorkingDir(snapshot.workingDir());
