@@ -9,6 +9,8 @@
 - 全部实验可在 5 分钟内完成，任何动作可暂停/可还原
 
 > 详细设计与实现情况见 [doc/实现情况-2026-10-30.md](doc/实现情况-2026-10-30.md)；
+> **监测与可观测设计（业务埋点 / JVM 插装 / 采集与判定）见 [doc/monitor.md](doc/monitor.md)**；
+> 界面演示见 [§4](#4-界面与监测演示)；
 > 安装细节见 [doc/design/安装与打包手册.md](doc/design/安装与打包手册.md)；
 > 交付流程见 [doc/process/Stage2/stage2-开发测试与验收计划.md](doc/process/Stage2/stage2-开发测试与验收计划.md)。
 
@@ -119,23 +121,50 @@ docker build -f code/services/chaos-controller/Dockerfile.runtime \
 ```bash
 bash code/lab/scripts/reset-lab.sh --yes     # 复位业务数据（订单/库存）到确定性基线
 bash code/lab/scripts/bench.sh load -- LOAD_DURATION=1m   # CLI 压测并归档报告
-bash code/lab/scripts/verify.sh              # 全栈只读验收（109 项）
+bash code/lab/scripts/verify.sh              # 全栈只读验收（110 项）
 bash code/lab/scripts/smoke.sh               # 业务冒烟
 bash code/lab/scripts/console-smoke.sh       # 控制台端到端冒烟
 ```
 
-## 4. 验证与质量门禁
+## 4. 界面与监测演示
+
+> 截图来自本机真实栈（2026-10-30：app-1/2 = JDK 21、app-3 = JDK 8，Redis 2 数据 + 2 Sentinel，
+> MySQL 3 节点 + Router）。每个部件如何埋点、如何被抓取、为什么要监测，见
+> **[doc/monitor.md](doc/monitor.md)**。
+
+### 4.1 场景向导：基础配置 / JVM 参数 / k6 流量
+
+| 基础配置 | JVM 参数三列对照 | k6 流量与执行 |
+|---|---|---|
+| <img src="doc/screenshots/配置1.png" alt="向导基础配置" width="100%"> | <img src="doc/screenshots/配置2.png" alt="JVM 参数三列对照" width="100%"> | <img src="doc/screenshots/配置k6.png" alt="k6 流量配置" width="100%"> |
+| 三个 Java 槽位、Redis HA、MySQL 形态 | 目标参数 / 实际回读 / 内存预算 / APPLIED | VU、时长、商品 ID 分布、P95/P99 阈值 |
+
+### 4.2 实时监控：KPI、时间轴、实例卡片、缓存流动与拓扑
+
+| 核心 KPI + 四排时间轴 | 实例卡片 | 缓存流动 / 拓扑 / JVM 参数 |
+|---|---|---|
+| <img src="doc/screenshots/监控1.png" alt="实时监控时间轴" width="100%"> | <img src="doc/screenshots/监控2.png" alt="实例卡片" width="100%"> | <img src="doc/screenshots/监控3.png" alt="缓存流动与拓扑" width="100%"> |
+| 请求/k6、JVM 堆/GC、业务池/连接池、Redis/MySQL | CPU、堆、RPS、P95、线程、故障 | L1 → L2 → DB、节点拓扑、目标 vs 实际参数 |
+
+### 4.3 Grafana：JVM 与线程实验室
+
+| D2 JVM 与线程 | D6 线程实验室 |
+|---|---|
+| <img src="doc/screenshots/grafana+promethus1.png" alt="Grafana D2" width="100%"> | <img src="doc/screenshots/grafana+promethus2.png" alt="Grafana D6" width="100%"> |
+| 堆、GC 暂停、Tomcat/Hikari、线程状态 | 线程故障、参与者线程、堆泄漏、注入/回滚 |
+
+## 5. 验证与质量门禁
 
 | 门禁 | 当前基线（2026-10-30） |
 |---|---|
-| 控制器单测 | 893（`mvn -pl services/chaos-controller -am test`） |
+| 控制器单测 | 895（`mvn -pl services/chaos-controller -am test`） |
 | console-smoke | 159 |
 | verify.sh | 110 PASS / 1 WARN / 0 FAIL（WARN=cAdvisor 在 containerd 存储下无法枚举容器） |
 | smoke.sh | 7/7 |
-| 文档断言 | 92/92（`bash code/lab/scripts/check-doc-claims.sh`） |
+| 文档断言 | 97/97（`bash code/lab/scripts/check-doc-claims.sh`） |
 | env 接线 | `bash code/lab/scripts/test-chaos-env-wiring.sh` |
 
-## 5. 常见问题
+## 6. 常见问题
 
 - **正式 run 被 BLOCKED**：实例刚重建后 60s 稳定期内会阻断；等稳定期结束。
 - **Prometheus 内存/序列增长**：k6 远程写已限制 `systemTags`，仍可在 `.env` 调 `PROMETHEUS_MEM_LIMIT` / `PROMETHEUS_RETENTION`。
@@ -144,7 +173,7 @@ bash code/lab/scripts/console-smoke.sh       # 控制台端到端冒烟
 - **Grafana 登录**：默认 `admin/admin`；改密码需 `docker exec jl-grafana grafana cli admin reset-admin-password <new>`。
 - **更多坑位**：见 [doc/avoid_common_error/index.md](doc/avoid_common_error/index.md)。
 
-## 6. 目录
+## 7. 目录
 
 ```
 code/
@@ -158,6 +187,8 @@ code/
     dashboard/            Vue 3 控制台
     scenarios/            故障场景 JSON
 doc/
+  monitor.md              业务埋点 / JVM 插装 / 采集链路 / 监测判定
+  screenshots/            控制台与 Grafana 演示截图
   design/                 总体设计、Stage1/Stage2 设计与工程规约
   process/                Stage1/Stage2 交接、验收计划、指标字典
   avoid_common_error/     真实踩过的坑

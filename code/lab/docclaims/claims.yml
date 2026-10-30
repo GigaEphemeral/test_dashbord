@@ -1147,6 +1147,17 @@
     timeout_ms: 15000
   expect: true
   last_verified: 2026-10-30
+- id: monitor-guide-and-demo-gallery
+  polarity: positive
+  doc:
+    - doc/monitor.md
+  statement: "README 集成 doc/screenshots 演示图并链接 monitor.md；monitor.md 覆盖业务埋点、JVM 插装、采集链路、部件监测矩阵与判定口径"
+  verify:
+    kind: shell
+    command: "test -f doc/monitor.md && grep -q 'doc/screenshots/配置1.png' README.md && grep -q 'doc/screenshots/监控1.png' README.md && grep -q 'doc/screenshots/grafana+promethus1.png' README.md && grep -q 'doc/monitor.md' README.md && grep -q 'DockerInstanceRebuildGateway' doc/monitor.md && grep -q 'TwoLevelCache' doc/monitor.md"
+    timeout_ms: 15000
+  expect: true
+  last_verified: 2026-10-30
 - id: rebuild-preserves-secondary-networks
   polarity: positive
   doc:
